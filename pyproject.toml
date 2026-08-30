@@ -1,0 +1,45 @@
+[project]
+name = "devel-tools"
+version = "0.1.0"
+description = "Fast Git-aware ctags indexing, live watchers, and LanceDB semantic search for developers"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Nigel Choi" }]
+
+dependencies = [
+    "lancedb>=0.17.0",
+    "sentence-transformers>=3.0.0",
+    "watchfiles>=0.24.0",
+    "pyarrow>=14.0.0",
+    "numpy>=1.24.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.6.0",
+]
+
+[project.scripts]
+devel-nav = "devel_tools.cli:main_nav"
+devel-watch = "devel_tools.cli:main_watch"
+devel-sync = "devel_tools.cli:main_sync"
+devel-search = "devel_tools.cli:main_search"
+devel-tags = "devel_tools.cli:main_tags"
+devel-status = "devel_tools.cli:main_status"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/devel_tools"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
