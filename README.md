@@ -125,7 +125,58 @@ The unified `cn` command provides all indexing and search tools:
 | `cn watch [folder]` | Live filesystem watcher for automatic re-indexing |
 | `cn status [folder]` | Inspect index and `.tags` status |
 
-## Development
+## Configuration
+
+`codebase-navigator` supports hierarchical configuration for LLM queries (`cn ask`) and indexing preferences.
+
+### Configuration File Locations
+
+Configuration files are parsed in TOML format from:
+- **Project-level**: `.codebase-navigator/config.toml` (or `codebase-navigator.toml` in repository root)
+- **User-level**: `~/.config/codebase-navigator/config.toml` (or `~/.config/codebase-navigator.toml`)
+
+### Example `config.toml`
+
+```toml
+[llm]
+# OpenAI-compatible API endpoint (defaults to OpenRouter)
+endpoint = "https://openrouter.ai/api/v1"
+
+# LLM model to query
+model = "google/gemini-2.5-flash"
+
+# API authentication token (or pass via environment variable)
+api_key = "sk-or-v1-..."
+
+# Maximum follow-up searches the LLM can execute (default: 5)
+max_searches = 5
+
+# Initial number of semantic search chunks provided to the LLM (default: 10)
+limit = 10
+```
+
+*Note: Keys can be specified either under the `[llm]` section or as top-level keys.*
+
+### Environment Variables
+
+Environment variables take precedence over config files:
+
+| Variable | Description | Default |
+|---|---|---|
+| `OPENROUTER_API_KEY` / `CN_API_KEY` / `OPENAI_API_KEY` | API Key for LLM completions | `None` |
+| `CN_ENDPOINT` / `CN_BASE_URL` / `OPENROUTER_BASE_URL` | OpenAI-compatible endpoint | `https://openrouter.ai/api/v1` |
+| `CN_MODEL` / `OPENROUTER_MODEL` | Default LLM model | `google/gemini-2.5-flash` |
+| `CN_MAX_SEARCHES` | Max follow-up searches | `5` |
+| `CN_ASK_LIMIT` | Initial search result count | `10` |
+
+### Precedence Order
+
+When resolving settings, `cn` applies the following order of precedence:
+1. **CLI flags** (e.g. `--api-key`, `--model`, `--endpoint`, `--limit`, `--max-searches`)
+2. **Environment variables** (`OPENROUTER_API_KEY`, `CN_ENDPOINT`, etc.)
+3. **Project config** (`.codebase-navigator/config.toml`)
+4. **User config** (`~/.config/codebase-navigator/config.toml`)
+5. **Built-in defaults**
 
 Requires Nix and `direnv`:
 
