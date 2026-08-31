@@ -1,6 +1,6 @@
 [project]
 name = "codebase-navigator"
-version = "0.3.3"
+version = "0.3.4"
 description = "Fast Git-aware ctags indexing, live watchers, and LanceDB semantic search for developers"
 readme = "README.md"
 requires-python = ">=3.11"
