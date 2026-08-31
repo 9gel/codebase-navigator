@@ -116,14 +116,14 @@ def test_cn_main_dispatch(monkeypatch, tmp_path: Path):
     def mock_watch(folder, debounce_ms=1000, custom_index_dir=None):
         called["watch"] = (folder, debounce_ms, custom_index_dir)
 
-    def mock_search(folder, query, limit=5, doc_type="all", links="auto", wrap=None, width=None, custom_index_dir=None):
-        called["search"] = (folder, query, limit, doc_type, links, wrap, width, custom_index_dir)
+    def mock_search(folder, query, limit=5, doc_type="all", links="auto", theme="auto", wrap=None, width=None, custom_index_dir=None):
+        called["search"] = (folder, query, limit, doc_type, links, theme, wrap, width, custom_index_dir)
 
     def mock_tags(folder, symbol, exact=False, limit=20):
         called["tags"] = (folder, symbol, exact, limit)
 
-    def mock_ask(folder, question, model=None, endpoint=None, api_key=None, limit=None, max_searches=None, links="auto", wrap=None, width=None, custom_index_dir=None, quiet=False):
-        called["ask"] = (folder, question, model, endpoint, api_key, limit, max_searches, links, wrap, width, custom_index_dir, quiet)
+    def mock_ask(folder, question, model=None, endpoint=None, api_key=None, limit=None, max_searches=None, links="auto", theme="auto", wrap=None, width=None, custom_index_dir=None, quiet=False):
+        called["ask"] = (folder, question, model, endpoint, api_key, limit, max_searches, links, theme, wrap, width, custom_index_dir, quiet)
 
     monkeypatch.setattr(cli_mod, "_run_status", mock_status)
     monkeypatch.setattr(cli_mod, "_run_sync", mock_sync)
@@ -141,14 +141,14 @@ def test_cn_main_dispatch(monkeypatch, tmp_path: Path):
     main(["watch", str(tmp_path), "--debounce", "2000"])
     assert called["watch"] == (tmp_path.resolve(), 2000, None)
 
-    main(["search", "hello world", str(tmp_path), "--limit", "3", "--type", "code", "--links", "osc8", "--no-wrap", "--width", "80"])
-    assert called["search"] == (tmp_path.resolve(), "hello world", 3, "code", "osc8", False, 80, None)
+    main(["search", "hello world", str(tmp_path), "--limit", "3", "--type", "code", "--links", "osc8", "--theme", "dark", "--no-wrap", "--width", "80"])
+    assert called["search"] == (tmp_path.resolve(), "hello world", 3, "code", "osc8", "dark", False, 80, None)
 
     main(["tags", "MySymbol", str(tmp_path), "--exact"])
     assert called["tags"] == (tmp_path.resolve(), "MySymbol", True, 20)
 
-    main(["ask", "What is the architecture?", str(tmp_path), "--model", "custom-model", "--limit", "12", "--links", "terminal", "--wrap", "--width", "90"])
-    assert called["ask"] == (tmp_path.resolve(), "What is the architecture?", "custom-model", None, None, 12, None, "terminal", True, 90, None, False)
+    main(["ask", "What is the architecture?", str(tmp_path), "--model", "custom-model", "--limit", "12", "--links", "terminal", "--theme", "light", "--wrap", "--width", "90"])
+    assert called["ask"] == (tmp_path.resolve(), "What is the architecture?", "custom-model", None, None, 12, None, "terminal", "light", True, 90, None, False)
 
 
 def test_format_output_links_and_wrapping():
@@ -169,13 +169,18 @@ def test_format_output_links_and_wrapping():
     for line in wrapped_term.splitlines():
         assert len(line) <= 55
 
-    # Color mode: backticks light blue and file links green
-    colored = format_output_links(raw, mode="terminal", wrap=True, width=60, color=True)
-    assert "\033[38;5;75m`classify_retail_destination`\033[0m" in colored
-    assert "\033[32msrc/policy.py:86-123\033[0m" in colored
+    # Color mode (dark theme): backticks light blue and file links green
+    colored_dark = format_output_links(raw, mode="terminal", wrap=True, width=60, color=True, theme="dark")
+    assert "\033[38;5;75m`classify_retail_destination`\033[0m" in colored_dark
+    assert "\033[32msrc/policy.py:86-123\033[0m" in colored_dark
+
+    # Color mode (light theme): backticks dark blue and file links dark green
+    colored_light = format_output_links(raw, mode="terminal", wrap=True, width=60, color=True, theme="light")
+    assert "\033[38;5;26m`classify_retail_destination`\033[0m" in colored_light
+    assert "\033[38;5;28msrc/policy.py:86-123\033[0m" in colored_light
 
     # OSC 8 mode with wrapping at 50 cols and color
-    wrapped_osc8 = format_output_links(raw, mode="osc8", wrap=True, width=50, color=True)
+    wrapped_osc8 = format_output_links(raw, mode="osc8", wrap=True, width=50, color=True, theme="dark")
     assert "\033[32m\033]8;;file:///home/user/repo/src/policy.py#L86-L123\033\\" in wrapped_osc8
     assert "src/policy.py:86-123" in wrapped_osc8
 
@@ -199,6 +204,21 @@ def test_wrap_terminal_text_structures():
     assert "### Header Title" in wrapped
     # Check bullet item indented subsequent lines
     assert "  " in wrapped
+
+
+def test_theme_code_blocks_formatting():
+    from codebase_navigator.cli import colorize_terminal_text
+
+    sample = "```python\nprint('hello')\n```"
+
+    dark_out = colorize_terminal_text(sample, theme="dark")
+    assert "\033[91m```python\033[0m" in dark_out
+    assert "\033[36mprint('hello')\033[0m" in dark_out
+
+    light_out = colorize_terminal_text(sample, theme="light")
+    assert "\033[31m```python\033[0m" in light_out
+    assert "\033[38;5;30mprint('hello')\033[0m" in light_out
+
 
 
 

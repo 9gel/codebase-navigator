@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import select
 import shutil
 import sys
 import textwrap
@@ -37,11 +38,79 @@ def supports_osc8() -> bool:
     return any(k in os.environ for k in ("KITTY_PID", "ALACRITTY_LOG", "WT_SESSION", "DOMTERM"))
 
 
+def detect_terminal_theme(theme_override: str | None = None) -> str:
+    """Detect terminal background theme ('dark' or 'light')."""
+    if theme_override and theme_override != "auto":
+        return "light" if "light" in theme_override.lower() else "dark"
+
+    # 1. Environment variables
+    env_theme = (
+        os.environ.get("CN_THEME")
+        or os.environ.get("CODEBASE_NAVIGATOR_THEME")
+        or os.environ.get("TERMINAL_THEME")
+    )
+    if env_theme:
+        return "light" if "light" in env_theme.lower() else "dark"
+
+    # 2. COLORFGBG check (format: "fg;bg" or "fg;bg;...")
+    colorfgbg = os.environ.get("COLORFGBG")
+    if colorfgbg:
+        parts = colorfgbg.split(";")
+        try:
+            bg = int(parts[-1])
+            return "light" if bg in (7, 11, 14, 15) or bg > 8 else "dark"
+        except ValueError:
+            pass
+
+    for k in ["BAT_THEME", "ITERM_PROFILE"]:
+        v = os.environ.get(k, "").lower()
+        if "light" in v:
+            return "light"
+        if "dark" in v:
+            return "dark"
+
+    # 3. Interactive TTY OSC 11 background query
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        try:
+            import termios
+            import tty
+
+            fd = sys.stdin.fileno()
+            old_settings = termios.tcgetattr(fd)
+            try:
+                tty.setcbreak(fd)
+                sys.stdout.write("\033]11;?\033\\")
+                sys.stdout.flush()
+                r, _, _ = select.select([sys.stdin], [], [], 0.02)
+                if r:
+                    resp = ""
+                    while True:
+                        ch = sys.stdin.read(1)
+                        resp += ch
+                        if ch in ("\a", "\\") or len(resp) > 30:
+                            break
+                    if "rgb:" in resp:
+                        rgb_part = resp.split("rgb:")[1].rstrip("\a\033\\")
+                        components = rgb_part.split("/")
+                        if len(components) == 3:
+                            r_val = int(components[0][:2], 16) / 255.0
+                            g_val = int(components[1][:2], 16) / 255.0
+                            b_val = int(components[2][:2], 16) / 255.0
+                            luminance = 0.299 * r_val + 0.587 * g_val + 0.114 * b_val
+                            return "light" if luminance >= 0.5 else "dark"
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        except Exception:  # noqa: BLE001, S110
+            pass
+
+    return "dark"
+
+
 def wrap_terminal_text(text: str, width: int | None = None) -> str:
     """Wrap markdown-like text for terminal display, preserving code blocks, bullet indentation, and headers."""
     if width is None:
         term_cols = shutil.get_terminal_size((80, 24)).columns
-        width = max(40, min(term_cols, 100))
+        width = max(40, min(term_cols, 80))
 
     lines = text.splitlines()
     wrapped_lines = []
@@ -106,8 +175,20 @@ def wrap_terminal_text(text: str, width: int | None = None) -> str:
     return "\n".join(wrapped_lines)
 
 
-def colorize_terminal_text(text: str) -> str:
-    """Colorize inline markdown for terminal display: backticks in light blue, bold in bold."""
+def colorize_terminal_text(text: str, theme: str = "dark") -> str:
+    """Colorize inline markdown for terminal display based on theme."""
+    if theme == "light":
+        color_fence = "\033[31m"        # Red
+        color_code = "\033[38;5;30m"    # Dark Cyan
+        color_inline = "\033[38;5;26m"  # Dark Blue
+    else:  # dark
+        color_fence = "\033[91m"        # Bright Red
+        color_code = "\033[36m"         # Cyan
+        color_inline = "\033[38;5;75m"  # Light Blue
+
+    reset = "\033[0m"
+    bold = "\033[1m"
+
     lines = text.splitlines()
     res = []
     in_code = False
@@ -115,16 +196,16 @@ def colorize_terminal_text(text: str) -> str:
         stripped = line.strip()
         if stripped.startswith("```"):
             in_code = not in_code
-            res.append(f"\033[36m{line}\033[0m")
+            res.append(f"{color_fence}{line}{reset}")
             continue
         if in_code:
-            res.append(line)
+            res.append(f"{color_code}{line}{reset}")
             continue
 
-        # Color inline backticks `code` in light blue (\033[38;5;75m)
-        line = re.sub(r"(`[^`\n]+`)", r"\033[38;5;75m\1\033[0m", line)
+        # Color inline backticks `code` in light blue / dark blue
+        line = re.sub(r"(`[^`\n]+`)", f"{color_inline}\\1{reset}", line)
         # Bold **text**
-        line = re.sub(r"(\*\*[^*\n]+\*\*)", r"\033[1m\1\033[0m", line)
+        line = re.sub(r"(\*\*[^*\n]+\*\*)", f"{bold}\\1{reset}", line)
         res.append(line)
     return "\n".join(res)
 
@@ -135,6 +216,7 @@ def format_output_links(
     wrap: bool | None = None,
     width: int | None = None,
     color: bool | None = None,
+    theme: str = "auto",
 ) -> str:
     """Format markdown links, wrap lines, and colorize output for terminal display.
 
@@ -153,6 +235,7 @@ def format_output_links(
 
     should_wrap = wrap if wrap is not None else (is_tty or mode in ("osc8", "terminal"))
     should_color = color if color is not None else (is_tty and not os.environ.get("NO_COLOR"))
+    detected_theme = detect_terminal_theme(theme)
 
     pat = re.compile(r"\[([^\]]+)\]\((file://[^\)]+)\)")
     use_osc8 = (mode == "osc8") or (mode == "auto" and supports_osc8())
@@ -180,15 +263,17 @@ def format_output_links(
         processed = restore_visible(tokenized)
 
     if should_color:
-        processed = colorize_terminal_text(processed)
+        processed = colorize_terminal_text(processed, theme=detected_theme)
+
+    link_color = "\033[38;5;28m" if detected_theme == "light" else "\033[32m"
 
     for label, url in extracted_links:
         if use_osc8 and should_color:
-            replacement = f"\033[32m\033]8;;{url}\033\\{label}\033]8;;\033\\\033[0m"
+            replacement = f"{link_color}\033]8;;{url}\033\\{label}\033]8;;\033\\\033[0m"
         elif use_osc8:
             replacement = f"\033]8;;{url}\033\\{label}\033]8;;\033\\"
         elif should_color:
-            replacement = f"\033[32m{label}\033[0m"
+            replacement = f"{link_color}{label}\033[0m"
         else:
             replacement = label
         processed = processed.replace(label, replacement, 1)
@@ -291,6 +376,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="auto",
         help="Link formatting: auto (detect terminal), markdown, terminal (clean path:line), osc8 (default: auto)",
     )
+    p_search.add_argument(
+        "--theme",
+        choices=["auto", "dark", "light"],
+        default="auto",
+        help="Terminal color theme: auto (detect background), dark, light (default: auto)",
+    )
     p_search.add_argument("--wrap", action=argparse.BooleanOptionalAction, default=None, help="Wrap terminal lines (default: enabled on TTY)")
     p_search.add_argument("--width", type=int, default=None, help="Wrap line width (default: terminal width)")
     p_search.add_argument("--index-dir", default=None, help="Custom LanceDB directory")
@@ -316,6 +407,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["auto", "markdown", "terminal", "osc8"],
         default="auto",
         help="Link formatting: auto (detect terminal), markdown, terminal (clean path:line), osc8 (default: auto)",
+    )
+    p_ask.add_argument(
+        "--theme",
+        choices=["auto", "dark", "light"],
+        default="auto",
+        help="Terminal color theme: auto (detect background), dark, light (default: auto)",
     )
     p_ask.add_argument("--wrap", action=argparse.BooleanOptionalAction, default=None, help="Wrap terminal lines (default: enabled on TTY)")
     p_ask.add_argument("--width", type=int, default=None, help="Wrap line width (default: terminal width)")
@@ -344,6 +441,7 @@ def main(argv: list[str] | None = None):
             limit=args.limit,
             doc_type=args.type,
             links=args.links,
+            theme=args.theme,
             wrap=args.wrap,
             width=args.width,
             custom_index_dir=args.index_dir,
@@ -360,6 +458,7 @@ def main(argv: list[str] | None = None):
             limit=args.limit,
             max_searches=args.max_searches,
             links=args.links,
+            theme=args.theme,
             wrap=args.wrap,
             width=args.width,
             custom_index_dir=args.index_dir,
@@ -429,6 +528,7 @@ def _run_search(
     limit: int = 5,
     doc_type: str = "all",
     links: str = "auto",
+    theme: str = "auto",
     wrap: bool | None = None,
     width: int | None = None,
     custom_index_dir: str | None = None,
@@ -437,7 +537,7 @@ def _run_search(
     results = query_socket(socket_path, query, limit=limit, doc_type=doc_type)
     if results is not None:
         raw_out = format_search_results(results, folder)
-        print(format_output_links(raw_out, mode=links, wrap=wrap, width=width))
+        print(format_output_links(raw_out, mode=links, wrap=wrap, width=width, theme=theme))
         return
 
     # Fallback to direct in-process search
@@ -445,7 +545,7 @@ def _run_search(
     idx = VectorIndex(folder, custom_index_dir)
     results = idx.search(query, limit=limit, doc_type=doc_type)
     raw_out = format_search_results(results, folder)
-    print(format_output_links(raw_out, mode=links, wrap=wrap, width=width))
+    print(format_output_links(raw_out, mode=links, wrap=wrap, width=width, theme=theme))
 
 
 def _run_tags(folder: Path, symbol: str, exact: bool = False, limit: int = 20):
@@ -463,6 +563,7 @@ def _run_ask(
     limit: int | None = None,
     max_searches: int | None = None,
     links: str = "auto",
+    theme: str = "auto",
     wrap: bool | None = None,
     width: int | None = None,
     custom_index_dir: str | None = None,
@@ -491,8 +592,10 @@ def _run_ask(
         )
         if not quiet:
             term_w = min(width or shutil.get_terminal_size((80, 24)).columns, 80)
-            print(f"\n\033[36m{'=' * term_w}\033[0m\n")
-        print(format_output_links(answer, mode=links, wrap=wrap, width=width))
+            det_theme = detect_terminal_theme(theme)
+            divider_color = "\033[34m" if det_theme == "light" else "\033[36m"
+            print(f"\n{divider_color}{'=' * term_w}\033[0m\n")
+        print(format_output_links(answer, mode=links, wrap=wrap, width=width, theme=theme))
     except Exception as e:  # noqa: BLE001
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
