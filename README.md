@@ -5,6 +5,15 @@ Tools for ultra-fast semantic codebase navigation, Git-aware ctags indexing, liv
 ## How it works
 
 
+## Features
+
+- 💬 **Agentic Codebase Q&A (`cn ask`)**: Ask complex architectural and implementation questions in natural language. Powered by an iterative LLM reasoning loop with autonomous tool-calling that actively investigates your codebase across multiple search rounds, synthesizing clear, accurate answers backed by clickable file and line links.
+- 🧠 **LanceDB Semantic & Hybrid Search**: Vector search powered by `sentence-transformers/all-MiniLM-L6-v2` with hybrid phrase/title match boosting for markdown documentation, glossary terms, and code comments.
+- 🏷️ **Git-Aware `.tags` Generation**: Uses `universal-ctags` to index genuine source code while completely ignoring huge data dumps, JSON caches, `.git`, `node_modules`, and build artifacts.
+- ⚡ **Strict Offline Mode**: Runs 100% locally from disk cache with zero HuggingFace network requests or unauthenticated token warnings.
+- 👀 **Live File Watcher**: Automatically re-indexes `.tags` and incrementally updates LanceDB embeddings on every save with sub-second debounce.
+- 🔗 **Clickable GitHub Markdown Links**: Returns results formatted as `[file:Lstart-Lend](file:///abs_path#Lstart-Lend)`.
+
 ## Quick Start
 
 ### Prerequisites
@@ -65,14 +74,6 @@ nix run github:9gel/codebase-navigator -- sync
 nix run github:9gel/codebase-navigator -- --help
 nix run github:9gel/codebase-navigator -- search "authentication flow"
 ```
-
-## Features
-
-- 🏷️ **Git-Aware `.tags` Generation**: Uses `universal-ctags` to index genuine source code while completely ignoring huge data dumps, JSON caches, `.git`, `node_modules`, and build artifacts.
-- 🧠 **LanceDB Semantic & Hybrid Search**: Vector search powered by `sentence-transformers/all-MiniLM-L6-v2` with hybrid phrase/title match boosting for markdown documentation, glossary terms, and code comments.
-- ⚡ **Strict Offline Mode**: Runs 100% locally from disk cache with zero HuggingFace network requests or unauthenticated token warnings.
-- 👀 **Live File Watcher**: Automatically re-indexes `.tags` and incrementally updates LanceDB embeddings on every save with sub-second debounce.
-- 🔗 **Clickable GitHub Markdown Links**: Returns results formatted as `[file:Lstart-Lend](file:///abs_path#Lstart-Lend)`.
 
 ## Installation
 
