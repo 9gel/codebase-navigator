@@ -72,7 +72,10 @@
                   --set HF_HUB_OFFLINE "1" \
                   --set TRANSFORMERS_OFFLINE "1" \
                   --set HF_HUB_DISABLE_TELEMETRY "1" \
-                  --set TRANSFORMERS_VERBOSITY "error"
+                  --set TRANSFORMERS_VERBOSITY "error" \
+                  --run 'export TRITON_CACHE_DIR="''${XDG_CACHE_HOME:-$HOME/.cache}/triton"' \
+                  --run 'export TORCH_HOME="''${XDG_CACHE_HOME:-$HOME/.cache}/torch"' \
+                  --run 'export HF_HOME="''${XDG_CACHE_HOME:-$HOME/.cache}/huggingface"'
               fi
             done
           '';
@@ -113,6 +116,9 @@
           };
           shellHook = ''
             unset PYTHONPATH
+            export TRITON_CACHE_DIR="''${XDG_CACHE_HOME:-$HOME/.cache}/triton"
+            export TORCH_HOME="''${XDG_CACHE_HOME:-$HOME/.cache}/torch"
+            export HF_HOME="''${XDG_CACHE_HOME:-$HOME/.cache}/huggingface"
             echo "devel-tools devshell — try:  uv run pytest   |   uv run devel-search --help"
           '';
         };

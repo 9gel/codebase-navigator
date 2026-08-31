@@ -8,7 +8,15 @@ import os
 from pathlib import Path
 from typing import Iterator
 
-# Set offline environment variables before importing ML libraries
+# Ensure portable user caching & offline environment variables before importing ML libraries
+_cache_base = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache"))
+if "TRITON_CACHE_DIR" not in os.environ or "/root/" in os.environ["TRITON_CACHE_DIR"]:
+    os.environ["TRITON_CACHE_DIR"] = str(_cache_base / "triton")
+if "TORCH_HOME" not in os.environ or "/root/" in os.environ["TORCH_HOME"]:
+    os.environ["TORCH_HOME"] = str(_cache_base / "torch")
+if "HF_HOME" not in os.environ or "/root/" in os.environ["HF_HOME"]:
+    os.environ["HF_HOME"] = str(_cache_base / "huggingface")
+
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
