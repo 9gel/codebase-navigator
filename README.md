@@ -182,7 +182,21 @@ The unified `cn` command provides all indexing and search tools:
 - `--max-searches <N>`: Max additional tool calls allowed (default: 15).
 - `-q, --quiet`: Suppress progress indicators.
 
-## Configuration
+## Skills
+
+Equipping your AI agent with a Skill teaches it how to use `codebase-navigator`'s CLI and MCP tools effectively instead of resorting to naive full-file reads or blind searches.
+
+A ready-to-use skill definition is available in this repository under [`skills/codebase-navigator/SKILL.md`](skills/codebase-navigator/SKILL.md). You can copy or symlink it to your agent harness's skill directory:
+
+- **Antigravity / Gemini**: `~/.gemini/config/skills/codebase-navigator/SKILL.md`
+- **Claude / Cursor / Cline**: `.claude/skills/codebase-navigator/SKILL.md` (or your user/project skill folder)
+
+### Why Install the Skill?
+
+- **40%–80% Token Savings**: Teaches agents to read targeted line ranges (`codebase_read`) rather than ingesting entire files into context.
+- **1-Shot Reference Discovery**: Directs agents to resolve symbol declarations and all caller/usage sites in a single turn (`codebase_references`).
+- **Semantic Concept Retrieval**: Guides agents to discover relevant documentation and code modules via vector search (`codebase_search`) before guessing file paths.
+- **Call-Tree Tracing**: Helps agents trace multi-step execution flows and caller hierarchies (`codebase_call_tree`).
 
 `codebase-navigator` supports hierarchical configuration for LLM queries (`cn ask`) and display preferences.
 
@@ -271,14 +285,18 @@ When resolving settings, `cn` applies the following order of precedence:
 - **100% Offline After Download**: Once downloaded, `cn` operates strictly from
   disk with zero external network calls for embeddings.
 
-## How it works
+## Under the hood
 
 - `cn ask` functions as a lightweight agent harness, where the agent's context
   is stored in the `cn watch` server.
-- When you call `cn ask`, your question is used to perform a nearest neighbor
-  search using LanceDB. The results and your question is then sent to the LLM
-  for the LLM to answer your question. It will then home in on the answer by
-  using these tools to efficiently find the answer in the codebase:
+- When you call `cn ask`, the script sends the question to `cn watch` via a unix
+  socket.
+- In `cn watch`, your question is then used to perform a nearest neighbor
+  search using LanceDB.
+- The embeddings search results and your question is then sent to the LLM
+  as context for the LLM to answer your question.
+- The LLM then homes in on the answer by using these tools to efficiently find
+  the answer in the codebase:
   - `search`: Semantic and hybrid search over code comments and markdown docs.
   - `tags_lookup`: Instant symbol definition resolution via `.tags`.
   - `read_code`: Range-bounded source inspection with line numbers and clickable file links.
@@ -286,9 +304,9 @@ When resolving settings, `cn` applies the following order of precedence:
   - `call_tree`: AST & cross-file caller and callee tracer.
   - `grep_search`: Fast pattern search via `rg` (with pure-Python fallback).
 - Multi-turn session memory & KV prompt caching: as long as you keep `cn watch`
-  running, conversational context is preserved in-memory across successive `cn
-  ask` commands. Follow-up questions hit provider-side prefix KV caches for
-  instant responses and lower token cost.
+  running, conversational context is preserved in-memory in `cn watch` across
+  successive `cn ask` commands. Follow-up questions hit provider-side prefix KV
+  caches for instant responses and lower token cost.
 
 ### MCP
 
