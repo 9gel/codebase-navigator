@@ -184,21 +184,27 @@ The unified `cn` command provides all indexing and search tools:
 
 ## Skills
 
-Equipping your AI agent with a Skill teaches it how to use `codebase-navigator`'s CLI and MCP tools effectively instead of resorting to naive full-file reads or blind searches.
+Use the skill at
+[`skills/codebase-navigator/SKILL.md`](skills/codebase-navigator/SKILL.md) for
+your agent, so it knows how to use `cn`'s CLI and MCP tools
+effectively.
 
-A ready-to-use skill definition is available in this repository under [`skills/codebase-navigator/SKILL.md`](skills/codebase-navigator/SKILL.md). You can copy or symlink it to your agent harness's skill directory:
+You can copy or symlink it to your agent harness's skill directory. For example:
 
+- **Claude / Cursor / Cline**: `.claude/skills/codebase-navigator/SKILL.md`
 - **Antigravity / Gemini**: `~/.gemini/config/skills/codebase-navigator/SKILL.md`
-- **Claude / Cursor / Cline**: `.claude/skills/codebase-navigator/SKILL.md` (or your user/project skill folder)
 
 ### Why Install the Skill?
 
-- **40%–80% Token Savings**: Teaches agents to read targeted line ranges (`codebase_read`) rather than ingesting entire files into context.
-- **1-Shot Reference Discovery**: Directs agents to resolve symbol declarations and all caller/usage sites in a single turn (`codebase_references`).
-- **Semantic Concept Retrieval**: Guides agents to discover relevant documentation and code modules via vector search (`codebase_search`) before guessing file paths.
-- **Call-Tree Tracing**: Helps agents trace multi-step execution flows and caller hierarchies (`codebase_call_tree`).
-
-`codebase-navigator` supports hierarchical configuration for LLM queries (`cn ask`) and display preferences.
+- **40%–80% Token Savings**: Teaches agents to read targeted line ranges
+  (`codebase_read`) rather than ingesting entire files into context.
+- **1-Shot Reference Discovery**: Directs agents to resolve symbol declarations
+  and all caller/usage sites in a single turn (`codebase_references`).
+- **Semantic Concept Retrieval**: Guides agents to discover relevant
+  documentation / documented code and modules via vector search
+  (`codebase_search`) before guessing file paths.
+- **Call-Tree Tracing**: Helps agents trace multi-step execution flows and
+  caller hierarchies (`codebase_call_tree`).
 
 ### Configuration File Locations
 
@@ -310,7 +316,7 @@ When resolving settings, `cn` applies the following order of precedence:
 
 ### MCP
 
-`codebase-navigator`'s **MCP server** provides AI agents (in Antigravity, Claude Desktop, Cursor, Cline, etc.) with 6 code intelligence tools:
+`cn`'s **MCP server** provides AI agents (in Antigravity, Claude Desktop, Cursor, Cline, etc.) with 6 code intelligence tools:
 
 - `codebase_search`: Hybrid vector & keyword search in docs and code.
 - `codebase_tags`: Ctags symbol definition lookups.
@@ -336,7 +342,7 @@ uv run pytest
 
 ### Evaluation Harness
 
-`codebase-navigator` includes a multi-language evaluation and benchmarking suite
+`cn` includes a multi-language evaluation and benchmarking suite
 in [`eval/`](eval/) to measure retrieval accuracy, agent reasoning, latency, and
 token efficiency against diverse open-source codebases:
 
