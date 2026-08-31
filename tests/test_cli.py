@@ -116,14 +116,14 @@ def test_cn_main_dispatch(monkeypatch, tmp_path: Path):
     def mock_watch(folder, debounce_ms=1000, custom_index_dir=None):
         called["watch"] = (folder, debounce_ms, custom_index_dir)
 
-    def mock_search(folder, query, limit=5, doc_type="all", custom_index_dir=None):
-        called["search"] = (folder, query, limit, doc_type, custom_index_dir)
+    def mock_search(folder, query, limit=5, doc_type="all", links="auto", custom_index_dir=None):
+        called["search"] = (folder, query, limit, doc_type, links, custom_index_dir)
 
     def mock_tags(folder, symbol, exact=False, limit=20):
         called["tags"] = (folder, symbol, exact, limit)
 
-    def mock_ask(folder, question, model=None, endpoint=None, api_key=None, limit=None, max_searches=None, custom_index_dir=None, quiet=False):
-        called["ask"] = (folder, question, model, endpoint, api_key, limit, max_searches, custom_index_dir, quiet)
+    def mock_ask(folder, question, model=None, endpoint=None, api_key=None, limit=None, max_searches=None, links="auto", custom_index_dir=None, quiet=False):
+        called["ask"] = (folder, question, model, endpoint, api_key, limit, max_searches, links, custom_index_dir, quiet)
 
     monkeypatch.setattr(cli_mod, "_run_status", mock_status)
     monkeypatch.setattr(cli_mod, "_run_sync", mock_sync)
@@ -141,12 +141,31 @@ def test_cn_main_dispatch(monkeypatch, tmp_path: Path):
     main(["watch", str(tmp_path), "--debounce", "2000"])
     assert called["watch"] == (tmp_path.resolve(), 2000, None)
 
-    main(["search", "hello world", str(tmp_path), "--limit", "3", "--type", "code"])
-    assert called["search"] == (tmp_path.resolve(), "hello world", 3, "code", None)
+    main(["search", "hello world", str(tmp_path), "--limit", "3", "--type", "code", "--links", "osc8"])
+    assert called["search"] == (tmp_path.resolve(), "hello world", 3, "code", "osc8", None)
 
     main(["tags", "MySymbol", str(tmp_path), "--exact"])
     assert called["tags"] == (tmp_path.resolve(), "MySymbol", True, 20)
 
-    main(["ask", "What is the architecture?", str(tmp_path), "--model", "custom-model", "--limit", "12"])
-    assert called["ask"] == (tmp_path.resolve(), "What is the architecture?", "custom-model", None, None, 12, None, None, False)
+    main(["ask", "What is the architecture?", str(tmp_path), "--model", "custom-model", "--limit", "12", "--links", "terminal"])
+    assert called["ask"] == (tmp_path.resolve(), "What is the architecture?", "custom-model", None, None, 12, None, "terminal", None, False)
+
+
+def test_format_output_links():
+    from codebase_navigator.cli import format_output_links
+
+    raw = "See [src/policy.py:86-123](file:///home/user/repo/src/policy.py#L86-L123) for details."
+
+    # Markdown mode: preserves full markdown link
+    assert format_output_links(raw, mode="markdown") == raw
+
+    # Terminal / clean mode: extracts clean label
+    assert format_output_links(raw, mode="terminal") == "See src/policy.py:86-123 for details."
+
+    # OSC 8 mode: wraps with OSC 8 escape sequences
+    osc8_res = format_output_links(raw, mode="osc8")
+    assert "\033]8;;file:///home/user/repo/src/policy.py#L86-L123\033\\" in osc8_res
+    assert "src/policy.py:86-123" in osc8_res
+    assert "\033]8;;\033\\" in osc8_res
+
 

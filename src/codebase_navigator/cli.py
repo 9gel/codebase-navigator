@@ -3,12 +3,61 @@
 from __future__ import annotations
 
 import argparse
+import os
+import re
 import sys
 from pathlib import Path
 
 from .config import get_socket_path
 from .ipc import ping_socket, query_socket
 from .tags import TagsManager, get_available_files
+
+
+def supports_osc8() -> bool:
+    """Check if the current terminal environment supports OSC 8 hyperlinks."""
+    if not sys.stdout.isatty():
+        return False
+    if os.environ.get("NO_COLOR"):
+        return False
+    if os.environ.get("FORCE_HYPERLINK") in ("1", "true", "yes"):
+        return True
+
+    term_program = os.environ.get("TERM_PROGRAM", "").lower()
+    if term_program in ("vscode", "iterm.app", "wezterm", "hyper", "warp", "ghostty", "rio"):
+        return True
+    if "TMUX" in os.environ:
+        return True
+    if os.environ.get("VTE_VERSION"):
+        try:
+            return int(os.environ["VTE_VERSION"]) >= 5000
+        except ValueError:
+            return True
+    return any(k in os.environ for k in ("KITTY_PID", "ALACRITTY_LOG", "WT_SESSION", "DOMTERM"))
+
+
+def format_output_links(text: str, mode: str = "auto") -> str:
+    """Format markdown links for terminal or markdown output.
+
+    Modes:
+    - 'auto': OSC 8 if TTY + supported, clean path if TTY without OSC 8, markdown if non-TTY
+    - 'osc8': Embed OSC 8 terminal hyperlinks (\x1b]8;;url\x1b\\label\x1b]8;;\x1b\\)
+    - 'terminal' / 'clean': Strip markdown link syntax, leaving clean path:line
+    - 'markdown': Preserve [label](file://...) markdown link syntax
+    """
+    if mode == "markdown":
+        return text
+
+    is_tty = sys.stdout.isatty()
+    if mode == "auto" and not is_tty:
+        return text
+
+    pat = re.compile(r"\[([^\]]+)\]\((file://[^\)]+)\)")
+    use_osc8 = (mode == "osc8") or (mode == "auto" and supports_osc8())
+
+    if use_osc8:
+        return pat.sub(lambda m: f"\033]8;;{m.group(2)}\033\\{m.group(1)}\033]8;;\033\\", text)
+    else:
+        return pat.sub(lambda m: m.group(1), text)
 
 
 def format_search_results(results: list[dict], base_folder: Path) -> str:
@@ -100,6 +149,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="all",
         help="Filter document types (default: all)",
     )
+    p_search.add_argument(
+        "--links",
+        choices=["auto", "markdown", "terminal", "osc8"],
+        default="auto",
+        help="Link formatting: auto (detect terminal), markdown, terminal (clean path:line), osc8 (default: auto)",
+    )
     p_search.add_argument("--index-dir", default=None, help="Custom LanceDB directory")
 
     # tags
@@ -118,6 +173,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_ask.add_argument("--api-key", default=None, help="LLM API key")
     p_ask.add_argument("--limit", type=int, default=None, help="Initial search results count (default: 10)")
     p_ask.add_argument("--max-searches", type=int, default=None, help="Max additional LLM-driven searches (default: 5)")
+    p_ask.add_argument(
+        "--links",
+        choices=["auto", "markdown", "terminal", "osc8"],
+        default="auto",
+        help="Link formatting: auto (detect terminal), markdown, terminal (clean path:line), osc8 (default: auto)",
+    )
     p_ask.add_argument("--index-dir", default=None, help="Custom LanceDB directory")
     p_ask.add_argument("-q", "--quiet", action="store_true", help="Suppress progress output")
 
@@ -137,7 +198,7 @@ def main(argv: list[str] | None = None):
     elif args.command == "watch":
         _run_watch(folder, debounce_ms=args.debounce, custom_index_dir=args.index_dir)
     elif args.command == "search":
-        _run_search(folder, args.query, limit=args.limit, doc_type=args.type, custom_index_dir=args.index_dir)
+        _run_search(folder, args.query, limit=args.limit, doc_type=args.type, links=args.links, custom_index_dir=args.index_dir)
     elif args.command == "tags":
         _run_tags(folder, args.symbol, exact=args.exact, limit=args.limit)
     elif args.command == "ask":
@@ -149,6 +210,7 @@ def main(argv: list[str] | None = None):
             api_key=args.api_key,
             limit=args.limit,
             max_searches=args.max_searches,
+            links=args.links,
             custom_index_dir=args.index_dir,
             quiet=args.quiet,
         )
@@ -210,18 +272,27 @@ def _run_watch(folder: Path, debounce_ms: int = 1000, custom_index_dir: str | No
     watcher.start()
 
 
-def _run_search(folder: Path, query: str, limit: int = 5, doc_type: str = "all", custom_index_dir: str | None = None):
+def _run_search(
+    folder: Path,
+    query: str,
+    limit: int = 5,
+    doc_type: str = "all",
+    links: str = "auto",
+    custom_index_dir: str | None = None,
+):
     socket_path = get_socket_path(folder, custom_index_dir)
     results = query_socket(socket_path, query, limit=limit, doc_type=doc_type)
     if results is not None:
-        print(format_search_results(results, folder))
+        raw_out = format_search_results(results, folder)
+        print(format_output_links(raw_out, mode=links))
         return
 
     # Fallback to direct in-process search
     from .index import VectorIndex
     idx = VectorIndex(folder, custom_index_dir)
     results = idx.search(query, limit=limit, doc_type=doc_type)
-    print(format_search_results(results, folder))
+    raw_out = format_search_results(results, folder)
+    print(format_output_links(raw_out, mode=links))
 
 
 def _run_tags(folder: Path, symbol: str, exact: bool = False, limit: int = 20):
@@ -238,6 +309,7 @@ def _run_ask(
     api_key: str | None = None,
     limit: int | None = None,
     max_searches: int | None = None,
+    links: str = "auto",
     custom_index_dir: str | None = None,
     quiet: bool = False,
 ):
@@ -262,7 +334,7 @@ def _run_ask(
             custom_index_dir=custom_index_dir,
             verbose=not quiet,
         )
-        print(answer)
-    except Exception as e:
+        print(format_output_links(answer, mode=links))
+    except Exception as e:  # noqa: BLE001
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
