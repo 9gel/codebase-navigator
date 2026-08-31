@@ -87,9 +87,9 @@ find code quickly and token-efficiently.
 - 👀 **Live File Watcher** (`cn watch`): Automatically re-indexes `.tags` and
   incrementally updates LanceDB embeddings on every save with sub-second
   debounce.
-- 🔌 **Model Context Protocol (MCP) Server (`cn mcp`)**: Exposes 6 zero-token-waste
-  code intelligence tools (`codebase_search`, `codebase_tags`, `codebase_references`,
-  `codebase_call_tree`, `codebase_read`, `codebase_grep`) for AI assistants and IDEs.
+- 🔌 **Model Context Protocol (MCP) Server (`cn mcp`)**: Exposes code
+  intelligence tools for AI assistants and coding harnesses and IDEs to find
+  code quickly and efficiently.
 - ⚙️ **Configurable System Prompts**: For `cn ask`, customize agent persona,
   auditing constraints, or architectural instructions via CLI flags, environment
   variables, or TOML config.
