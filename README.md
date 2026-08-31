@@ -166,7 +166,7 @@ Environment variables take precedence over config files:
 | `OPENROUTER_API_KEY` / `CN_API_KEY` / `OPENAI_API_KEY` | API Key for LLM completions | `None` |
 | `CN_ENDPOINT` / `CN_BASE_URL` / `OPENROUTER_BASE_URL` | OpenAI-compatible endpoint | `https://openrouter.ai/api/v1` |
 | `CN_MODEL` / `OPENROUTER_MODEL` | Default LLM model | `google/gemini-2.5-flash` |
-| `CN_MAX_SEARCHES` | Max follow-up searches | `5` |
+| `CN_MAX_SEARCHES` | Max follow-up searches allowed by the LLM | `5` |
 | `CN_ASK_LIMIT` | Initial search result count | `10` |
 
 ### Precedence Order
@@ -178,9 +178,13 @@ When resolving settings, `cn` applies the following order of precedence:
 4. **User config** (`~/.config/codebase-navigator/config.toml`)
 5. **Built-in defaults**
 
-Requires Nix and `direnv`:
+## Development
+
+The project uses Nix and `direnv`. Ensure you have both installed, then:
 
 ```bash
+cd codebase-navigator/
 direnv allow
 uv run pytest
 ```
+
