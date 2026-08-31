@@ -155,23 +155,28 @@ def test_format_output_links_and_wrapping():
     from codebase_navigator.cli import format_output_links
 
     raw = (
-        "The classify_retail_destination function in "
+        "The `classify_retail_destination` function in "
         "[src/policy.py:86-123](file:///home/user/repo/src/policy.py#L86-L123) "
-        "is indeed the code that returns the retail_destination output."
+        "is indeed the code that returns the `retail_destination` output."
     )
 
     # Markdown mode: preserves full markdown link without forced wrapping
     assert format_output_links(raw, mode="markdown") == raw
 
-    # Terminal / clean mode with wrapping at 50 cols
-    wrapped_term = format_output_links(raw, mode="terminal", wrap=True, width=50)
+    # Terminal / clean mode with wrapping at 50 cols (no color)
+    wrapped_term = format_output_links(raw, mode="terminal", wrap=True, width=50, color=False)
     assert "src/policy.py:86-123" in wrapped_term
     for line in wrapped_term.splitlines():
         assert len(line) <= 55
 
-    # OSC 8 mode with wrapping at 50 cols
-    wrapped_osc8 = format_output_links(raw, mode="osc8", wrap=True, width=50)
-    assert "\033]8;;file:///home/user/repo/src/policy.py#L86-L123\033\\" in wrapped_osc8
+    # Color mode: backticks light blue and file links green
+    colored = format_output_links(raw, mode="terminal", wrap=True, width=60, color=True)
+    assert "\033[38;5;75m`classify_retail_destination`\033[0m" in colored
+    assert "\033[32msrc/policy.py:86-123\033[0m" in colored
+
+    # OSC 8 mode with wrapping at 50 cols and color
+    wrapped_osc8 = format_output_links(raw, mode="osc8", wrap=True, width=50, color=True)
+    assert "\033[32m\033]8;;file:///home/user/repo/src/policy.py#L86-L123\033\\" in wrapped_osc8
     assert "src/policy.py:86-123" in wrapped_osc8
 
 
@@ -194,6 +199,7 @@ def test_wrap_terminal_text_structures():
     assert "### Header Title" in wrapped
     # Check bullet item indented subsequent lines
     assert "  " in wrapped
+
 
 
 

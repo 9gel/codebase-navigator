@@ -106,13 +106,37 @@ def wrap_terminal_text(text: str, width: int | None = None) -> str:
     return "\n".join(wrapped_lines)
 
 
+def colorize_terminal_text(text: str) -> str:
+    """Colorize inline markdown for terminal display: backticks in light blue, bold in bold."""
+    lines = text.splitlines()
+    res = []
+    in_code = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_code = not in_code
+            res.append(f"\033[36m{line}\033[0m")
+            continue
+        if in_code:
+            res.append(line)
+            continue
+
+        # Color inline backticks `code` in light blue (\033[38;5;75m)
+        line = re.sub(r"(`[^`\n]+`)", r"\033[38;5;75m\1\033[0m", line)
+        # Bold **text**
+        line = re.sub(r"(\*\*[^*\n]+\*\*)", r"\033[1m\1\033[0m", line)
+        res.append(line)
+    return "\n".join(res)
+
+
 def format_output_links(
     text: str,
     mode: str = "auto",
     wrap: bool | None = None,
     width: int | None = None,
+    color: bool | None = None,
 ) -> str:
-    """Format markdown links and wrap lines for terminal or markdown output.
+    """Format markdown links, wrap lines, and colorize output for terminal display.
 
     Modes:
     - 'auto': OSC 8 if TTY + supported, clean path if TTY without OSC 8, markdown if non-TTY
@@ -128,6 +152,7 @@ def format_output_links(
         return text
 
     should_wrap = wrap if wrap is not None else (is_tty or mode in ("osc8", "terminal"))
+    should_color = color if color is not None else (is_tty and not os.environ.get("NO_COLOR"))
 
     pat = re.compile(r"\[([^\]]+)\]\((file://[^\)]+)\)")
     use_osc8 = (mode == "osc8") or (mode == "auto" and supports_osc8())
@@ -150,19 +175,25 @@ def format_output_links(
 
     if should_wrap:
         visible_text = restore_visible(tokenized)
-        wrapped = wrap_terminal_text(visible_text, width=width)
+        processed = wrap_terminal_text(visible_text, width=width)
     else:
-        wrapped = restore_visible(tokenized)
+        processed = restore_visible(tokenized)
 
-    if use_osc8:
-        for label, url in extracted_links:
-            wrapped = wrapped.replace(
-                label,
-                f"\033]8;;{url}\033\\{label}\033]8;;\033\\",
-                1,
-            )
+    if should_color:
+        processed = colorize_terminal_text(processed)
 
-    return wrapped
+    for label, url in extracted_links:
+        if use_osc8 and should_color:
+            replacement = f"\033[32m\033]8;;{url}\033\\{label}\033]8;;\033\\\033[0m"
+        elif use_osc8:
+            replacement = f"\033]8;;{url}\033\\{label}\033]8;;\033\\"
+        elif should_color:
+            replacement = f"\033[32m{label}\033[0m"
+        else:
+            replacement = label
+        processed = processed.replace(label, replacement, 1)
+
+    return processed
 
 
 def format_search_results(results: list[dict], base_folder: Path) -> str:
@@ -458,6 +489,9 @@ def _run_ask(
             custom_index_dir=custom_index_dir,
             verbose=not quiet,
         )
+        if not quiet:
+            term_w = min(width or shutil.get_terminal_size((80, 24)).columns, 80)
+            print(f"\n\033[36m{'=' * term_w}\033[0m\n")
         print(format_output_links(answer, mode=links, wrap=wrap, width=width))
     except Exception as e:  # noqa: BLE001
         print(f"Error: {e}", file=sys.stderr)
