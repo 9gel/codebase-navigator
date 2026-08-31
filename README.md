@@ -1,12 +1,15 @@
 # codebase-navigator
 
-Developer tools for ultra-fast codebase navigation, Git-aware ctags indexing, live watchers, and LanceDB semantic search.
+Tools for ultra-fast semantic codebase navigation, Git-aware ctags indexing, live watchers, and [LanceDB](https://github.com/lancedb/lancedb) semantic search. Self-contained runtime, no additional servers (e.g. Ollama) to run for embeddings.
+
+## How it works
+
 
 ## Quick Start
 
 ### Prerequisites
 
-For non-Nix environments (e.g. running via `uvx` or direct Python install), ensure these command-line tools are installed on your host system:
+Ensure these command-line tools are installed on your system:
 
 - **[Git](https://git-scm.com/downloads)**: Used for repository discovery and ignoring non-tracked files.
 - **[universal-ctags](https://github.com/universal-ctags/ctags#installation)**: Required for generating `.tags` code symbol indexes. Installation instructions for various platforms:
@@ -17,29 +20,50 @@ For non-Nix environments (e.g. running via `uvx` or direct Python install), ensu
 
 *(Note: When running via Nix Flakes or `nix run`, these dependencies are automatically bundled and handled for you).*
 
-### Using nix
+### Try it out using uvx
 
-Run `cn` instantly without installing:
+You can run `cn` using `uvx` (the tool runner from [uv](https://docs.astral.sh/uv/)). At the top level of a code tree under a git repository, run:
 
 ```bash
-# Run directly from GitHub
+# Index the code:
+uvx codebase-navigator sync
+
+# Ask about the code:
+uvx codebase-navigator ask "What functions call process_data?"
+
+# Search documentation and symbols:
+uvx codebase-navigator search "Flush Chunk"
+
+# Tag search for exact symbols:
+uvx codebase-navigator tags flush_chunk
+```
+
+To make `ask` and `search` faster and update the index as you change code, run
+the watcher:
+
+```bash
+# Run this in a separate terminal / tmux pane:
+uvx codebase-navigator sync
+
+# Ask returns quickly, communicating via a unix socket:
+uvx codebase-navigator ask "What functions call process_data?"
+
+# Search returns almost instantly:
+uvx codebase-navigator search "Flush Chunk"
+```
+
+### Try it out using nix
+
+Run `cn` instantly without installing. At the top level of a code tree under a
+git repository, run:
+
+```bash
+# Index the code:
 nix run github:9gel/codebase-navigator -- sync
 
 # Run help or any command
 nix run github:9gel/codebase-navigator -- --help
 nix run github:9gel/codebase-navigator -- search "authentication flow"
-```
-
-### Using uvx
-
-You can run `cn` using `uvx` (the tool runner from [uv](https://docs.astral.sh/uv/)):
-
-```bash
-# Directly from the Git repository:
-uvx --from git+https://github.com/9gel/codebase-navigator.git cn --help
-
-# Once published to PyPI:
-uvx codebase-navigator --help
 ```
 
 ## Features
@@ -94,6 +118,7 @@ The unified `cn` command provides all indexing and search tools:
 
 | Command | Purpose |
 |---|---|
+| `cn ask <question> [folder]` | LLM-powered codebase Q&A with iterative semantic search |
 | `cn search <query> [folder]` | Semantic & hybrid search in markdown docs and code comments |
 | `cn tags <symbol> [folder]` | Fast symbol definition lookup in `.tags` |
 | `cn sync [folder] [--force]` | Synchronize `.tags` and LanceDB vector embeddings |
