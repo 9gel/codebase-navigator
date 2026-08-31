@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shutil
 import sys
+import textwrap
 from pathlib import Path
 
 from .config import get_socket_path
@@ -35,8 +37,82 @@ def supports_osc8() -> bool:
     return any(k in os.environ for k in ("KITTY_PID", "ALACRITTY_LOG", "WT_SESSION", "DOMTERM"))
 
 
-def format_output_links(text: str, mode: str = "auto") -> str:
-    """Format markdown links for terminal or markdown output.
+def wrap_terminal_text(text: str, width: int | None = None) -> str:
+    """Wrap markdown-like text for terminal display, preserving code blocks, bullet indentation, and headers."""
+    if width is None:
+        term_cols = shutil.get_terminal_size((80, 24)).columns
+        width = max(40, min(term_cols, 100))
+
+    lines = text.splitlines()
+    wrapped_lines = []
+    in_code_block = False
+
+    bullet_re = re.compile(r"^(\s*[-*+]|\s*\d+\.)\s+(.*)$")
+    header_re = re.compile(r"^(#{1,6})\s+(.*)$")
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_code_block = not in_code_block
+            wrapped_lines.append(line)
+            continue
+
+        if in_code_block or not stripped:
+            wrapped_lines.append(line)
+            continue
+
+        # Check for bullet point (e.g. "* item", "- item", "1. item")
+        bm = bullet_re.match(line)
+        if bm:
+            prefix = bm.group(1)
+            content = bm.group(2)
+            indent_len = len(prefix) + 1
+            w = textwrap.TextWrapper(
+                width=width,
+                initial_indent=f"{prefix} ",
+                subsequent_indent=" " * indent_len,
+                break_long_words=False,
+                break_on_hyphens=False,
+            )
+            wrapped_lines.extend(w.wrap(content))
+            continue
+
+        # Check for blockquote (e.g. "> text")
+        if stripped.startswith(">"):
+            content = stripped[1:].strip()
+            w = textwrap.TextWrapper(
+                width=width,
+                initial_indent="> ",
+                subsequent_indent="> ",
+                break_long_words=False,
+                break_on_hyphens=False,
+            )
+            wrapped_lines.extend(w.wrap(content))
+            continue
+
+        # Check for markdown header (e.g. "## Header")
+        if header_re.match(stripped):
+            wrapped_lines.append(line)
+            continue
+
+        # Regular paragraph line
+        w = textwrap.TextWrapper(
+            width=width,
+            break_long_words=False,
+            break_on_hyphens=False,
+        )
+        wrapped_lines.extend(w.wrap(line))
+
+    return "\n".join(wrapped_lines)
+
+
+def format_output_links(
+    text: str,
+    mode: str = "auto",
+    wrap: bool | None = None,
+    width: int | None = None,
+) -> str:
+    """Format markdown links and wrap lines for terminal or markdown output.
 
     Modes:
     - 'auto': OSC 8 if TTY + supported, clean path if TTY without OSC 8, markdown if non-TTY
@@ -47,17 +123,46 @@ def format_output_links(text: str, mode: str = "auto") -> str:
     if mode == "markdown":
         return text
 
-    is_tty = sys.stdout.isatty()
+    is_tty = sys.stdout.isatty() if hasattr(sys.stdout, "isatty") else False
     if mode == "auto" and not is_tty:
         return text
+
+    should_wrap = wrap if wrap is not None else (is_tty or mode in ("osc8", "terminal"))
 
     pat = re.compile(r"\[([^\]]+)\]\((file://[^\)]+)\)")
     use_osc8 = (mode == "osc8") or (mode == "auto" and supports_osc8())
 
-    if use_osc8:
-        return pat.sub(lambda m: f"\033]8;;{m.group(2)}\033\\{m.group(1)}\033]8;;\033\\", text)
+    # Extract links into indexed placeholders so wrapping measures exact visible width
+    extracted_links: list[tuple[str, str]] = []
+
+    def save_link(m: re.Match) -> str:
+        idx = len(extracted_links)
+        label, url = m.group(1), m.group(2)
+        extracted_links.append((label, url))
+        return f"__CN_LINK_{idx}__"
+
+    tokenized = pat.sub(save_link, text)
+
+    def restore_visible(t: str) -> str:
+        for idx, (label, _) in enumerate(extracted_links):
+            t = t.replace(f"__CN_LINK_{idx}__", label)
+        return t
+
+    if should_wrap:
+        visible_text = restore_visible(tokenized)
+        wrapped = wrap_terminal_text(visible_text, width=width)
     else:
-        return pat.sub(lambda m: m.group(1), text)
+        wrapped = restore_visible(tokenized)
+
+    if use_osc8:
+        for label, url in extracted_links:
+            wrapped = wrapped.replace(
+                label,
+                f"\033]8;;{url}\033\\{label}\033]8;;\033\\",
+                1,
+            )
+
+    return wrapped
 
 
 def format_search_results(results: list[dict], base_folder: Path) -> str:
@@ -155,6 +260,8 @@ def build_parser() -> argparse.ArgumentParser:
         default="auto",
         help="Link formatting: auto (detect terminal), markdown, terminal (clean path:line), osc8 (default: auto)",
     )
+    p_search.add_argument("--wrap", action=argparse.BooleanOptionalAction, default=None, help="Wrap terminal lines (default: enabled on TTY)")
+    p_search.add_argument("--width", type=int, default=None, help="Wrap line width (default: terminal width)")
     p_search.add_argument("--index-dir", default=None, help="Custom LanceDB directory")
 
     # tags
@@ -179,6 +286,8 @@ def build_parser() -> argparse.ArgumentParser:
         default="auto",
         help="Link formatting: auto (detect terminal), markdown, terminal (clean path:line), osc8 (default: auto)",
     )
+    p_ask.add_argument("--wrap", action=argparse.BooleanOptionalAction, default=None, help="Wrap terminal lines (default: enabled on TTY)")
+    p_ask.add_argument("--width", type=int, default=None, help="Wrap line width (default: terminal width)")
     p_ask.add_argument("--index-dir", default=None, help="Custom LanceDB directory")
     p_ask.add_argument("-q", "--quiet", action="store_true", help="Suppress progress output")
 
@@ -198,7 +307,16 @@ def main(argv: list[str] | None = None):
     elif args.command == "watch":
         _run_watch(folder, debounce_ms=args.debounce, custom_index_dir=args.index_dir)
     elif args.command == "search":
-        _run_search(folder, args.query, limit=args.limit, doc_type=args.type, links=args.links, custom_index_dir=args.index_dir)
+        _run_search(
+            folder,
+            args.query,
+            limit=args.limit,
+            doc_type=args.type,
+            links=args.links,
+            wrap=args.wrap,
+            width=args.width,
+            custom_index_dir=args.index_dir,
+        )
     elif args.command == "tags":
         _run_tags(folder, args.symbol, exact=args.exact, limit=args.limit)
     elif args.command == "ask":
@@ -211,6 +329,8 @@ def main(argv: list[str] | None = None):
             limit=args.limit,
             max_searches=args.max_searches,
             links=args.links,
+            wrap=args.wrap,
+            width=args.width,
             custom_index_dir=args.index_dir,
             quiet=args.quiet,
         )
@@ -278,13 +398,15 @@ def _run_search(
     limit: int = 5,
     doc_type: str = "all",
     links: str = "auto",
+    wrap: bool | None = None,
+    width: int | None = None,
     custom_index_dir: str | None = None,
 ):
     socket_path = get_socket_path(folder, custom_index_dir)
     results = query_socket(socket_path, query, limit=limit, doc_type=doc_type)
     if results is not None:
         raw_out = format_search_results(results, folder)
-        print(format_output_links(raw_out, mode=links))
+        print(format_output_links(raw_out, mode=links, wrap=wrap, width=width))
         return
 
     # Fallback to direct in-process search
@@ -292,7 +414,7 @@ def _run_search(
     idx = VectorIndex(folder, custom_index_dir)
     results = idx.search(query, limit=limit, doc_type=doc_type)
     raw_out = format_search_results(results, folder)
-    print(format_output_links(raw_out, mode=links))
+    print(format_output_links(raw_out, mode=links, wrap=wrap, width=width))
 
 
 def _run_tags(folder: Path, symbol: str, exact: bool = False, limit: int = 20):
@@ -310,6 +432,8 @@ def _run_ask(
     limit: int | None = None,
     max_searches: int | None = None,
     links: str = "auto",
+    wrap: bool | None = None,
+    width: int | None = None,
     custom_index_dir: str | None = None,
     quiet: bool = False,
 ):
@@ -334,7 +458,7 @@ def _run_ask(
             custom_index_dir=custom_index_dir,
             verbose=not quiet,
         )
-        print(format_output_links(answer, mode=links))
+        print(format_output_links(answer, mode=links, wrap=wrap, width=width))
     except Exception as e:  # noqa: BLE001
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)

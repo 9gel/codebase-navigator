@@ -116,14 +116,14 @@ def test_cn_main_dispatch(monkeypatch, tmp_path: Path):
     def mock_watch(folder, debounce_ms=1000, custom_index_dir=None):
         called["watch"] = (folder, debounce_ms, custom_index_dir)
 
-    def mock_search(folder, query, limit=5, doc_type="all", links="auto", custom_index_dir=None):
-        called["search"] = (folder, query, limit, doc_type, links, custom_index_dir)
+    def mock_search(folder, query, limit=5, doc_type="all", links="auto", wrap=None, width=None, custom_index_dir=None):
+        called["search"] = (folder, query, limit, doc_type, links, wrap, width, custom_index_dir)
 
     def mock_tags(folder, symbol, exact=False, limit=20):
         called["tags"] = (folder, symbol, exact, limit)
 
-    def mock_ask(folder, question, model=None, endpoint=None, api_key=None, limit=None, max_searches=None, links="auto", custom_index_dir=None, quiet=False):
-        called["ask"] = (folder, question, model, endpoint, api_key, limit, max_searches, links, custom_index_dir, quiet)
+    def mock_ask(folder, question, model=None, endpoint=None, api_key=None, limit=None, max_searches=None, links="auto", wrap=None, width=None, custom_index_dir=None, quiet=False):
+        called["ask"] = (folder, question, model, endpoint, api_key, limit, max_searches, links, wrap, width, custom_index_dir, quiet)
 
     monkeypatch.setattr(cli_mod, "_run_status", mock_status)
     monkeypatch.setattr(cli_mod, "_run_sync", mock_sync)
@@ -141,31 +141,59 @@ def test_cn_main_dispatch(monkeypatch, tmp_path: Path):
     main(["watch", str(tmp_path), "--debounce", "2000"])
     assert called["watch"] == (tmp_path.resolve(), 2000, None)
 
-    main(["search", "hello world", str(tmp_path), "--limit", "3", "--type", "code", "--links", "osc8"])
-    assert called["search"] == (tmp_path.resolve(), "hello world", 3, "code", "osc8", None)
+    main(["search", "hello world", str(tmp_path), "--limit", "3", "--type", "code", "--links", "osc8", "--no-wrap", "--width", "80"])
+    assert called["search"] == (tmp_path.resolve(), "hello world", 3, "code", "osc8", False, 80, None)
 
     main(["tags", "MySymbol", str(tmp_path), "--exact"])
     assert called["tags"] == (tmp_path.resolve(), "MySymbol", True, 20)
 
-    main(["ask", "What is the architecture?", str(tmp_path), "--model", "custom-model", "--limit", "12", "--links", "terminal"])
-    assert called["ask"] == (tmp_path.resolve(), "What is the architecture?", "custom-model", None, None, 12, None, "terminal", None, False)
+    main(["ask", "What is the architecture?", str(tmp_path), "--model", "custom-model", "--limit", "12", "--links", "terminal", "--wrap", "--width", "90"])
+    assert called["ask"] == (tmp_path.resolve(), "What is the architecture?", "custom-model", None, None, 12, None, "terminal", True, 90, None, False)
 
 
-def test_format_output_links():
+def test_format_output_links_and_wrapping():
     from codebase_navigator.cli import format_output_links
 
-    raw = "See [src/policy.py:86-123](file:///home/user/repo/src/policy.py#L86-L123) for details."
+    raw = (
+        "The classify_retail_destination function in "
+        "[src/policy.py:86-123](file:///home/user/repo/src/policy.py#L86-L123) "
+        "is indeed the code that returns the retail_destination output."
+    )
 
-    # Markdown mode: preserves full markdown link
+    # Markdown mode: preserves full markdown link without forced wrapping
     assert format_output_links(raw, mode="markdown") == raw
 
-    # Terminal / clean mode: extracts clean label
-    assert format_output_links(raw, mode="terminal") == "See src/policy.py:86-123 for details."
+    # Terminal / clean mode with wrapping at 50 cols
+    wrapped_term = format_output_links(raw, mode="terminal", wrap=True, width=50)
+    assert "src/policy.py:86-123" in wrapped_term
+    for line in wrapped_term.splitlines():
+        assert len(line) <= 55
 
-    # OSC 8 mode: wraps with OSC 8 escape sequences
-    osc8_res = format_output_links(raw, mode="osc8")
-    assert "\033]8;;file:///home/user/repo/src/policy.py#L86-L123\033\\" in osc8_res
-    assert "src/policy.py:86-123" in osc8_res
-    assert "\033]8;;\033\\" in osc8_res
+    # OSC 8 mode with wrapping at 50 cols
+    wrapped_osc8 = format_output_links(raw, mode="osc8", wrap=True, width=50)
+    assert "\033]8;;file:///home/user/repo/src/policy.py#L86-L123\033\\" in wrapped_osc8
+    assert "src/policy.py:86-123" in wrapped_osc8
+
+
+def test_wrap_terminal_text_structures():
+    from codebase_navigator.cli import wrap_terminal_text
+
+    sample = (
+        "- Item one has very long text that will wrap around to the next line nicely with indentation.\n"
+        "```python\n"
+        "long_code_line_that_must_not_be_wrapped_under_any_circumstances = 123456789\n"
+        "```\n"
+        "### Header Title\n"
+        "> Blockquote with long text that also wraps with blockquote prefix."
+    )
+
+    wrapped = wrap_terminal_text(sample, width=40)
+    # Check code block was untouched
+    assert "long_code_line_that_must_not_be_wrapped_under_any_circumstances = 123456789" in wrapped
+    # Check header was untouched
+    assert "### Header Title" in wrapped
+    # Check bullet item indented subsequent lines
+    assert "  " in wrapped
+
 
 
