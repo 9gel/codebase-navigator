@@ -4,6 +4,19 @@ Developer tools for ultra-fast codebase navigation, Git-aware ctags indexing, li
 
 ## Quick Start
 
+### Prerequisites
+
+For non-Nix environments (e.g. running via `uvx` or direct Python install), ensure these command-line tools are installed on your host system:
+
+- **[Git](https://git-scm.com/downloads)**: Used for repository discovery and ignoring non-tracked files.
+- **[universal-ctags](https://github.com/universal-ctags/ctags#installation)**: Required for generating `.tags` code symbol indexes. Installation instructions for various platforms:
+  - macOS (Homebrew): `brew install universal-ctags`
+  - Ubuntu / Debian: `sudo apt install universal-ctags`
+  - Arch Linux: `sudo pacman -S universal-ctags`
+  - Windows (Chocolatey / Scoop): `choco install universal-ctags` or `scoop install universal-ctags`
+
+*(Note: When running via Nix Flakes or `nix run`, these dependencies are automatically bundled and handled for you).*
+
 ### Using nix
 
 Run `cn` instantly without installing:
@@ -28,8 +41,6 @@ uvx --from git+https://github.com/9gel/codebase-navigator.git cn --help
 # Once published to PyPI:
 uvx codebase-navigator --help
 ```
-
-> **Note:** `cn tags` requires `universal-ctags` and `git` to be installed on your system.
 
 ## Features
 
