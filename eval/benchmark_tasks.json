@@ -6,8 +6,8 @@
     "tasks": [
       {
         "id": "flask-before-request",
-        "question": "Where in the request handling lifecycle is the `before_request` hook executed, and what method dispatches it?",
-        "expected_answer_key": "Executed during preprocess_request / full_dispatch_request in src/flask/app.py or flask/app.py before the actual route endpoint function is called.",
+        "question": "where does flask run before request hooks and how does the dispatch flow work?",
+        "expected_answer_key": "Executed during preprocess_request / full_dispatch_request in src/flask/app.py or flask/app.py before the route endpoint function is called.",
         "required_keywords": [
           "preprocess_request",
           "full_dispatch_request",
@@ -19,7 +19,7 @@
       },
       {
         "id": "flask-cli-click",
-        "question": "How does Flask integrate Click for its CLI commands, and where is the FlaskGroup class defined?",
+        "question": "how does the click cli group loading work for flask apps and where is flaskgroup?",
         "expected_answer_key": "FlaskGroup is a Click Group subclass defined in src/flask/cli.py that supports loading Flask app instances dynamically.",
         "required_keywords": [
           "FlaskGroup",
@@ -27,6 +27,42 @@
         ],
         "required_files": [
           "cli.py"
+        ]
+      },
+      {
+        "id": "flask-session-interface",
+        "question": "what class handles client side session cookies and signing in flask by default?",
+        "expected_answer_key": "SecureCookieSessionFactory or SecureCookieSessionInterface in src/flask/sessions.py using itsdangerous for cookie serialization and signing.",
+        "required_keywords": [
+          "SecureCookieSessionInterface",
+          "sessions.py"
+        ],
+        "required_files": [
+          "sessions.py"
+        ]
+      },
+      {
+        "id": "flask-blueprints-registration",
+        "question": "what happens internally when you call register blueprint on an app instance?",
+        "expected_answer_key": "In src/flask/app.py and src/flask/blueprints.py, register_blueprint records deferred setup functions onto BlueprintSetupState and registers URL prefix rules.",
+        "required_keywords": [
+          "BlueprintSetupState",
+          "blueprints.py"
+        ],
+        "required_files": [
+          "blueprints.py"
+        ]
+      },
+      {
+        "id": "flask-app-context-locals",
+        "question": "how does current app proxy work and where is app context pushed?",
+        "expected_answer_key": "current_app is a LocalProxy bound to _cv_app in src/flask/globals.py, pushed via AppContext.push() in src/flask/ctx.py.",
+        "required_keywords": [
+          "AppContext",
+          "globals.py"
+        ],
+        "required_files": [
+          "globals.py"
         ]
       }
     ]
@@ -38,8 +74,8 @@
     "tasks": [
       {
         "id": "fastapi-dependency-overrides",
-        "question": "How does FastAPI check and apply `app.dependency_overrides` during request dependency resolution?",
-        "expected_answer_key": "In fastapi/dependencies/utils.py inside solve_dependencies, dependency_overrides is checked for the callable dependency before execution.",
+        "question": "how does dependency overriding work when testing and where is dependency overrides checked?",
+        "expected_answer_key": "In fastapi/dependencies/utils.py inside solve_dependencies, dependency_overrides dict is checked against callables before executing sub-dependencies.",
         "required_keywords": [
           "dependency_overrides",
           "solve_dependencies"
@@ -50,14 +86,50 @@
       },
       {
         "id": "fastapi-custom-middleware",
-        "question": "Where is the BaseHTTPMiddleware or middleware dispatch stack assembled in FastAPI/Starlette routing?",
-        "expected_answer_key": "FastAPI builds its middleware stack using Starlette's Middleware/App structures during app initialization.",
+        "question": "where does fastapi build its middleware stack and wrap starlette app?",
+        "expected_answer_key": "FastAPI builds its middleware stack using build_middleware_stack in fastapi/applications.py wrapping Starlette middleware.",
         "required_keywords": [
-          "middleware",
+          "build_middleware_stack",
           "applications.py"
         ],
         "required_files": [
           "applications.py"
+        ]
+      },
+      {
+        "id": "fastapi-response-serialization",
+        "question": "where does response model data validation and pydantic conversion happen before returning a response?",
+        "expected_answer_key": "In fastapi/routing.py in serialize_response or run_endpoint_function, converting return data according to response_model.",
+        "required_keywords": [
+          "serialize_response",
+          "routing.py"
+        ],
+        "required_files": [
+          "routing.py"
+        ]
+      },
+      {
+        "id": "fastapi-openapi-generation",
+        "question": "which module generates the openapi schema json and extracts route parameters?",
+        "expected_answer_key": "fastapi/openapi/utils.py in get_openapi function inspecting route endpoints and Pydantic models.",
+        "required_keywords": [
+          "get_openapi",
+          "utils.py"
+        ],
+        "required_files": [
+          "utils.py"
+        ]
+      },
+      {
+        "id": "fastapi-exception-handling",
+        "question": "how are http exceptions and validation error handlers dispatched when a route handler fails?",
+        "expected_answer_key": "In fastapi/exception_handlers.py and fastapi/applications.py via add_exception_handler and default handlers for RequestValidationError.",
+        "required_keywords": [
+          "exception_handlers",
+          "RequestValidationError"
+        ],
+        "required_files": [
+          "exception_handlers.py"
         ]
       }
     ]
@@ -69,7 +141,7 @@
     "tasks": [
       {
         "id": "httpx-transport-routing",
-        "question": "How does httpx.Client choose between default HTTPTransport and custom mounted transports for a request?",
+        "question": "how does the client pick between custom mounts and default transport for url routing?",
         "expected_answer_key": "In httpx/_client.py in _transport_for_url, it checks URL patterns against the mounts dictionary, falling back to _transport.",
         "required_keywords": [
           "_transport_for_url",
@@ -82,7 +154,7 @@
       },
       {
         "id": "httpx-event-hooks",
-        "question": "Where are request and response event hooks ('request' and 'response') triggered in Client.send?",
+        "question": "where in the request pipeline are request and response event hooks actually called?",
         "expected_answer_key": "Triggered in Client._send_handling_redirects or Client.send via event_hooks in _client.py.",
         "required_keywords": [
           "event_hooks",
@@ -90,6 +162,42 @@
         ],
         "required_files": [
           "_client.py"
+        ]
+      },
+      {
+        "id": "httpx-auth-flow",
+        "question": "how does httpx handle digest and basic authentication challenge headers?",
+        "expected_answer_key": "In httpx/_auth.py via BasicAuth and DigestAuth classes yielding requests in auth_flow.",
+        "required_keywords": [
+          "DigestAuth",
+          "_auth.py"
+        ],
+        "required_files": [
+          "_auth.py"
+        ]
+      },
+      {
+        "id": "httpx-connection-pooling",
+        "question": "where is the connection pool managed for http1 and http2 connections in the default transport?",
+        "expected_answer_key": "In httpx/_transports/default.py via HTTPTransport managing httpcore.ConnectionPool.",
+        "required_keywords": [
+          "HTTPTransport",
+          "default.py"
+        ],
+        "required_files": [
+          "default.py"
+        ]
+      },
+      {
+        "id": "httpx-streaming-response",
+        "question": "how does response stream iterating work and where is stream context manager closed?",
+        "expected_answer_key": "In httpx/_models.py in Response.stream() and Response.read() using ByteStream or SyncByteStream.",
+        "required_keywords": [
+          "Response",
+          "_models.py"
+        ],
+        "required_files": [
+          "_models.py"
         ]
       }
     ]
@@ -101,7 +209,7 @@
     "tasks": [
       {
         "id": "express-route-matching",
-        "question": "Where does Express router process middleware and match route layers?",
+        "question": "where does express router process middleware and match route layers?",
         "expected_answer_key": "In Express 5.x, routing logic was extracted into the external 'router' npm package dependency (required in lib/express.js and lib/application.js), with app.lazyrouter() or app.handle() delegating request dispatching to it.",
         "required_keywords": [
           "router",
@@ -113,7 +221,7 @@
       },
       {
         "id": "express-app-listen",
-        "question": "How is `app.listen()` implemented in Express and what Node.js http method does it wrap?",
+        "question": "how does app listen start a node server and what method does it wrap?",
         "expected_answer_key": "In lib/application.js, app.listen creates an http.createServer(this) and calls server.listen.",
         "required_keywords": [
           "http.createServer",
@@ -121,6 +229,30 @@
         ],
         "required_files": [
           "application.js"
+        ]
+      },
+      {
+        "id": "express-view-rendering",
+        "question": "where is res render implemented and how does express resolve template engine paths?",
+        "expected_answer_key": "In lib/response.js (res.render) delegating to app.render in lib/application.js and View class in lib/view.js.",
+        "required_keywords": [
+          "render",
+          "response.js"
+        ],
+        "required_files": [
+          "response.js"
+        ]
+      },
+      {
+        "id": "express-json-body-parser",
+        "question": "how does express json middleware work and where is body parser built into express?",
+        "expected_answer_key": "In lib/express.js, express.json and express.urlencoded are re-exported directly from the body-parser package.",
+        "required_keywords": [
+          "body-parser",
+          "express.js"
+        ],
+        "required_files": [
+          "express.js"
         ]
       }
     ]
@@ -132,10 +264,34 @@
     "tasks": [
       {
         "id": "vikunja-task-reminders",
-        "question": "Where are task reminders or background periodic jobs scheduled and processed in Vikunja?",
+        "question": "where are task reminders or background periodic jobs scheduled and processed in vikunja?",
         "expected_answer_key": "Handled in pkg/modules/reminder/ or pkg/cron/ background worker routines in Go.",
         "required_keywords": [
-          "reminder",
+          "cron",
+          "pkg"
+        ],
+        "required_files": [
+          "pkg"
+        ]
+      },
+      {
+        "id": "vikunja-database-migration",
+        "question": "how does vikunja run database schema migrations on startup in go?",
+        "expected_answer_key": "In pkg/migration/ or pkg/db/ using xorm migration runner to execute versioned schema changes.",
+        "required_keywords": [
+          "migration",
+          "pkg"
+        ],
+        "required_files": [
+          "pkg"
+        ]
+      },
+      {
+        "id": "vikunja-jwt-auth",
+        "question": "where is user authentication token parsing and jwt validation handled?",
+        "expected_answer_key": "In pkg/user/ or pkg/routes/api/v1/auth.go validating JWT bearer tokens with golang-jwt.",
+        "required_keywords": [
+          "token",
           "pkg"
         ],
         "required_files": [
@@ -151,10 +307,34 @@
     "tasks": [
       {
         "id": "uv-resolver-dispatch",
-        "question": "Where is the core dependency resolution algorithm entry point in the uv crate workspace?",
+        "question": "where is the core dependency resolution algorithm entry point in the uv crate workspace?",
         "expected_answer_key": "Located in crates/uv-resolver/src/resolver/ or crates/uv-resolver/src/lib.rs in the Resolver struct.",
         "required_keywords": [
           "uv-resolver",
+          "crates"
+        ],
+        "required_files": [
+          "crates"
+        ]
+      },
+      {
+        "id": "uv-wheel-build",
+        "question": "how does uv build wheels from source distributions and invoke pep 517 build backends in rust?",
+        "expected_answer_key": "In crates/uv-build/ or crates/uv-installer/ invoking PEP 517 build hooks with build environments.",
+        "required_keywords": [
+          "build",
+          "crates"
+        ],
+        "required_files": [
+          "crates"
+        ]
+      },
+      {
+        "id": "uv-virtualenv-creation",
+        "question": "where does uv create python virtual environments and write the pyvenv cfg file?",
+        "expected_answer_key": "In crates/uv-virtualenv/ implementing virtualenv creation and pyvenv.cfg generation.",
+        "required_keywords": [
+          "virtualenv",
           "crates"
         ],
         "required_files": [

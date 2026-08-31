@@ -559,13 +559,25 @@ def run_benchmark(
     print(f"📊 CN Evaluation Score:       {passed_tasks}/{total_tasks} passed ({score_pct:.1f}%)")
     if compare_baseline and total_tasks > 0:
         base_score_pct = (baseline_passed_tasks / total_tasks * 100)
+
+        # Only compute token savings on mutually successful tasks for fair comparison
+        valid_pairs = [
+            r for r in results_report
+            if r.get("passed") and r.get("baseline_passed") and (r.get("baseline_tokens") or 0) > 0
+        ]
+        valid_cn_tokens = sum(r["tokens"] for r in valid_pairs)
+        valid_base_tokens = sum(r["baseline_tokens"] for r in valid_pairs)
+
         overall_savings = (
-            round(((total_base_tokens - total_cn_tokens) / total_base_tokens) * 100, 1)
-            if total_base_tokens > 0
+            round(((valid_base_tokens - valid_cn_tokens) / valid_base_tokens) * 100, 1)
+            if valid_base_tokens > 0
             else 0.0
         )
         print(f"📊 Baseline Evaluation Score: {baseline_passed_tasks}/{total_tasks} passed ({base_score_pct:.1f}%)")
-        print(f"💰 Overall Token Savings:     {overall_savings:+.1f}% (CN: {total_cn_tokens:,} vs Base: {total_base_tokens:,})")
+        print(
+            f"💰 Validated Token Savings:   {overall_savings:+.1f}% "
+            f"(CN: {valid_cn_tokens:,} vs Base: {valid_base_tokens:,} across {len(valid_pairs)} mutually passed tasks)"
+        )
     print("=" * 75)
 
     if save_report:

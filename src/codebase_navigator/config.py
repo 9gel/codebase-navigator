@@ -25,8 +25,24 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 import pyarrow as pa
 
-EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
-VECTOR_DIM = 384
+EMBEDDING_MODEL_NAME = os.environ.get(
+    "CN_EMBEDDING_MODEL",
+    os.environ.get("CODEBASE_NAVIGATOR_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+)
+
+# Common dimensions for known FastEmbed ONNX models, default 384 for MiniLM
+_MODEL_DIMS = {
+    "sentence-transformers/all-MiniLM-L6-v2": 384,
+    "sentence-transformers/all-MiniLM-L12-v2": 384,
+    "BAAI/bge-small-en-v1.5": 384,
+    "BAAI/bge-base-en-v1.5": 768,
+    "BAAI/bge-large-en-v1.5": 1024,
+    "intfloat/e5-small-v2": 384,
+    "intfloat/e5-base-v2": 768,
+    "intfloat/e5-large-v2": 1024,
+    "nomic-ai/nomic-embed-text-v1.5": 768,
+}
+VECTOR_DIM = _MODEL_DIMS.get(EMBEDDING_MODEL_NAME, 384)
 
 DOC_SCHEMA = pa.schema([
     pa.field("id", pa.string()),
