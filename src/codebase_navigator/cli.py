@@ -737,7 +737,7 @@ def _run_ask(
         if not quiet and is_tty:
             ans_status = stats.get("status", "answered") if stats else "answered"
             if ans_status == "refusal":
-                print("⚠️  Off-topic / Answer not found in codebase", file=sys.stderr)
+                print("⚠️ Answer not found in codebase / Off-topic", file=sys.stderr)
             else:
                 print("✅ Answer found by agent", file=sys.stderr)
         if not quiet:
