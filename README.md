@@ -270,12 +270,41 @@ When resolving settings, `cn` applies the following order of precedence:
 
 ## Development
 
-The project uses Nix and `direnv`. Ensure you have both installed, then:
+The project uses nix and `direnv`. Ensure you have both installed, then:
 
 ```bash
 cd codebase-navigator/
 direnv allow
 uv run pytest
+```
+
+### Evaluation Harness
+
+`codebase-navigator` includes a multi-language evaluation and benchmarking suite in [`eval/`](eval/) to measure retrieval accuracy, agent reasoning, latency, and token efficiency against diverse open-source codebases:
+
+| Repository | Language | Architectural Focus |
+|---|---|---|
+| **Flask** | Python | Request dispatch lifecycle, Click CLI integration |
+| **FastAPI** | Python | Dependency override resolution in `solve_dependencies`, middleware stack assembly |
+| **HTTPX** | Python | Mount-based transport routing in `_transport_for_url`, event hooks |
+| **Express** | JavaScript / Node.js | Router package delegation, `app.listen()` HTTP server wrap |
+| **Vikunja** | Go | Cron worker routines, background periodic job scheduling |
+| **uv** | Rust | Core workspace dependency resolver in `uv-resolver` |
+
+#### Running the Benchmark Suite
+
+```bash
+# Run all benchmark questions across all exercise repositories:
+uv run eval/runner.py
+
+# Benchmark a specific repository:
+uv run eval/runner.py --repo fastapi
+
+# Run with keyword validation only (without LLM-as-a-judge):
+uv run eval/runner.py --no-judge
+
+# Export structured JSON evaluation report:
+uv run eval/runner.py --report eval/report.json
 ```
 
 ## References

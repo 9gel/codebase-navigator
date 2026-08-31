@@ -8,15 +8,26 @@
         "id": "flask-before-request",
         "question": "Where in the request handling lifecycle is the `before_request` hook executed, and what method dispatches it?",
         "expected_answer_key": "Executed during preprocess_request / full_dispatch_request in src/flask/app.py or flask/app.py before the actual route endpoint function is called.",
-        "required_keywords": ["preprocess_request", "full_dispatch_request", "app.py"],
-        "required_files": ["app.py"]
+        "required_keywords": [
+          "preprocess_request",
+          "full_dispatch_request",
+          "app.py"
+        ],
+        "required_files": [
+          "app.py"
+        ]
       },
       {
         "id": "flask-cli-click",
         "question": "How does Flask integrate Click for its CLI commands, and where is the FlaskGroup class defined?",
         "expected_answer_key": "FlaskGroup is a Click Group subclass defined in src/flask/cli.py that supports loading Flask app instances dynamically.",
-        "required_keywords": ["FlaskGroup", "cli.py"],
-        "required_files": ["cli.py"]
+        "required_keywords": [
+          "FlaskGroup",
+          "cli.py"
+        ],
+        "required_files": [
+          "cli.py"
+        ]
       }
     ]
   },
@@ -29,15 +40,25 @@
         "id": "fastapi-dependency-overrides",
         "question": "How does FastAPI check and apply `app.dependency_overrides` during request dependency resolution?",
         "expected_answer_key": "In fastapi/dependencies/utils.py inside solve_dependencies, dependency_overrides is checked for the callable dependency before execution.",
-        "required_keywords": ["dependency_overrides", "solve_dependencies"],
-        "required_files": ["utils.py"]
+        "required_keywords": [
+          "dependency_overrides",
+          "solve_dependencies"
+        ],
+        "required_files": [
+          "utils.py"
+        ]
       },
       {
         "id": "fastapi-custom-middleware",
         "question": "Where is the BaseHTTPMiddleware or middleware dispatch stack assembled in FastAPI/Starlette routing?",
         "expected_answer_key": "FastAPI builds its middleware stack using Starlette's Middleware/App structures during app initialization.",
-        "required_keywords": ["middleware", "applications.py"],
-        "required_files": ["applications.py"]
+        "required_keywords": [
+          "middleware",
+          "applications.py"
+        ],
+        "required_files": [
+          "applications.py"
+        ]
       }
     ]
   },
@@ -50,15 +71,26 @@
         "id": "httpx-transport-routing",
         "question": "How does httpx.Client choose between default HTTPTransport and custom mounted transports for a request?",
         "expected_answer_key": "In httpx/_client.py in _transport_for_url, it checks URL patterns against the mounts dictionary, falling back to _transport.",
-        "required_keywords": ["_transport_for_url", "mounts", "_client.py"],
-        "required_files": ["_client.py"]
+        "required_keywords": [
+          "_transport_for_url",
+          "mounts",
+          "_client.py"
+        ],
+        "required_files": [
+          "_client.py"
+        ]
       },
       {
         "id": "httpx-event-hooks",
         "question": "Where are request and response event hooks ('request' and 'response') triggered in Client.send?",
         "expected_answer_key": "Triggered in Client._send_handling_redirects or Client.send via event_hooks in _client.py.",
-        "required_keywords": ["event_hooks", "_client.py"],
-        "required_files": ["_client.py"]
+        "required_keywords": [
+          "event_hooks",
+          "_client.py"
+        ],
+        "required_files": [
+          "_client.py"
+        ]
       }
     ]
   },
@@ -70,16 +102,26 @@
       {
         "id": "express-route-matching",
         "question": "Where does Express router process middleware and match route layers?",
-        "expected_answer_key": "In lib/router/index.js and lib/router/layer.js inside proto.handle or proto.process_params.",
-        "required_keywords": ["router", "layer"],
-        "required_files": ["router"]
+        "expected_answer_key": "In Express 5.x, routing logic was extracted into the external 'router' npm package dependency (required in lib/express.js and lib/application.js), with app.lazyrouter() or app.handle() delegating request dispatching to it.",
+        "required_keywords": [
+          "router",
+          "application.js"
+        ],
+        "required_files": [
+          "application.js"
+        ]
       },
       {
         "id": "express-app-listen",
         "question": "How is `app.listen()` implemented in Express and what Node.js http method does it wrap?",
         "expected_answer_key": "In lib/application.js, app.listen creates an http.createServer(this) and calls server.listen.",
-        "required_keywords": ["http.createServer", "application.js"],
-        "required_files": ["application.js"]
+        "required_keywords": [
+          "http.createServer",
+          "application.js"
+        ],
+        "required_files": [
+          "application.js"
+        ]
       }
     ]
   },
@@ -92,8 +134,13 @@
         "id": "vikunja-task-reminders",
         "question": "Where are task reminders or background periodic jobs scheduled and processed in Vikunja?",
         "expected_answer_key": "Handled in pkg/modules/reminder/ or pkg/cron/ background worker routines in Go.",
-        "required_keywords": ["reminder", "pkg"],
-        "required_files": ["pkg"]
+        "required_keywords": [
+          "reminder",
+          "pkg"
+        ],
+        "required_files": [
+          "pkg"
+        ]
       }
     ]
   },
@@ -106,8 +153,13 @@
         "id": "uv-resolver-dispatch",
         "question": "Where is the core dependency resolution algorithm entry point in the uv crate workspace?",
         "expected_answer_key": "Located in crates/uv-resolver/src/resolver/ or crates/uv-resolver/src/lib.rs in the Resolver struct.",
-        "required_keywords": ["uv-resolver", "crates"],
-        "required_files": ["crates"]
+        "required_keywords": [
+          "uv-resolver",
+          "crates"
+        ],
+        "required_files": [
+          "crates"
+        ]
       }
     ]
   }
