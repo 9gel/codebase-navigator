@@ -280,7 +280,9 @@ uv run pytest
 
 ### Evaluation Harness
 
-`codebase-navigator` includes a multi-language evaluation and benchmarking suite in [`eval/`](eval/) to measure retrieval accuracy, agent reasoning, latency, and token efficiency against diverse open-source codebases:
+`codebase-navigator` includes a multi-language evaluation and benchmarking suite
+in [`eval/`](eval/) to measure retrieval accuracy, agent reasoning, latency, and
+token efficiency against diverse open-source codebases:
 
 | Repository | Language | Architectural Focus |
 |---|---|---|
