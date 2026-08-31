@@ -1,18 +1,18 @@
 import time
 from pathlib import Path
-from devel_tools.config import get_cache_dir, get_socket_path
-from devel_tools.index import VectorIndex
-from devel_tools.ipc import IPCServer, ping_socket, query_socket
-from devel_tools.cli import _run_search
+from codebase_navigator.config import get_cache_dir, get_socket_path
+from codebase_navigator.index import VectorIndex
+from codebase_navigator.ipc import IPCServer, ping_socket, query_socket
+from codebase_navigator.cli import _run_search
 
 
 def test_default_cache_dir_and_socket_path(tmp_path: Path):
     cache_dir = get_cache_dir(tmp_path)
-    assert cache_dir == tmp_path / ".devel-tools"
+    assert cache_dir == tmp_path / ".codebase-navigator"
     assert cache_dir.exists()
 
     sock_path = get_socket_path(tmp_path)
-    assert sock_path == tmp_path / ".devel-tools" / "watch.sock"
+    assert sock_path == tmp_path / ".codebase-navigator" / "watch.sock"
 
 
 def test_ipc_server_and_socket_query(tmp_path: Path, capsys):
@@ -91,7 +91,7 @@ def test_duplicate_ipc_server_rejected(tmp_path: Path):
     try:
         server2 = IPCServer(sock_path, idx)
         import pytest
-        with pytest.raises(RuntimeError, match="Another dt watch instance is already running"):
+        with pytest.raises(RuntimeError, match="Another cn watch instance is already running"):
             server2.start()
     finally:
         server1.stop()

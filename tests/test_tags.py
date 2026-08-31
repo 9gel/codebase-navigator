@@ -1,6 +1,6 @@
 import pytest
 from pathlib import Path
-from devel_tools.tags import get_available_files, TagsManager
+from codebase_navigator.tags import get_available_files, TagsManager
 
 
 def test_get_available_files(tmp_path: Path):

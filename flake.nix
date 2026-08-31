@@ -1,5 +1,5 @@
 {
-  description = "devel-tools — Git-aware ctags indexing, live watchers, and LanceDB semantic search";
+  description = "codebase-navigator — Git-aware ctags indexing, live watchers, and LanceDB semantic search";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -55,15 +55,15 @@
           pyprojectOverrides
         ]);
 
-        runtimeEnv = pythonSet.mkVirtualEnv "devel-tools-env" workspace.deps.default;
+        runtimeEnv = pythonSet.mkVirtualEnv "codebase-navigator-env" workspace.deps.default;
         runtimeLibs = "${lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib pkgs.zlib ]}";
 
         # Runtime wrapper with universal-ctags, git, and offline HF environment
-        develTools = pkgs.runCommand "devel-tools"
+        codebaseNavigator = pkgs.runCommand "codebase-navigator"
           { nativeBuildInputs = [ pkgs.makeWrapper ]; }
           ''
             mkdir -p $out/bin
-            for b in dt; do
+            for b in cn; do
               if [ -f "${runtimeEnv}/bin/$b" ]; then
                 makeWrapper "${runtimeEnv}/bin/$b" "$out/bin/$b" \
                   --prefix PATH : "${lib.makeBinPath [ pkgs.universal-ctags pkgs.git pkgs.coreutils ]}" \
@@ -80,15 +80,15 @@
           '';
       in
       {
-        packages.default = develTools;
-        packages.develTools = develTools;
+        packages.default = codebaseNavigator;
+        packages.codebaseNavigator = codebaseNavigator;
         packages.runtimeEnv = runtimeEnv;
 
         apps.default = {
           type = "app";
-          program = "${develTools}/bin/dt";
+          program = "${codebaseNavigator}/bin/cn";
         };
-        apps.dt = { type = "app"; program = "${develTools}/bin/dt"; };
+        apps.cn = { type = "app"; program = "${codebaseNavigator}/bin/cn"; };
 
         # DevShell: uv manages development environment and .venv from uv.lock
         devShells.default = pkgs.mkShell {
@@ -113,7 +113,7 @@
             export TRITON_CACHE_DIR="''${XDG_CACHE_HOME:-$HOME/.cache}/triton"
             export TORCH_HOME="''${XDG_CACHE_HOME:-$HOME/.cache}/torch"
             export HF_HOME="''${XDG_CACHE_HOME:-$HOME/.cache}/huggingface"
-            echo "devel-tools devshell — try:  uv run pytest   |   uv run dt --help"
+            echo "codebase-navigator devshell — try:  uv run pytest   |   uv run cn --help"
           '';
         };
       });

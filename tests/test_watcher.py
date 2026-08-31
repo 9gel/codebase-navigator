@@ -1,6 +1,6 @@
 from pathlib import Path
 from watchfiles import Change
-from devel_tools.watcher import SourceFilter
+from codebase_navigator.watcher import SourceFilter
 
 
 def test_source_filter(tmp_path: Path):
@@ -12,6 +12,7 @@ def test_source_filter(tmp_path: Path):
     
     # Ignored files/directories
     assert sf(Change.added, str(tmp_path / ".git" / "config")) is False
+    assert sf(Change.added, str(tmp_path / ".codebase-navigator" / "watch.sock")) is False
     assert sf(Change.added, str(tmp_path / ".devel-tools" / "watch.sock")) is False
     assert sf(Change.added, str(tmp_path / ".tags")) is False
     assert sf(Change.added, str(tmp_path / "image.png")) is False

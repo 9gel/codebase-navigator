@@ -63,11 +63,11 @@ class DirectoryWatcher:
         if self.socket_path.exists():
             active = ping_socket(self.socket_path, timeout=0.5)
             if active is not None:
-                print(f"⚠️  Another dt watch instance is already running for: {self.folder}")
+                print(f"⚠️  Another cn watch instance is already running for: {self.folder}")
                 print(f"   Active socket: {self.socket_path}")
                 return
 
-        print(f"🚀 Starting dt watch for: {self.folder}")
+        print(f"🚀 Starting cn watch for: {self.folder}")
         print("  Performing initial sync...")
         ok, msg = self.tags_mgr.generate()
         print(f"  .tags: {msg}")
@@ -129,6 +129,6 @@ class DirectoryWatcher:
                 print(f"[{ts_str}] ⚡ Synced {len(affected_files)} file(s) ({total_chunks} chunks) in {dt:.0f}ms")
 
         except KeyboardInterrupt:
-            print("\n👋 dt watch stopped.")
+            print("\n👋 cn watch stopped.")
         finally:
             self.ipc_server.stop()

@@ -1,4 +1,4 @@
-"""Unix domain socket IPC server and client for fast semantic querying via dt watch."""
+"""Unix domain socket IPC server and client for fast semantic querying via cn watch."""
 
 from __future__ import annotations
 
@@ -87,7 +87,7 @@ class IPCServer:
             status = ping_socket(self.socket_path, timeout=0.5)
             if status is not None:
                 raise RuntimeError(
-                    f"Another dt watch instance is already running on {self.socket_path}"
+                    f"Another cn watch instance is already running on {self.socket_path}"
                 )
             # Socket file exists but no process is listening -> stale socket from prior crash
             try:
@@ -127,7 +127,7 @@ def query_socket(
     doc_type: str = "all",
     timeout: float = 3.0,
 ) -> list[dict[str, Any]] | None:
-    """Query the running dt watch daemon via Unix Domain Socket.
+    """Query the running cn watch daemon via Unix Domain Socket.
 
     Returns search results if successful, or None if socket is unavailable/unresponsive.
     Automatically unlinks stale socket files from dead daemons.
@@ -178,7 +178,7 @@ def query_socket(
 
 
 def ping_socket(socket_path: Path, timeout: float = 0.5) -> dict[str, Any] | None:
-    """Check if dt watch daemon is active and return its status info.
+    """Check if cn watch daemon is active and return its status info.
 
     Automatically unlinks stale socket files from dead daemons.
     """

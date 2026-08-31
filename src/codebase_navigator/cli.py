@@ -1,4 +1,4 @@
-"""CLI command line interfaces and formatting for devel-tools."""
+"""CLI command line interfaces and formatting for codebase-navigator."""
 
 from __future__ import annotations
 
@@ -65,9 +65,9 @@ def format_tag_results(results: list[dict]) -> str:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the unified dt CLI argument parser."""
+    """Build the unified cn CLI argument parser."""
     parser = argparse.ArgumentParser(
-        prog="dt",
+        prog="cn",
         description="Generic Code & Documentation Navigation Engine",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -113,7 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None):
-    """Main dt entrypoint with subcommands."""
+    """Main cn entrypoint with subcommands."""
     parser = build_parser()
     args = parser.parse_args(argv)
     folder = Path(args.folder).resolve()
@@ -145,14 +145,14 @@ def _run_status(folder: Path, custom_index_dir: str | None = None):
         sz = tf.stat().st_size / (1024 * 1024)
         print(f"  🏷️  Tags file: {tf} ({sz:.2f} MB)")
     else:
-        print("  🏷️  Tags file: Not found (run dt sync)")
+        print("  🏷️  Tags file: Not found (run cn sync)")
 
     socket_path = get_socket_path(folder, custom_index_dir)
     daemon_status = ping_socket(socket_path)
     if daemon_status:
-        print(f"  🟢 dt watch daemon: ACTIVE (socket: {socket_path})")
+        print(f"  🟢 cn watch daemon: ACTIVE (socket: {socket_path})")
     else:
-        print(f"  ⚪ dt watch daemon: NOT RUNNING (socket: {socket_path})")
+        print(f"  ⚪ cn watch daemon: NOT RUNNING (socket: {socket_path})")
 
     from .index import VectorIndex
     idx = VectorIndex(folder, custom_index_dir)

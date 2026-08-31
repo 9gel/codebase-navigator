@@ -1,6 +1,6 @@
 import pytest
 from pathlib import Path
-from devel_tools.index import VectorIndex
+from codebase_navigator.index import VectorIndex
 
 
 def test_glossary_term_boosted_search(tmp_path: Path):

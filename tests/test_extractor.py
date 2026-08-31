@@ -1,6 +1,6 @@
 import pytest
 from pathlib import Path
-from devel_tools.extractor import DocExtractor
+from codebase_navigator.extractor import DocExtractor
 
 
 def test_extract_markdown_sections(tmp_path: Path):

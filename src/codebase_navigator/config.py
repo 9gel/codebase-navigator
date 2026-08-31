@@ -1,4 +1,4 @@
-"""Configuration, schema definitions, and shared utilities for devel-tools."""
+"""Configuration, schema definitions, and shared utilities for codebase-navigator."""
 
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ IGNORE_DIR_NAMES = {
     "node_modules", "target", "build", "dist",
     ".venv", "venv", "env", ".direnv",
     "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
-    ".cache", ".devel-index", ".devel-tools", ".dagster_home", "pipeline-cache",
+    ".cache", ".devel-index", ".devel-tools", ".codebase-navigator", ".dagster_home", "pipeline-cache",
 }
 
 
@@ -92,11 +92,11 @@ def get_cache_dir(folder: Path, custom_index_dir: str | None = None) -> Path:
         cdir.mkdir(parents=True, exist_ok=True)
         return cdir
 
-    target = folder / ".devel-tools"
+    target = folder / ".codebase-navigator"
     target.mkdir(parents=True, exist_ok=True)
     return target
 
 
 def get_socket_path(folder: Path, custom_index_dir: str | None = None) -> Path:
-    """Return the Unix Domain Socket path used for IPC with devel-watch."""
+    """Return the Unix Domain Socket path used for IPC with cn watch."""
     return get_cache_dir(folder, custom_index_dir) / "watch.sock"

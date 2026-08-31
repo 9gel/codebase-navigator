@@ -1,6 +1,6 @@
 import pytest
 from pathlib import Path
-from devel_tools.cli import format_search_results, format_tag_results
+from codebase_navigator.cli import format_search_results, format_tag_results
 
 
 def test_format_search_results(tmp_path: Path):
@@ -38,11 +38,11 @@ def test_format_tag_results(tmp_path: Path):
     assert "[src/policy.py:L42]" in output
 
 
-def test_dt_parser_subcommands():
-    from devel_tools.cli import build_parser
+def test_cn_parser_subcommands():
+    from codebase_navigator.cli import build_parser
 
     parser = build_parser()
-    assert parser.prog == "dt"
+    assert parser.prog == "cn"
 
     # search
     args = parser.parse_args(["search", "test query", "/some/path", "--limit", "10", "--type", "md"])
@@ -79,9 +79,9 @@ def test_dt_parser_subcommands():
     assert args.debounce == 500
 
 
-def test_dt_main_dispatch(monkeypatch, tmp_path: Path):
-    from devel_tools.cli import main
-    import devel_tools.cli as cli_mod
+def test_cn_main_dispatch(monkeypatch, tmp_path: Path):
+    from codebase_navigator.cli import main
+    import codebase_navigator.cli as cli_mod
 
     called = {}
 
