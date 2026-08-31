@@ -50,14 +50,14 @@ class _IPCRequestHandler(socketserver.StreamRequestHandler):
                             except Exception:
                                 pass
 
-                        answer = self.server.watcher.handle_ask(
+                        answer, stats = self.server.watcher.handle_ask(
                             question,
                             cfg_data,
                             new_session=new_session,
                             verbose=verbose,
                             progress_callback=progress_cb if verbose else None,
                         )
-                        resp = {"type": "final", "status": "ok", "answer": answer}
+                        resp = {"type": "final", "status": "ok", "answer": answer, "stats": stats}
                     else:
                         resp = {"type": "final", "status": "error", "error": "Watcher daemon not configured for ask"}
                 elif action == "reset_session":

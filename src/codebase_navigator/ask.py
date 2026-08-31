@@ -551,6 +551,8 @@ class AgentSession:
         self.effective_system_prompt = build_effective_system_prompt(config.system_prompt)
         self.messages: list[dict[str, Any]] = [{"role": "system", "content": self.effective_system_prompt}]
         self.turn_count = 0
+        self.lifetime_prompt_tokens = 0
+        self.lifetime_completion_tokens = 0
 
     def reset(self):
         """Reset conversation messages back to system prompt."""
@@ -587,8 +589,8 @@ class AgentSession:
         # Check ripgrep status for best performance
         check_ripgrep_installed(verbose=verbose, output_stream=output_stream)
 
-        # Pre-flight seed search for new questions
-        emit(f'🔍 Searching codebase for: "{question}" (limit: {self.config.initial_limit})...')
+        # Pre-flight seed search
+        emit("🔍 Searching codebase...")
 
         initial_chunks = execute_search(
             self.folder,
@@ -610,6 +612,8 @@ class AgentSession:
 
         searches_remaining = self.config.max_searches
         seen_tool_calls: set[str] = set()
+        turn_prompt_tokens = 0
+        turn_completion_tokens = 0
 
         while True:
             payload: dict[str, Any] = {
@@ -622,6 +626,14 @@ class AgentSession:
                 payload["tool_choice"] = "auto"
 
             response_data = call_chat_completions(self.config.endpoint, self.config.api_key, payload)
+            usage = response_data.get("usage", {})
+            p_tok = usage.get("prompt_tokens", 0)
+            c_tok = usage.get("completion_tokens", 0)
+            turn_prompt_tokens += p_tok
+            turn_completion_tokens += c_tok
+            self.lifetime_prompt_tokens += p_tok
+            self.lifetime_completion_tokens += c_tok
+
             choices = response_data.get("choices", [])
             if not choices:
                 raise RuntimeError(f"Unexpected empty response from LLM: {response_data}")
@@ -679,7 +691,15 @@ class AgentSession:
             # Final answer
             content = msg.get("content") or ""
             self.messages.append({"role": "assistant", "content": content})
-            return content
+            stats = {
+                "turn_prompt_tokens": turn_prompt_tokens,
+                "turn_completion_tokens": turn_completion_tokens,
+                "turn_total_tokens": turn_prompt_tokens + turn_completion_tokens,
+                "lifetime_prompt_tokens": self.lifetime_prompt_tokens,
+                "lifetime_completion_tokens": self.lifetime_completion_tokens,
+                "lifetime_total_tokens": self.lifetime_prompt_tokens + self.lifetime_completion_tokens,
+            }
+            return content, stats
 
 
 def ask_codebase(

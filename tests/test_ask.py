@@ -153,7 +153,7 @@ def test_ask_codebase_direct_answer(tmp_path: Path):
         patch("codebase_navigator.ask.execute_search", mock_search),
         patch("codebase_navigator.ask.call_chat_completions", mock_chat),
     ):
-        answer = ask_codebase(tmp_path, "What is this project?", cfg, verbose=False)
+        answer, stats = ask_codebase(tmp_path, "What is this project?", cfg, verbose=False)
         assert answer == "This project is a code navigation tool."
         assert mock_search.call_count == 1
         assert mock_chat.call_count == 1
@@ -236,7 +236,7 @@ def test_ask_codebase_with_tool_calling_loop(tmp_path: Path):
         patch("codebase_navigator.ask.execute_search", mock_search),
         patch("codebase_navigator.ask.call_chat_completions", mock_chat),
     ):
-        answer = ask_codebase(tmp_path, "Where is the IPCServer defined?", cfg, verbose=False)
+        answer, stats = ask_codebase(tmp_path, "Where is the IPCServer defined?", cfg, verbose=False)
         assert answer == "IPCServer is implemented in `src/ipc.py`."
         assert mock_search.call_count == 2
         assert mock_chat.call_count == 2

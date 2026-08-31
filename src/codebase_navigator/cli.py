@@ -641,7 +641,7 @@ def _run_ask(
     )
 
     try:
-        answer = ask_codebase(
+        answer, stats = ask_codebase(
             folder=folder,
             question=question,
             config=config,
@@ -659,6 +659,7 @@ def _run_ask(
             det_theme = detect_terminal_theme(resolved_theme)
             divider_color = "\033[34m" if det_theme == "light" else "\033[36m"
             print(f"\n{divider_color}{'=' * divider_width}\033[0m\n")
+
         print(
             format_output_links(
                 answer,
@@ -668,6 +669,20 @@ def _run_ask(
                 theme=resolved_theme,
             )
         )
+
+        if not quiet and stats and (stats.get("turn_total_tokens") or 0) > 0:
+            turn_in = stats.get("turn_prompt_tokens", 0)
+            turn_out = stats.get("turn_completion_tokens", 0)
+            turn_total = stats.get("turn_total_tokens", 0)
+            life_in = stats.get("lifetime_prompt_tokens", 0)
+            life_out = stats.get("lifetime_completion_tokens", 0)
+            life_total = stats.get("lifetime_total_tokens", 0)
+
+            print(
+                f"\n\033[2mTokens: {turn_total:,} (prompt: {turn_in:,}, completion: {turn_out:,}) | "
+                f"Session Lifetime: {life_total:,} (in: {life_in:,}, out: {life_out:,})\033[0m",
+                file=sys.stderr,
+            )
     except Exception as e:  # noqa: BLE001
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)

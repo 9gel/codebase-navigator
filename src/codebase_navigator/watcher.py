@@ -69,7 +69,7 @@ class DirectoryWatcher:
         new_session: bool = False,
         verbose: bool = False,
         progress_callback = None,
-    ) -> str:
+    ) -> tuple[str, dict[str, Any]]:
         """Execute or continue an LLM agent reasoning session within the daemon."""
         with self.session_lock:
             config = LLMConfig(
@@ -116,6 +116,7 @@ class DirectoryWatcher:
         print("👀 Watching for file changes (Ctrl+C to stop)...\n")
 
         source_filter = SourceFilter(self.folder)
+        stop_event = threading.Event()
 
         try:
             for changes in watch(
@@ -123,6 +124,7 @@ class DirectoryWatcher:
                 watch_filter=source_filter,
                 debounce=self.debounce_ms,
                 step=50,
+                stop_event=stop_event,
             ):
                 code_changed = False
                 doc_changed = False
