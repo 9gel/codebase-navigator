@@ -122,3 +122,32 @@ def test_stale_socket_recovery(tmp_path: Path):
         assert ping_socket(sock_path) is not None
     finally:
         server.stop()
+
+
+def test_ipc_version_mismatch_rejection(tmp_path: Path):
+    doc_dir = tmp_path / "docs"
+    doc_dir.mkdir()
+    f1 = doc_dir / "guide.md"
+    f1.write_text("# Guide\n\nContent.")
+
+    idx = VectorIndex(tmp_path)
+    idx.sync()
+
+    sock_path = get_socket_path(tmp_path)
+    server = IPCServer(sock_path, idx)
+    server.start()
+
+    try:
+        time.sleep(0.05)
+        # Send command with mismatched version
+        import socket, json
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.connect(str(sock_path))
+        req = {"action": "search", "version": "0.0.1", "query": "hello"}
+        sock.sendall(json.dumps(req).encode("utf-8") + b"\n")
+        resp = json.loads(sock.recv(4096).decode("utf-8").strip())
+        assert resp["status"] == "version_mismatch"
+        assert "Version mismatch" in resp["error"]
+        sock.close()
+    finally:
+        server.stop()

@@ -9,6 +9,8 @@ import socketserver
 import threading
 from typing import TYPE_CHECKING, Any
 
+from . import __version__
+
 if TYPE_CHECKING:
     from .index import VectorIndex
     from .watcher import DirectoryWatcher
@@ -27,8 +29,22 @@ class _IPCRequestHandler(socketserver.StreamRequestHandler):
             try:
                 req = json.loads(line.decode("utf-8"))
                 action = req.get("action")
-                if action == "ping":
-                    resp = {"status": "ok", "pong": True}
+                client_ver = req.get("version")
+
+                # Validate client version (unless ping)
+                if action != "ping" and client_ver and client_ver != __version__:
+                    resp = {
+                        "type": "final",
+                        "status": "version_mismatch",
+                        "error": (
+                            f"Version mismatch! cn client ({client_ver}) != cn watch daemon ({__version__}).\n"
+                            f"👉 Please restart 'cn watch' so both client and daemon run version {client_ver}."
+                        ),
+                        "server_version": __version__,
+                        "client_version": client_ver,
+                    }
+                elif action == "ping":
+                    resp = {"status": "ok", "pong": True, "version": __version__}
                 elif action == "search":
                     query = req.get("query", "")
                     limit = int(req.get("limit", 5))
@@ -174,7 +190,7 @@ def send_socket_command(
     sock.settimeout(timeout)
     try:
         sock.connect(str(socket_path))
-        req = {"action": action, **(payload or {})}
+        req = {"action": action, "version": __version__, **(payload or {})}
         payload_bytes = json.dumps(req).encode("utf-8") + b"\n"
         sock.sendall(payload_bytes)
 
