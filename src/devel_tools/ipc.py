@@ -76,9 +76,20 @@ class IPCServer:
         self._thread: threading.Thread | None = None
 
     def start(self):
-        """Start socket server in a background thread."""
+        """Start socket server in a background thread.
+
+        Raises RuntimeError if another active daemon is already listening on this socket.
+        Cleans up stale socket files from prior crashes automatically.
+        """
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
         if self.socket_path.exists():
+            # Check if another process is actively listening on this socket
+            status = ping_socket(self.socket_path, timeout=0.5)
+            if status is not None:
+                raise RuntimeError(
+                    f"Another devel-watch instance is already running on {self.socket_path}"
+                )
+            # Socket file exists but no process is listening -> stale socket from prior crash
             try:
                 self.socket_path.unlink()
             except OSError:
@@ -119,6 +130,7 @@ def query_socket(
     """Query the running devel-watch daemon via Unix Domain Socket.
 
     Returns search results if successful, or None if socket is unavailable/unresponsive.
+    Automatically unlinks stale socket files from dead daemons.
     """
     if not socket_path.exists():
         return None
@@ -152,6 +164,13 @@ def query_socket(
         if resp.get("status") == "ok":
             return resp.get("results")
         return None
+    except ConnectionRefusedError:
+        # Socket file exists but no process is listening -> stale socket from prior crash
+        try:
+            socket_path.unlink()
+        except OSError:
+            pass
+        return None
     except (OSError, socket.error, json.JSONDecodeError, TimeoutError):
         return None
     finally:
@@ -159,7 +178,10 @@ def query_socket(
 
 
 def ping_socket(socket_path: Path, timeout: float = 0.5) -> dict[str, Any] | None:
-    """Check if devel-watch daemon is active and return its status info."""
+    """Check if devel-watch daemon is active and return its status info.
+
+    Automatically unlinks stale socket files from dead daemons.
+    """
     if not socket_path.exists():
         return None
 
@@ -185,6 +207,13 @@ def ping_socket(socket_path: Path, timeout: float = 0.5) -> dict[str, Any] | Non
         resp = json.loads(line.decode("utf-8"))
         if resp.get("status") == "ok":
             return resp
+        return None
+    except ConnectionRefusedError:
+        # Socket file exists but no process is listening -> stale socket from prior crash
+        try:
+            socket_path.unlink()
+        except OSError:
+            pass
         return None
     except (OSError, socket.error, json.JSONDecodeError, TimeoutError):
         return None

@@ -78,3 +78,47 @@ def test_socket_fallback_when_server_dead(tmp_path: Path, capsys):
     _run_search(tmp_path, "frequently asked questions", limit=1)
     captured = capsys.readouterr()
     assert "faq.md" in captured.out
+
+
+def test_duplicate_ipc_server_rejected(tmp_path: Path):
+    idx = VectorIndex(tmp_path)
+    sock_path = get_socket_path(tmp_path)
+
+    server1 = IPCServer(sock_path, idx)
+    server1.start()
+    time.sleep(0.05)
+
+    try:
+        server2 = IPCServer(sock_path, idx)
+        import pytest
+        with pytest.raises(RuntimeError, match="Another devel-watch instance is already running"):
+            server2.start()
+    finally:
+        server1.stop()
+
+
+def test_stale_socket_recovery(tmp_path: Path):
+    idx = VectorIndex(tmp_path)
+    sock_path = get_socket_path(tmp_path)
+    sock_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Create a dummy stale socket/file
+    import socket
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.bind(str(sock_path))
+    s.close()  # Closed/dead socket file leftover on disk
+
+    assert sock_path.exists()
+    # ping_socket should detect it is dead, return None, and unlink it
+    assert ping_socket(sock_path) is None
+    assert not sock_path.exists()
+
+    # Now starting a new server should succeed without errors
+    server = IPCServer(sock_path, idx)
+    server.start()
+    time.sleep(0.05)
+    try:
+        assert sock_path.exists()
+        assert ping_socket(sock_path) is not None
+    finally:
+        server.stop()

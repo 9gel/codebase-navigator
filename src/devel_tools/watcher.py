@@ -58,6 +58,14 @@ class DirectoryWatcher:
 
     def start(self):
         """Run blocking live watcher loop and IPC server."""
+        # Early check: if an active instance is already watching, report and exit gracefully
+        if self.socket_path.exists():
+            active = ping_socket(self.socket_path, timeout=0.5)
+            if active is not None:
+                print(f"⚠️  Another devel-watch instance is already running for: {self.folder}")
+                print(f"   Active socket: {self.socket_path}")
+                return
+
         print(f"🚀 Starting devel-watch for: {self.folder}")
         print("  Performing initial sync...")
         ok, msg = self.tags_mgr.generate()
