@@ -30,6 +30,7 @@ ENV/
 .pytest_cache/
 .coverage
 htmlcov/
+/exercises/
 
 # Ruff
 .ruff_cache/
