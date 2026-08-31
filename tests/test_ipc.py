@@ -91,7 +91,7 @@ def test_duplicate_ipc_server_rejected(tmp_path: Path):
     try:
         server2 = IPCServer(sock_path, idx)
         import pytest
-        with pytest.raises(RuntimeError, match="Another devel-watch instance is already running"):
+        with pytest.raises(RuntimeError, match="Another dt watch instance is already running"):
             server2.start()
     finally:
         server1.stop()

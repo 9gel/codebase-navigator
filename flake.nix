@@ -63,7 +63,7 @@
           { nativeBuildInputs = [ pkgs.makeWrapper ]; }
           ''
             mkdir -p $out/bin
-            for b in devel-nav devel-watch devel-sync devel-search devel-tags devel-status; do
+            for b in dt; do
               if [ -f "${runtimeEnv}/bin/$b" ]; then
                 makeWrapper "${runtimeEnv}/bin/$b" "$out/bin/$b" \
                   --prefix PATH : "${lib.makeBinPath [ pkgs.universal-ctags pkgs.git pkgs.coreutils ]}" \
@@ -86,14 +86,9 @@
 
         apps.default = {
           type = "app";
-          program = "${develTools}/bin/devel-nav";
+          program = "${develTools}/bin/dt";
         };
-        apps.devel-nav = { type = "app"; program = "${develTools}/bin/devel-nav"; };
-        apps.devel-watch = { type = "app"; program = "${develTools}/bin/devel-watch"; };
-        apps.devel-sync = { type = "app"; program = "${develTools}/bin/devel-sync"; };
-        apps.devel-search = { type = "app"; program = "${develTools}/bin/devel-search"; };
-        apps.devel-tags = { type = "app"; program = "${develTools}/bin/devel-tags"; };
-        apps.devel-status = { type = "app"; program = "${develTools}/bin/devel-status"; };
+        apps.dt = { type = "app"; program = "${develTools}/bin/dt"; };
 
         # DevShell: uv manages development environment and .venv from uv.lock
         devShells.default = pkgs.mkShell {
@@ -118,7 +113,7 @@
             export TRITON_CACHE_DIR="''${XDG_CACHE_HOME:-$HOME/.cache}/triton"
             export TORCH_HOME="''${XDG_CACHE_HOME:-$HOME/.cache}/torch"
             export HF_HOME="''${XDG_CACHE_HOME:-$HOME/.cache}/huggingface"
-            echo "devel-tools devshell — try:  uv run pytest   |   uv run devel-search --help"
+            echo "devel-tools devshell — try:  uv run pytest   |   uv run dt --help"
           '';
         };
       });

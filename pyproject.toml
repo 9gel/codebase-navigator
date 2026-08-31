@@ -24,12 +24,7 @@ dev = [
 ]
 
 [project.scripts]
-devel-nav = "devel_tools.cli:main_nav"
-devel-watch = "devel_tools.cli:main_watch"
-devel-sync = "devel_tools.cli:main_sync"
-devel-search = "devel_tools.cli:main_search"
-devel-tags = "devel_tools.cli:main_tags"
-devel-status = "devel_tools.cli:main_status"
+dt = "devel_tools.cli:main"
 
 [build-system]
 requires = ["hatchling"]

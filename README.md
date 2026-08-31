@@ -12,14 +12,15 @@ Developer tools for ultra-fast codebase navigation, Git-aware ctags indexing, li
 
 ## CLI Commands
 
+The unified `dt` command provides all indexing and search tools:
+
 | Command | Purpose |
 |---|---|
-| `devel-search <query> [folder]` | Semantic & hybrid search in markdown docs and code comments |
-| `devel-tags <symbol> [folder]` | Fast symbol definition lookup in `.tags` |
-| `devel-sync [folder] [--force]` | Synchronize `.tags` and LanceDB vector embeddings |
-| `devel-watch [folder]` | Live filesystem watcher for automatic re-indexing |
-| `devel-status [folder]` | Inspect index and `.tags` status |
-| `devel-nav <cmd> [folder]` | Unified CLI for all operations |
+| `dt search <query> [folder]` | Semantic & hybrid search in markdown docs and code comments |
+| `dt tags <symbol> [folder]` | Fast symbol definition lookup in `.tags` |
+| `dt sync [folder] [--force]` | Synchronize `.tags` and LanceDB vector embeddings |
+| `dt watch [folder]` | Live filesystem watcher for automatic re-indexing |
+| `dt status [folder]` | Inspect index and `.tags` status |
 
 ## Development
 

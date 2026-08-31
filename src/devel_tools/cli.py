@@ -64,10 +64,10 @@ def format_tag_results(results: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def main_nav():
-    """Main devel-nav entrypoint with subcommands."""
+def build_parser() -> argparse.ArgumentParser:
+    """Build the unified dt CLI argument parser."""
     parser = argparse.ArgumentParser(
-        prog="devel-nav",
+        prog="dt",
         description="Generic Code & Documentation Navigation Engine",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -109,7 +109,13 @@ def main_nav():
     p_tags.add_argument("--exact", action="store_true", help="Match exact symbol name")
     p_tags.add_argument("--limit", type=int, default=20, help="Maximum results (default: 20)")
 
-    args = parser.parse_args()
+    return parser
+
+
+def main(argv: list[str] | None = None):
+    """Main dt entrypoint with subcommands."""
+    parser = build_parser()
+    args = parser.parse_args(argv)
     folder = Path(args.folder).resolve()
 
     if args.command == "status":
@@ -124,56 +130,8 @@ def main_nav():
         _run_tags(folder, args.symbol, exact=args.exact, limit=args.limit)
 
 
-def main_watch():
-    parser = argparse.ArgumentParser(prog="devel-watch", description="Live file watcher for tags & vector indexing")
-    parser.add_argument("folder", nargs="?", default=".", help="Folder to watch (default: .)")
-    parser.add_argument("--debounce", type=int, default=1000, help="Debounce milliseconds")
-    parser.add_argument("--index-dir", default=None, help="Custom index directory")
-    args = parser.parse_args()
-    _run_watch(Path(args.folder).resolve(), debounce_ms=args.debounce, custom_index_dir=args.index_dir)
-
-
-def main_sync():
-    parser = argparse.ArgumentParser(prog="devel-sync", description="Synchronize .tags and LanceDB embeddings")
-    parser.add_argument("folder", nargs="?", default=".", help="Folder to index (default: .)")
-    parser.add_argument("--force", action="store_true", help="Force complete re-indexing")
-    parser.add_argument("--index-dir", default=None, help="Custom index directory")
-    args = parser.parse_args()
-    _run_sync(Path(args.folder).resolve(), force=args.force, custom_index_dir=args.index_dir)
-
-
-def main_search():
-    parser = argparse.ArgumentParser(prog="devel-search", description="Semantic search in markdown docs & code comments")
-    parser.add_argument("query", help="Semantic query string")
-    parser.add_argument("folder", nargs="?", default=".", help="Folder context (default: .)")
-    parser.add_argument("--limit", type=int, default=5, help="Number of results (default: 5)")
-    parser.add_argument(
-        "--type",
-        choices=["all", "md", "code_doc", "markdown", "code"],
-        default="all",
-        help="Filter document types (default: all)",
-    )
-    parser.add_argument("--index-dir", default=None, help="Custom index directory")
-    args = parser.parse_args()
-    _run_search(Path(args.folder).resolve(), args.query, limit=args.limit, doc_type=args.type, custom_index_dir=args.index_dir)
-
-
-def main_tags():
-    parser = argparse.ArgumentParser(prog="devel-tags", description="Symbol lookup in .tags")
-    parser.add_argument("symbol", help="Symbol name or regex pattern")
-    parser.add_argument("folder", nargs="?", default=".", help="Folder context (default: .)")
-    parser.add_argument("--exact", action="store_true", help="Match exact symbol name")
-    parser.add_argument("--limit", type=int, default=20, help="Max results (default: 20)")
-    args = parser.parse_args()
-    _run_tags(Path(args.folder).resolve(), args.symbol, exact=args.exact, limit=args.limit)
-
-
-def main_status():
-    parser = argparse.ArgumentParser(prog="devel-status", description="Check tags and index status")
-    parser.add_argument("folder", nargs="?", default=".", help="Folder context (default: .)")
-    parser.add_argument("--index-dir", default=None, help="Custom index directory")
-    args = parser.parse_args()
-    _run_status(Path(args.folder).resolve(), custom_index_dir=args.index_dir)
+# Backward compatibility aliases
+main_nav = main
 
 
 def _run_status(folder: Path, custom_index_dir: str | None = None):
@@ -187,14 +145,14 @@ def _run_status(folder: Path, custom_index_dir: str | None = None):
         sz = tf.stat().st_size / (1024 * 1024)
         print(f"  🏷️  Tags file: {tf} ({sz:.2f} MB)")
     else:
-        print("  🏷️  Tags file: Not found (run devel-sync)")
+        print("  🏷️  Tags file: Not found (run dt sync)")
 
     socket_path = get_socket_path(folder, custom_index_dir)
     daemon_status = ping_socket(socket_path)
     if daemon_status:
-        print(f"  🟢 devel-watch daemon: ACTIVE (socket: {socket_path})")
+        print(f"  🟢 dt watch daemon: ACTIVE (socket: {socket_path})")
     else:
-        print(f"  ⚪ devel-watch daemon: NOT RUNNING (socket: {socket_path})")
+        print(f"  ⚪ dt watch daemon: NOT RUNNING (socket: {socket_path})")
 
     from .index import VectorIndex
     idx = VectorIndex(folder, custom_index_dir)
