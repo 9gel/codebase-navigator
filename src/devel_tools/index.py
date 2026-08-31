@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import lancedb
-from sentence_transformers import SentenceTransformer
+
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
 
 from .config import (
     DOC_SCHEMA,
@@ -40,6 +42,7 @@ class VectorIndex:
     @property
     def model(self) -> SentenceTransformer:
         if self._model is None:
+            from sentence_transformers import SentenceTransformer
             with silence_stdio():
                 try:
                     self._model = SentenceTransformer(EMBEDDING_MODEL_NAME, local_files_only=True)

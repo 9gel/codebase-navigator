@@ -9,7 +9,6 @@ import sys
 from .config import get_socket_path
 from .ipc import ping_socket, query_socket
 from .tags import TagsManager, get_available_files
-from .watcher import DirectoryWatcher
 
 
 def format_search_results(results: list[dict], base_folder: Path) -> str:
@@ -224,6 +223,7 @@ def _run_sync(folder: Path, force: bool = False, custom_index_dir: str | None = 
 
 
 def _run_watch(folder: Path, debounce_ms: int = 1000, custom_index_dir: str | None = None):
+    from .watcher import DirectoryWatcher
     watcher = DirectoryWatcher(folder, debounce_ms=debounce_ms, custom_index_dir=custom_index_dir)
     watcher.start()
 
