@@ -79,8 +79,8 @@ find code quickly and token-efficiently.
   implementation questions in natural language. Powered by an iterative LLM
   reasoning loop with 1-shot hybrid code intelligence tools.
 - 🧠 **LanceDB Semantic & Hybrid Search (`cn search`)**: Vector search powered
-  by `FastEmbed ONNX `all-MiniLM-L6-v2`` with hybrid phrase/title match boosting
-  for markdown documentation, glossary terms, and code comments.
+  by `FastEmbed ONNX` with hybrid phrase/title match boosting for markdown
+  documentation, glossary terms, and code comments.
 - 🏷️ **Git-Aware `.tags` Generation** (`cn tags`): Uses `universal-ctags` to
   index genuine source code while ignoring huge data dumps, JSON caches, `.git`,
   `node_modules`, and build artifacts.
@@ -175,14 +175,14 @@ The unified `cn` command provides all indexing and search tools:
 
 - `-n, --new-session`: Start a fresh conversation session with the daemon.
 - `--system-prompt "<text>"`: Append custom system instructions or persona (e.g. security auditing).
-- `--model "<model>"`: LLM model name (default: `google/gemini-2.5-flash`).
+- `--model "<model>"`: LLM model name (default: `deepseek/deepseek-v4-flash-0731`).
 - `--endpoint "<url>"`: OpenAI-compatible LLM endpoint (default: `https://openrouter.ai/api/v1`).
 - `--api-key "<key>"`: LLM API key.
 - `--limit <N>`: Initial pre-flight search results count (default: 10).
 - `--max-searches <N>`: Max additional tool calls allowed (default: 15).
 - `-q, --quiet`: Suppress progress indicators.
 
-## Skills
+## Skill
 
 Use the skill at
 [`skills/codebase-navigator/SKILL.md`](skills/codebase-navigator/SKILL.md) for
@@ -194,7 +194,7 @@ You can copy or symlink it to your agent harness's skill directory. For example:
 - **Claude / Cursor / Cline**: `.claude/skills/codebase-navigator/SKILL.md`
 - **Antigravity / Gemini**: `~/.gemini/config/skills/codebase-navigator/SKILL.md`
 
-### Why Install the Skill?
+### What The Skill Gives You
 
 - **40%–80% Token Savings**: Teaches agents to read targeted line ranges
   (`codebase_read`) rather than ingesting entire files into context.
@@ -205,6 +205,8 @@ You can copy or symlink it to your agent harness's skill directory. For example:
   (`codebase_search`) before guessing file paths.
 - **Call-Tree Tracing**: Helps agents trace multi-step execution flows and
   caller hierarchies (`codebase_call_tree`).
+
+## Configuration
 
 ### Configuration File Locations
 
@@ -220,7 +222,7 @@ Configuration files are parsed in TOML format from:
 endpoint = "https://openrouter.ai/api/v1"
 
 # LLM model to query
-model = "google/gemini-2.5-flash"
+model = "deepseek/deepseek-v4-flash-0731"
 
 # API authentication token (or pass via environment variable)
 api_key = "sk-or-v1-..."
@@ -256,10 +258,11 @@ Environment variables take precedence over config files:
 |---|---|---|
 | `OPENROUTER_API_KEY` / `CN_API_KEY` / `OPENAI_API_KEY` | API Key for LLM completions | `None` |
 | `CN_ENDPOINT` / `CN_BASE_URL` / `OPENROUTER_BASE_URL` | OpenAI-compatible endpoint | `https://openrouter.ai/api/v1` |
-| `CN_MODEL` / `OPENROUTER_MODEL` | Default LLM model | `google/gemini-2.5-flash` |
+| `CN_MODEL` / `OPENROUTER_MODEL` | LLM model to use | `deepseek/deepseek-v4-flash-0731` |
 | `CN_SYSTEM_PROMPT` | Additional custom system prompt | `None` |
 | `CN_MAX_SEARCHES` | Max tool calls allowed by the LLM | `15` |
 | `CN_ASK_LIMIT` | Initial search result count | `10` |
+| `CN_EMBEDDING_MODEL` | FastEmbed ONNX embeddings model | `sentence-transformers/all-MiniLM-L6-v2` |
 | `CN_WIDTH` / `CN_MAX_WIDTH` | Maximum terminal wrap width | `terminal width or 100` |
 | `CN_THEME` | Terminal theme (`auto`, `dark`, `light`) | `auto` |
 | `CN_LINKS` | Link mode (`auto`, `osc8`, `terminal`, `markdown`) | `auto` |
@@ -276,20 +279,26 @@ When resolving settings, `cn` applies the following order of precedence:
 4. **User config** (`~/.config/codebase-navigator/config.toml`)
 5. **Built-in defaults**
 
+### Selecting a Model
+
+We have found that even low-cost models such as Deepseek V4 Flash works well in
+most situations, as there's no hard requirements for reasoning.
+
 ### Embedding Model & First-Time Download
 
 `cn` uses **FastEmbed** with ONNX runtime for ultra-fast vector embeddings:
-- **Default Model**: `FastEmbed ONNX `all-MiniLM-L6-v2`` (384-dimensional vector
-  embeddings).
-- **First Run**: On the very first invocation of `cn sync`, `cn watch`, or `cn
-  search`, the ~80MB ONNX model weights are automatically downloaded once to
-  your local machine.
-- **Cache Location**: Stored in `~/.cache/fastembed/` (or
-  `$FASTEMBED_CACHE_DIR`).
-- **Customizing Cache Directory**: ```bash export
-  FASTEMBED_CACHE_DIR="/path/to/custom/cache/fastembed" ```
-- **100% Offline After Download**: Once downloaded, `cn` operates strictly from
-  disk with zero external network calls for embeddings.
+- **Default Model**: `sentence-transformers/all-MiniLM-L6-v2` (384-dimensional vector embeddings).
+- **Custom Embedding Model**: You can configure any supported FastEmbed ONNX model (such as `BAAI/bge-small-en-v1.5`, `BAAI/bge-base-en-v1.5`, `nomic-ai/nomic-embed-text-v1.5`) via the `CN_EMBEDDING_MODEL` environment variable:
+  ```bash
+  export CN_EMBEDDING_MODEL="BAAI/bge-small-en-v1.5"
+  ```
+- **First Run**: On the very first invocation of `cn sync`, `cn watch`, or `cn search`, the ~80MB ONNX model weights are automatically downloaded once to your local machine from Hugging Face.
+- **Cache Location**: Stored in `~/.cache/fastembed/` (or `$FASTEMBED_CACHE_DIR`).
+- **Customizing Cache Directory**:
+  ```bash
+  export FASTEMBED_CACHE_DIR="/path/to/custom/cache/fastembed"
+  ```
+- **100% Offline After Download**: Once downloaded, `cn` operates strictly from disk with zero external network calls for embeddings.
 
 ## Under the hood
 
@@ -324,6 +333,8 @@ When resolving settings, `cn` applies the following order of precedence:
 - `codebase_call_tree`: AST & cross-file caller and callee hierarchy.
 - `codebase_read`: Precise line range reader with line numbers and clickable links.
 - `codebase_grep`: High-speed regex / literal pattern matcher.
+
+The MCP loads the embeddings in-memory, so agent's search queries are fast.
 
 The MCP server operates without requiring any LLM API keys or external
 endpoints — your agent performs local FastEmbed ONNX vector queries and ctags
@@ -373,6 +384,11 @@ uv run eval/runner.py --compare-baseline
 # Export structured JSON evaluation report:
 uv run eval/runner.py --report eval/report.json
 ```
+
+#### Comparing time and token savings with baseline tool usage
+
+`eval/runner.py` takes a `--compare-baseline` option to compare Codebase
+Navigator with a simulated coding harness without embeddings and tags. 
 
 ## References
 
