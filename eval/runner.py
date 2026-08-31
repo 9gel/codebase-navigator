@@ -12,6 +12,9 @@ import sys
 import time
 from typing import Any
 
+# Ensure codebase_navigator from src/ is importable
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
 from codebase_navigator.ask import ask_codebase, call_chat_completions, load_llm_config
 
 EXERCISES_DIR = Path(__file__).parent.parent / "exercises"
@@ -88,12 +91,253 @@ Respond in pure JSON format:
         return False, f"Judge evaluation error: {e}"
 
 
+BASELINE_TOOLS_SPEC = [
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": "Read the entire contents of a file from the repository.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path of the file to read (e.g. 'src/app.py').",
+                    }
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "grep",
+            "description": "Run ripgrep / regex search across all files in the repository.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Regular expression or literal text to search for.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Optional subdirectory or file path to restrict the grep to.",
+                    },
+                },
+                "required": ["pattern"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "find_files",
+            "description": "Find files matching a glob pattern in the repository.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Glob pattern (e.g. '*.py', '**/*router*').",
+                    }
+                },
+                "required": ["pattern"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_dir",
+            "description": "List files and subdirectories inside a directory.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Directory to list (default: repository root '.').",
+                    }
+                },
+            },
+        },
+    },
+]
+
+
+def execute_baseline_tool(folder: Path, name: str, args: dict[str, Any]) -> str:
+    """Execute standard baseline tool (cat/rg/find/ls) without specialized codebase-navigator index."""
+    if name == "read_file":
+        rel_p = args.get("path", "").strip()
+        target = folder / rel_p
+        if not target.is_file():
+            return f"Error: File not found: {rel_p}"
+        try:
+            return target.read_text(encoding="utf-8", errors="replace")
+        except Exception as e:
+            return f"Error reading {rel_p}: {e}"
+
+    elif name == "grep":
+        pattern = args.get("pattern", "")
+        sub_path = args.get("path")
+        cmd = ["rg", "-n", "-i", pattern]
+        if sub_path:
+            cmd.append(sub_path)
+        try:
+            res = subprocess.run(cmd, cwd=folder, capture_output=True, text=True, timeout=10.0)
+            out = res.stdout
+            if not out and res.stderr:
+                out = res.stderr
+            lines = out.splitlines()
+            if len(lines) > 200:
+                out = "\n".join(lines[:200]) + f"\n... [{len(lines) - 200} lines truncated]"
+            return out or "No matches found."
+        except FileNotFoundError:
+            # Fallback pure-python grep if rg missing
+            matches = []
+            for p in folder.rglob("*"):
+                if p.is_file() and not any(part.startswith(".") for part in p.parts):
+                    try:
+                        content = p.read_text(encoding="utf-8", errors="ignore")
+                        for idx, line in enumerate(content.splitlines(), start=1):
+                            if pattern.lower() in line.lower():
+                                rel = p.relative_to(folder)
+                                matches.append(f"{rel}:{idx}:{line}")
+                                if len(matches) >= 200:
+                                    break
+                    except Exception:
+                        pass
+                if len(matches) >= 200:
+                    break
+            return "\n".join(matches) or "No matches found."
+        except Exception as e:
+            return f"Error running grep: {e}"
+
+    elif name == "find_files":
+        pattern = args.get("pattern", "*")
+        try:
+            matches = [str(p.relative_to(folder)) for p in folder.glob(pattern) if p.is_file()]
+            if not matches:
+                matches = [str(p.relative_to(folder)) for p in folder.rglob(pattern) if p.is_file()]
+            return "\n".join(matches[:100]) if matches else "No matching files found."
+        except Exception as e:
+            return f"Error finding files: {e}"
+
+    elif name == "list_dir":
+        rel_p = args.get("path", ".").strip() or "."
+        target = folder / rel_p
+        if not target.is_dir():
+            return f"Error: Directory not found: {rel_p}"
+        try:
+            entries = [
+                f"{'[DIR] ' if p.is_dir() else '[FILE] '}{p.name}"
+                for p in sorted(target.iterdir())
+                if not p.name.startswith(".")
+            ]
+            return "\n".join(entries[:100])
+        except Exception as e:
+            return f"Error listing directory: {e}"
+
+    return f"Unknown tool: {name}"
+
+
+def run_baseline_agent(folder: Path, question: str, config) -> tuple[str, dict[str, Any]]:
+    """Run typical agent harness with standard tools (read_file, grep, find_files, list_dir)."""
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are an AI coding assistant answering questions about a codebase. "
+                "Use the provided tools (`read_file`, `grep`, `find_files`, `list_dir`) to explore the repository "
+                "and find the exact answer."
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"Question:\n{question}",
+        },
+    ]
+
+    searches_remaining = config.max_searches
+    turn_completion_tokens = 0
+    last_prompt_tokens = 0
+    tool_calls_count = 0
+
+    while True:
+        payload: dict[str, Any] = {
+            "model": config.model,
+            "messages": messages,
+            "temperature": 0.2,
+        }
+        if searches_remaining > 0:
+            payload["tools"] = BASELINE_TOOLS_SPEC
+            payload["tool_choice"] = "auto"
+
+        response_data = call_chat_completions(config.endpoint, config.api_key, payload)
+        usage = response_data.get("usage", {})
+        p_tok = usage.get("prompt_tokens", 0)
+        c_tok = usage.get("completion_tokens", 0)
+        last_prompt_tokens = p_tok
+        turn_completion_tokens += c_tok
+
+        choices = response_data.get("choices", [])
+        if not choices:
+            raise RuntimeError(f"Unexpected empty response from LLM: {response_data}")
+
+        choice = choices[0]
+        msg = choice.get("message", {})
+        tool_calls = msg.get("tool_calls")
+
+        if tool_calls and searches_remaining > 0:
+            messages.append(msg)
+            for tool_call in tool_calls:
+                fn = tool_call.get("function", {})
+                fn_name = fn.get("name")
+                fn_args_raw = fn.get("arguments", "{}")
+                try:
+                    fn_args = json.loads(fn_args_raw) if isinstance(fn_args_raw, str) else fn_args_raw
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    fn_args = {}
+
+                tool_calls_count += 1
+                tool_output = execute_baseline_tool(folder, fn_name, fn_args)
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.get("id"),
+                        "name": fn_name,
+                        "content": tool_output,
+                    }
+                )
+
+            searches_remaining -= 1
+            if searches_remaining <= 0:
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": "You have completed your tool budget. Please synthesize your final answer using all the evidence gathered.",
+                    }
+                )
+            continue
+
+        content = msg.get("content") or ""
+        stats = {
+            "turn_prompt_tokens": last_prompt_tokens,
+            "turn_completion_tokens": turn_completion_tokens,
+            "turn_total_tokens": last_prompt_tokens + turn_completion_tokens,
+            "tool_calls_count": tool_calls_count,
+        }
+        return content, stats
+
+
 def run_benchmark(
     target_repo: str | None = None,
     use_llm_judge: bool = True,
     save_report: Path | None = None,
+    compare_baseline: bool = False,
 ):
-    """Run full evaluation suite across configured repositories."""
+    """Run full evaluation suite across configured repositories with optional baseline comparison."""
     if not BENCHMARK_CONFIG.is_file():
         print(f"❌ Configuration not found: {BENCHMARK_CONFIG}")
         sys.exit(1)
@@ -101,13 +345,18 @@ def run_benchmark(
     with open(BENCHMARK_CONFIG, "r", encoding="utf-8") as f:
         benchmarks = json.load(f)
 
+    title_suffix = " (A/B Baseline Comparison)" if compare_baseline else ""
     print("\n" + "=" * 75)
-    print("🎯 Codebase-Navigator Benchmark & Multi-Language Evaluation Harness")
+    print(f"🎯 Codebase-Navigator Benchmark & Evaluation Harness{title_suffix}")
     print("=" * 75)
 
     results_report: list[dict[str, Any]] = []
     total_tasks = 0
     passed_tasks = 0
+    baseline_passed_tasks = 0
+
+    total_cn_tokens = 0
+    total_base_tokens = 0
 
     for repo_entry in benchmarks:
         r_name = repo_entry["repo"]
@@ -139,54 +388,86 @@ def run_benchmark(
             total_tasks += 1
             print(f"\n  ▶ [{task_id}] Q: {question}")
 
+            # 1. Evaluate Codebase-Navigator Agent
             t0 = time.time()
             try:
-                answer, stats = ask_codebase(
+                cn_answer, cn_stats = ask_codebase(
                     folder=r_dir,
                     question=question,
                     config=config,
                     verbose=False,
-                    new_session=True,  # Fresh session for clean benchmark
+                    new_session=True,
                 )
-                dt = time.time() - t0
-
-                # 1. Rule-based keyword/file verification
-                kw_matches = [kw for kw in req_kws if kw.lower() in answer.lower()]
-                file_matches = [f for f in req_files if f.lower() in answer.lower()]
-                rule_pass = (len(kw_matches) >= min(1, len(req_kws))) and (
-                    len(file_matches) >= min(1, len(req_files))
+                cn_dt = time.time() - t0
+                cn_kw_matches = [kw for kw in req_kws if kw.lower() in cn_answer.lower()]
+                cn_file_matches = [f for f in req_files if f.lower() in cn_answer.lower()]
+                cn_rule_pass = (len(cn_kw_matches) >= min(1, len(req_kws))) and (
+                    len(cn_file_matches) >= min(1, len(req_files))
                 )
 
-                # 2. LLM-as-a-Judge verification (if enabled)
-                judge_pass = False
-                judge_rationale = ""
+                cn_judge_pass = False
+                cn_rationale = ""
                 if use_llm_judge and config.api_key:
-                    judge_pass, judge_rationale = llm_judge_answer(question, key, answer, config)
+                    cn_judge_pass, cn_rationale = llm_judge_answer(question, key, cn_answer, config)
 
-                task_passed = judge_pass if use_llm_judge else rule_pass
-
-                if task_passed:
+                cn_passed = cn_judge_pass if use_llm_judge else cn_rule_pass
+                if cn_passed:
                     passed_tasks += 1
-                    status_icon = "✅ PASS"
-                else:
-                    status_icon = "❌ FAIL"
 
-                tokens = stats.get("turn_total_tokens", 0)
-                print(f"    Status: {status_icon} (took {dt:.2f}s, tokens: {tokens:,})")
-                print(f"    Keyword matches: {kw_matches}/{req_kws}")
-                if use_llm_judge:
-                    print(f"    Judge Verdict: {'Approved' if judge_pass else 'Rejected'} — {judge_rationale}")
+                cn_tokens = cn_stats.get("turn_total_tokens", 0)
+                total_cn_tokens += cn_tokens
+                print(f"    [CN]       Status: {'✅ PASS' if cn_passed else '❌ FAIL'} (took {cn_dt:.2f}s, tokens: {cn_tokens:,})")
+
+                # 2. Evaluate Baseline Agent (if --compare-baseline)
+                base_tokens = 0
+                base_dt = 0.0
+                base_passed = False
+                base_rationale = ""
+                token_savings_pct = 0.0
+
+                if compare_baseline:
+                    t_b0 = time.time()
+                    try:
+                        base_answer, base_stats = run_baseline_agent(r_dir, question, config)
+                        base_dt = time.time() - t_b0
+                        base_kw_matches = [kw for kw in req_kws if kw.lower() in base_answer.lower()]
+                        base_file_matches = [f for f in req_files if f.lower() in base_answer.lower()]
+                        base_rule_pass = (len(base_kw_matches) >= min(1, len(req_kws))) and (
+                            len(base_file_matches) >= min(1, len(req_files))
+                        )
+
+                        if use_llm_judge and config.api_key:
+                            base_judge_pass, base_rationale = llm_judge_answer(question, key, base_answer, config)
+                        else:
+                            base_judge_pass = base_rule_pass
+
+                        base_passed = base_judge_pass
+                        if base_passed:
+                            baseline_passed_tasks += 1
+
+                        base_tokens = base_stats.get("turn_total_tokens", 0)
+                        total_base_tokens += base_tokens
+
+                        if base_tokens > 0:
+                            token_savings_pct = round(((base_tokens - cn_tokens) / base_tokens) * 100, 1)
+
+                        print(f"    [Baseline] Status: {'✅ PASS' if base_passed else '❌ FAIL'} (took {base_dt:.2f}s, tokens: {base_tokens:,})")
+                        print(f"    ⚡ Token Savings: {token_savings_pct:+.1f}% ({cn_tokens:,} vs {base_tokens:,})")
+                    except Exception as e_base:
+                        print(f"    ❌ Baseline Error: {e_base}")
 
                 results_report.append({
                     "task_id": task_id,
                     "repo": r_name,
                     "question": question,
-                    "passed": task_passed,
-                    "duration_seconds": round(dt, 2),
-                    "tokens": tokens,
-                    "keyword_matches": kw_matches,
-                    "judge_rationale": judge_rationale,
-                    "answer_preview": answer[:300] + ("..." if len(answer) > 300 else ""),
+                    "passed": cn_passed,
+                    "duration_seconds": round(cn_dt, 2),
+                    "tokens": cn_tokens,
+                    "judge_rationale": cn_rationale,
+                    "baseline_passed": base_passed if compare_baseline else None,
+                    "baseline_tokens": base_tokens if compare_baseline else None,
+                    "token_savings_percentage": token_savings_pct if compare_baseline else None,
+                    "answer_preview": cn_answer[:300] + ("..." if len(cn_answer) > 300 else ""),
                 })
 
             except Exception as e:
@@ -202,7 +483,16 @@ def run_benchmark(
     # Summary
     print("\n" + "=" * 75)
     score_pct = (passed_tasks / total_tasks * 100) if total_tasks > 0 else 0
-    print(f"📊 Evaluation Score: {passed_tasks}/{total_tasks} passed ({score_pct:.1f}%)")
+    print(f"📊 CN Evaluation Score:       {passed_tasks}/{total_tasks} passed ({score_pct:.1f}%)")
+    if compare_baseline and total_tasks > 0:
+        base_score_pct = (baseline_passed_tasks / total_tasks * 100)
+        overall_savings = (
+            round(((total_base_tokens - total_cn_tokens) / total_base_tokens) * 100, 1)
+            if total_base_tokens > 0
+            else 0.0
+        )
+        print(f"📊 Baseline Evaluation Score: {baseline_passed_tasks}/{total_tasks} passed ({base_score_pct:.1f}%)")
+        print(f"💰 Overall Token Savings:     {overall_savings:+.1f}% (CN: {total_cn_tokens:,} vs Base: {total_base_tokens:,})")
     print("=" * 75)
 
     if save_report:
@@ -212,6 +502,7 @@ def run_benchmark(
                     "total_tasks": total_tasks,
                     "passed_tasks": passed_tasks,
                     "score_percentage": score_pct,
+                    "compare_baseline": compare_baseline,
                     "results": results_report,
                 },
                 f,
@@ -226,6 +517,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run codebase-navigator evaluation benchmarks")
     parser.add_argument("--repo", help="Filter by repository name (e.g. flask, fastapi, httpx)")
     parser.add_argument("--no-judge", action="store_true", help="Disable LLM-as-a-judge (use keyword rules only)")
+    parser.add_argument("--compare-baseline", action="store_true", help="Run A/B benchmark against generic baseline agent (cat/rg/find/ls)")
     parser.add_argument("--report", default="eval/report.json", help="Path to save JSON evaluation report")
     args = parser.parse_args()
 
@@ -233,4 +525,6 @@ if __name__ == "__main__":
         target_repo=args.repo,
         use_llm_judge=not args.no_judge,
         save_report=Path(args.report) if args.report else None,
+        compare_baseline=args.compare_baseline,
     )
+

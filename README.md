@@ -367,6 +367,9 @@ uv run eval/runner.py --repo fastapi
 # Run with keyword validation only (without LLM-as-a-judge):
 uv run eval/runner.py --no-judge
 
+# Run A/B token-savings comparison against a generic baseline agent (cat/rg/find/ls):
+uv run eval/runner.py --compare-baseline
+
 # Export structured JSON evaluation report:
 uv run eval/runner.py --report eval/report.json
 ```
