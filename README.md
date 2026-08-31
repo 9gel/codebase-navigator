@@ -41,13 +41,37 @@ Launch the `cn watch` daemon in one terminal pane:
 ...
 ```
 
+Run `cn ask` in a separate terminal:
 
+```
+❯ cn ask "Where is the separator ============= produced? Give me a one-line answer"
+✅ Answer found by agent
+
+================================================================================
+
+The `=============` separator is produced in src/codebase_navigator/cli.py:770
+via `print(f"\n{divider_color}{'=' * divider_width}\033[0m\n")` in the `cn ask`
+output path.
+
+Tokens: 12,456 (prompt: 12,005, completion: 451)
+
+❯ cn ask "What's the weather like today? Give a one-line answer"
+⚠️ Answer not found in codebase / Off-topic
+
+================================================================================
+
+I can't answer that — I'm a codebase navigation assistant scoped to this
+repository, and weather data isn't part of this codebase.
+
+Tokens: 8,420 (prompt: 8,358, completion: 62)
+```
 
 ### As an MCP or cli tool for your agent
 
 Use codebase-navigator as a lightweight embeddings server for your favorite
 coding harness, either via the MCP, or give the cli tools to your agent so they
 find code quickly and token-efficiently.
+
 
 ## Features
 
@@ -63,6 +87,9 @@ find code quickly and token-efficiently.
 - 👀 **Live File Watcher** (`cn watch`): Automatically re-indexes `.tags` and
   incrementally updates LanceDB embeddings on every save with sub-second
   debounce.
+- 🔌 **Model Context Protocol (MCP) Server (`cn mcp`)**: Exposes 6 zero-token-waste
+  code intelligence tools (`codebase_search`, `codebase_tags`, `codebase_references`,
+  `codebase_call_tree`, `codebase_read`, `codebase_grep`) for AI assistants and IDEs.
 - ⚙️ **Configurable System Prompts**: For `cn ask`, customize agent persona,
   auditing constraints, or architectural instructions via CLI flags, environment
   variables, or TOML config.
