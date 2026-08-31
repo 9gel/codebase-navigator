@@ -339,9 +339,17 @@ def format_tag_results(results: list[dict]) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the unified cn CLI argument parser."""
+    from . import __version__
     parser = argparse.ArgumentParser(
         prog="cn",
         description="Generic Code & Documentation Navigation Engine",
+    )
+    parser.add_argument(
+        "-v",
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+        help="Show program version and exit",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
