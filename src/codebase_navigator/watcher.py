@@ -113,7 +113,10 @@ class DirectoryWatcher:
         print(f"  Index location: {self.index.cache_dir}")
 
         self.ipc_server.start()
-        print(f"  🔌 IPC Socket: {self.socket_path}")
+        if self.ipc_server._unix_server:
+            print(f"  🔌 IPC Socket: {self.socket_path}")
+        if self.ipc_server.tcp_port:
+            print(f"  🌐 IPC Loopback TCP: 127.0.0.1:{self.ipc_server.tcp_port} (port file: {self.ipc_server.port_path})")
         print("  🧠 Agent Session Daemon: Ready (KV prompt caching enabled)")
         print("👀 Watching for file changes (Ctrl+C to stop)...\n")
 

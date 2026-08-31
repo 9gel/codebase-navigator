@@ -151,3 +151,59 @@ def test_ipc_version_mismatch_rejection(tmp_path: Path):
         sock.close()
     finally:
         server.stop()
+
+
+def test_tcp_loopback_discovery_and_query(tmp_path: Path):
+    from codebase_navigator.config import get_port_path, get_default_tcp_port
+    from codebase_navigator.ipc import discover_daemon_target, ping_target, query_target
+
+    doc_dir = tmp_path / "docs"
+    doc_dir.mkdir()
+    f1 = doc_dir / "tcp_guide.md"
+    f1.write_text("# TCP Mode\n\nTesting direct loopback TCP transport above port 10000.")
+
+    idx = VectorIndex(tmp_path)
+    idx.sync()
+
+    sock_path = get_socket_path(tmp_path)
+    server = IPCServer(sock_path, idx)
+    server.start()
+
+    try:
+        time.sleep(0.05)
+        port_path = get_port_path(tmp_path)
+        assert port_path.exists()
+        port = int(port_path.read_text().strip())
+        assert port >= 10000
+
+        # Verify discover_daemon_target finds the port
+        target = discover_daemon_target(tmp_path)
+        assert target is not None
+
+        # Verify ping and query over TCP
+        status = ping_target(port)
+        assert status is not None
+        assert status.get("status") == "ok"
+
+        results = query_target(port, "loopback TCP transport", limit=2)
+        assert results is not None
+        assert len(results) >= 1
+        assert "tcp_guide.md" in results[0]["path"]
+
+        # Also test fallback discovery when socket is removed
+        if sock_path.exists():
+            sock_path.unlink()
+        target2 = discover_daemon_target(tmp_path)
+        assert target2 == port
+    finally:
+        server.stop()
+        assert not port_path.exists()
+
+
+def test_deterministic_port_hash(tmp_path: Path):
+    from codebase_navigator.config import get_default_tcp_port
+    port1 = get_default_tcp_port(tmp_path)
+    port2 = get_default_tcp_port(tmp_path)
+    assert port1 == port2
+    assert 10000 <= port1 < 60000
+

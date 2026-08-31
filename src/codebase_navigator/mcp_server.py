@@ -129,14 +129,13 @@ def codebase_search(
     """
     folder = resolve_repository_root(repo_root, ctx)
 
-    # 1. Check if live cn watch socket is active for this folder
-    sock_path = get_socket_path(folder)
-    if sock_path.exists():
-        ping_res = ping_socket(sock_path)
-        if ping_res is not None:
-            results = query_socket(sock_path, query, limit=limit, doc_type=doc_type)
-            if results is not None:
-                return _format_search_chunks(results, folder)
+    # 1. Check if live cn watch daemon is active for this folder (via socket or TCP port)
+    from .ipc import discover_daemon_target, query_target
+    target = discover_daemon_target(folder)
+    if target is not None:
+        results = query_target(target, query, limit=limit, doc_type=doc_type)
+        if results is not None:
+            return _format_search_chunks(results, folder)
 
     # 2. In-process vector index search
     idx = get_or_create_repo_index(folder, auto_sync=True)

@@ -502,11 +502,15 @@ def _run_status(folder: Path, custom_index_dir: str | None = None):
     else:
         print("  🏷️  Tags file: Not found (run cn sync)")
 
-    socket_path = get_socket_path(folder, custom_index_dir)
-    daemon_status = ping_socket(socket_path)
+    from .ipc import discover_daemon_target, ping_target, query_target
+
+    target = discover_daemon_target(folder, custom_index_dir)
+    daemon_status = ping_target(target) if target else None
     if daemon_status:
-        print(f"  🟢 cn watch daemon: ACTIVE (socket: {socket_path})")
+        target_desc = f"socket: {target}" if isinstance(target, Path) else f"127.0.0.1:{target}"
+        print(f"  🟢 cn watch daemon: ACTIVE ({target_desc})")
     else:
+        socket_path = get_socket_path(folder, custom_index_dir)
         print(f"  ⚪ cn watch daemon: NOT RUNNING (socket: {socket_path})")
 
     from .index import VectorIndex
@@ -566,8 +570,9 @@ def _run_search(
     resolved_links = display_cfg.get("links", "auto")
     resolved_wrap = display_cfg.get("wrap")
 
-    socket_path = get_socket_path(folder, custom_index_dir)
-    results = query_socket(socket_path, query, limit=limit, doc_type=doc_type)
+    from .ipc import discover_daemon_target, query_target
+    target = discover_daemon_target(folder, custom_index_dir)
+    results = query_target(target, query, limit=limit, doc_type=doc_type) if target else None
     if results is not None:
         raw_out = format_search_results(results, folder)
         print(

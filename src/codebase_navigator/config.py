@@ -194,3 +194,16 @@ def get_cache_dir(folder: Path, custom_index_dir: str | None = None) -> Path:
 def get_socket_path(folder: Path, custom_index_dir: str | None = None) -> Path:
     """Return the Unix Domain Socket path used for IPC with cn watch."""
     return get_cache_dir(folder, custom_index_dir) / "watch.sock"
+
+
+def get_port_path(folder: Path, custom_index_dir: str | None = None) -> Path:
+    """Return the TCP port metadata file path used for IPC with cn watch."""
+    return get_cache_dir(folder, custom_index_dir) / "watch.port"
+
+
+def get_default_tcp_port(folder: Path) -> int:
+    """Compute a deterministic loopback TCP port in range 10000..59999 based on directory path hash."""
+    import zlib
+    canonical_path = str(folder.resolve()).encode("utf-8")
+    hash_val = zlib.crc32(canonical_path)
+    return 10000 + (hash_val % 50000)

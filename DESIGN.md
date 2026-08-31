@@ -85,7 +85,9 @@ flowchart TD
 
 ### 3.3. Live Watcher & Daemon Session IPC (`watcher.py`, `ipc.py`)
 - **`watchfiles` Engine**: Detects code and documentation modifications with a 1000ms debounce.
-- **IPC Unix Domain Socket**: Listens on `.codebase-navigator/watch.sock`.
+- **Dual Transport IPC**:
+  - **Unix Domain Socket**: Listens on `.codebase-navigator/watch.sock` for high-speed local IPC.
+  - **Loopback TCP Transport**: Binds on `127.0.0.1:<port>` with port metadata written to `.codebase-navigator/watch.port`. The default port is deterministically hashed from the directory path into the range `10000..59999` with automatic collision fallback. This allows sandboxed runtimes (like Codex sandboxes or Docker containers with volume socket restrictions) to seamlessly connect.
 - **Hot In-Memory State**: Keeps the LanceDB table and embedding model pre-loaded in memory, delivering sub-10ms semantic searches to CLI clients.
 - **Persistent Conversation Session**:
   - `cn watch` maintains the agent conversation message history across repeated `cn ask` commands.

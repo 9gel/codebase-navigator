@@ -722,38 +722,36 @@ def ask_codebase(
     progress_callback = None,
 ) -> tuple[str, dict[str, Any]]:
     """Query codebase using daemon session over socket if running, or standalone session."""
-    socket_path = get_socket_path(folder, custom_index_dir)
+    from .ipc import discover_daemon_target, send_target_command
 
-    # 1. Try sending ask request to active cn watch daemon
-    if socket_path.exists():
-        ping_res = ping_socket(socket_path)
-        if ping_res is not None:
-            # Query active daemon
-            def handle_remote_progress(line: str):
-                if verbose:
-                    print(line, file=output_stream, flush=True)
-                if progress_callback:
-                    progress_callback(line)
+    # 1. Try sending ask request to active cn watch daemon (via socket or TCP port)
+    target = discover_daemon_target(folder, custom_index_dir)
+    if target is not None:
+        def handle_remote_progress(line: str):
+            if verbose:
+                print(line, file=output_stream, flush=True)
+            if progress_callback:
+                progress_callback(line)
 
-            res = send_socket_command(
-                socket_path,
-                action="ask",
-                payload={
-                    "question": question,
-                    "config": config.to_dict(),
-                    "new_session": new_session,
-                    "verbose": True,
-                },
-                timeout=180.0,
-                progress_callback=handle_remote_progress,
-            )
-            if res:
-                if res.get("status") == "version_mismatch":
-                    raise RuntimeError(res.get("error", "Version mismatch between cn client and cn watch daemon."))
-                if res.get("status") == "ok":
-                    return res.get("answer", ""), res.get("stats", {})
-                if res.get("status") == "error":
-                    raise RuntimeError(f"Daemon error: {res.get('error', 'Unknown error')}")
+        res = send_target_command(
+            target,
+            action="ask",
+            payload={
+                "question": question,
+                "config": config.to_dict(),
+                "new_session": new_session,
+                "verbose": True,
+            },
+            timeout=180.0,
+            progress_callback=handle_remote_progress,
+        )
+        if res:
+            if res.get("status") == "version_mismatch":
+                raise RuntimeError(res.get("error", "Version mismatch between cn client and cn watch daemon."))
+            if res.get("status") == "ok":
+                return res.get("answer", ""), res.get("stats", {})
+            if res.get("status") == "error":
+                raise RuntimeError(f"Daemon error: {res.get('error', 'Unknown error')}")
 
     # 2. Standalone fallback (warn user)
     if verbose:
