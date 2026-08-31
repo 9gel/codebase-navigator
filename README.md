@@ -34,7 +34,7 @@ Launch the `cn watch` daemon in one terminal pane, and use it in another.
   conversational context is preserved in-memory across successive `cn ask` commands.
   Follow-up questions hit provider-side prefix KV caches for instant responses and lower token cost.
 - 🧠 **LanceDB Semantic & Hybrid Search**: Vector search powered by
-  `sentence-transformers/all-MiniLM-L6-v2` with hybrid phrase/title match
+  `FastEmbed ONNX `all-MiniLM-L6-v2`` with hybrid phrase/title match
   boosting for markdown documentation, glossary terms, and code comments.
 - 🏷️ **Git-Aware `.tags` Generation**: Uses `universal-ctags` to index genuine
   source code while ignoring huge data dumps, JSON caches, `.git`, `node_modules`,
@@ -49,6 +49,18 @@ Launch the `cn watch` daemon in one terminal pane, and use it in another.
   HuggingFace network requests.
 
 ## Quick Start
+
+### Embedding Model & First-Time Download
+
+`codebase-navigator` uses **FastEmbed** with ONNX runtime for ultra-fast vector embeddings:
+- **Default Model**: `FastEmbed ONNX `all-MiniLM-L6-v2`` (384-dimensional vector embeddings).
+- **First Run**: On the very first invocation of `cn sync`, `cn watch`, or `cn search`, the ~80MB ONNX model weights are automatically downloaded once to your local machine.
+- **Cache Location**: Stored in `~/.cache/fastembed/` (or `$FASTEMBED_CACHE_DIR`).
+- **Customizing Cache Directory**:
+  ```bash
+  export FASTEMBED_CACHE_DIR="/path/to/custom/cache/fastembed"
+  ```
+- **100% Offline After Download**: Once downloaded, `cn` operates strictly from disk with zero external network calls for embeddings.
 
 ### Prerequisites
 

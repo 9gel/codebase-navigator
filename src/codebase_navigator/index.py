@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 import lancedb
 
 if TYPE_CHECKING:
-    from sentence_transformers import SentenceTransformer
+    from fastembed import TextEmbedding
 
 from .config import (
     DOC_SCHEMA,
@@ -28,7 +28,7 @@ COMMON_STOPWORDS = {
 
 
 class VectorIndex:
-    """LanceDB index manager with SentenceTransformer embeddings and hybrid re-ranking."""
+    """LanceDB index manager with FastEmbed ONNX embeddings and hybrid re-ranking."""
 
     def __init__(self, folder: Path, custom_index_dir: str | None = None):
         self.folder = folder
@@ -36,18 +36,15 @@ class VectorIndex:
         self.db_dir = self.cache_dir / "lancedb"
         self.meta_file = self.cache_dir / "files_meta.json"
         self.db = lancedb.connect(str(self.db_dir))
-        self._model: SentenceTransformer | None = None
+        self._model: TextEmbedding | None = None
         self._ensure_table()
 
     @property
-    def model(self) -> SentenceTransformer:
+    def model(self) -> TextEmbedding:
         if self._model is None:
-            from sentence_transformers import SentenceTransformer
+            from fastembed import TextEmbedding
             with silence_stdio():
-                try:
-                    self._model = SentenceTransformer(EMBEDDING_MODEL_NAME, local_files_only=True)
-                except Exception:
-                    self._model = SentenceTransformer(EMBEDDING_MODEL_NAME)
+                self._model = TextEmbedding(model_name=EMBEDDING_MODEL_NAME)
         return self._model
 
     def _ensure_table(self):
@@ -139,14 +136,9 @@ class VectorIndex:
 
         if all_chunks_to_embed:
             texts = [c["content"] for c in all_chunks_to_embed]
-            embeddings = self.model.encode(
-                texts,
-                batch_size=256,
-                show_progress_bar=False,
-                normalize_embeddings=True,
-            )
+            embeddings = list(self.model.embed(texts, batch_size=256))
             for chunk, vec in zip(all_chunks_to_embed, embeddings):
-                chunk["vector"] = vec.tolist()
+                chunk["vector"] = vec.tolist() if hasattr(vec, "tolist") else list(vec)
 
             self.table.add(all_chunks_to_embed)
 
@@ -192,9 +184,9 @@ class VectorIndex:
 
         if chunks:
             texts = [c["content"] for c in chunks]
-            embeddings = self.model.encode(texts, batch_size=64, show_progress_bar=False, normalize_embeddings=True)
+            embeddings = list(self.model.embed(texts, batch_size=64))
             for chunk, vec in zip(chunks, embeddings):
-                chunk["vector"] = vec.tolist()
+                chunk["vector"] = vec.tolist() if hasattr(vec, "tolist") else list(vec)
             self.table.add(chunks)
 
         meta = self.load_meta()
@@ -214,7 +206,11 @@ class VectorIndex:
         doc_type: str | None = None,
     ) -> list[dict[str, Any]]:
         """Hybrid semantic vector search with keyword & title match re-ranking."""
-        q_vec = self.model.encode(query, normalize_embeddings=True).tolist()
+        q_vec = list(self.model.embed([query]))[0]
+        if hasattr(q_vec, "tolist"):
+            q_vec = q_vec.tolist()
+        else:
+            q_vec = list(q_vec)
         fetch_limit = max(limit * 4, 20)
         search_query = self.table.search(q_vec).metric("cosine").limit(fetch_limit)
 
