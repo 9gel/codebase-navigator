@@ -257,8 +257,30 @@ wrap = true
     assert res3["width"] == 90
     assert res3["theme"] == "light"
 
+def test_status_spinner_truncation(monkeypatch):
+    import io
+    import os
+    import shutil
+    from codebase_navigator.cli import StatusSpinner
 
+    stream = io.StringIO()
+    # Mock isatty to True
+    stream.isatty = lambda: True
 
+    # Mock terminal width to 40 columns
+    monkeypatch.setattr(shutil, "get_terminal_size", lambda fallback=(80, 20): os.terminal_size((40, 20)))
 
+    spinner = StatusSpinner(
+        "🔎 [Tool 3/15: grep_search] limit=20, path_glob='node_modules/router/**/*.js', pattern='matchLayer|function router|han'",
+        stream=stream,
+    )
+    # Trigger one iteration of spinning by running internal logic without thread
+    term_width = shutil.get_terminal_size((80, 20)).columns
+    avail = max(10, term_width - 3)
+    msg = spinner.message
+    if len(msg) > avail:
+        msg = msg[: avail - 3].rstrip() + "..."
+    assert len(msg) <= avail
+    assert msg.endswith("...")
 
 

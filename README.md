@@ -14,28 +14,58 @@ of thought.
 
 ## How it works
 
-Launch the `cn watch` daemon in one terminal pane, and use it in another.
+### As a standalone coding aid
 
-| Pane 1 | Pane 2 |
-| -------- | -------- |
-| <pre><code>❯ cn watch<br/> 🚀 Starting cn watch for: /home/user/code/project<br/>   Performing initial sync...<br/>   .tags: Indexed 924 source files (1.78 MB)<br/>   LanceDB: 954 files updated (7814 chunks), 0 pruned.<br/>   Index location: /home/user/code/project/.codebase-navigator<br/>   🔌 IPC Socket: /home/user/code/project/.codebase-navigator/watch.sock<br/>   🧠 Agent Session Daemon: Ready (KV prompt caching enabled)<br/> 👀 Watching for file changes (Ctrl+C to stop)...<br/> <br/> [18:15:08] ⚡ Synced 1 file(s) (4 chunks) in 784ms<br/> [18:54:52] ⚡ Synced 1 file(s) (4 chunks) in 710ms<br/> [18:56:19] 🏷️  Tags updated: Indexed 924 source files (1.78 MB)<br/> [18:56:19] ⚡ Synced 134 file(s) (1505 chunks) in 111142ms</code></pre> | <pre><code>❯ cn ask "How does request dispatching work?"<br/> 🔍 Searching codebase for: "How does request dispatching work?"...<br/> ✓ Found 10 relevant code/doc chunks.<br/> 🔎 [Tool 1/15: find_references] symbol='dispatch_request'...<br/> 🔎 [Tool 2/15: read_code] path='src/app.py', start_line=45, end_line=90...<br/> <br/> ================================================================================<br/> Request dispatching in this codebase is orchestrated in [src/app.py:45-90](file:///home/user/code/project/src/app.py#L45-L90)...</code></pre> |
+Launch the `cn watch` daemon in one terminal pane:
+
+```
+❯ cd yourcode
+❯ cn watch
+🚀 Starting cn watch for: /home/user/yourcode
+  Performing initial sync...
+  .tags: Indexed 931 source files (1.80 MB)
+  LanceDB: 21 files updated (407 chunks), 0 pruned.
+  Index location: /home/user/yourcode/.codebase-navigator
+  🔌 IPC Socket: /home/user/yourcode/.codebase-navigator/watch.sock
+  🧠 Agent Session Daemon: Ready (KV prompt caching enabled)
+👀 Watching for file changes (Ctrl+C to stop)...
+
+[00:29:03] 🏷️  Tags updated: Indexed 931 source files (1.80 MB)
+[00:29:03] ⚡ Synced 1 file(s) (31 chunks) in 927ms
+[00:29:04] 🏷️  Tags updated: Indexed 931 source files (1.80 MB)
+[00:29:04] ⚡ Synced 1 file(s) (16 chunks) in 649ms
+[00:30:56] 🏷️  Tags updated: Indexed 931 source files (1.80 MB)
+[00:30:56] ⚡ Synced 1 file(s) (8 chunks) in 448ms
+[00:30:56] 🏷️  Tags updated: Indexed 931 source files (1.80 MB)
+[00:30:56] ⚡ Synced 1 file(s) (6 chunks) in 416ms
+...
+```
+
+
+
+### As an MCP or cli tool for your agent
+
+Use codebase-navigator as a lightweight embeddings server for your favorite
+coding harness, either via the MCP, or give the cli tools to your agent so they
+find code quickly and token-efficiently.
 
 ## Features
 
 - 💬 **Autonomous Agent Harness (`cn ask`)**: Ask architectural and
   implementation questions in natural language. Powered by an iterative LLM
   reasoning loop with 1-shot hybrid code intelligence tools.
-- 🧠 **LanceDB Semantic & Hybrid Search**: Vector search powered by `FastEmbed
-  ONNX `all-MiniLM-L6-v2`` with hybrid phrase/title match boosting for markdown
-  documentation, glossary terms, and code comments.
-- 🏷️ **Git-Aware `.tags` Generation**: Uses `universal-ctags` to index genuine
-  source code while ignoring huge data dumps, JSON caches, `.git`,
+- 🧠 **LanceDB Semantic & Hybrid Search (`cn search`)**: Vector search powered
+  by `FastEmbed ONNX `all-MiniLM-L6-v2`` with hybrid phrase/title match boosting
+  for markdown documentation, glossary terms, and code comments.
+- 🏷️ **Git-Aware `.tags` Generation** (`cn tags`): Uses `universal-ctags` to
+  index genuine source code while ignoring huge data dumps, JSON caches, `.git`,
   `node_modules`, and build artifacts.
-- 👀 **Live File Watcher**: Automatically re-indexes `.tags` and incrementally
-  updates LanceDB embeddings on every save with sub-second debounce.
-- ⚙️ **Configurable System Prompts**: Customize agent persona, auditing
-  constraints, or architectural instructions via CLI flags, environment
-  variables, or TOML config, for the `ask` command.
+- 👀 **Live File Watcher** (`cn watch`): Automatically re-indexes `.tags` and
+  incrementally updates LanceDB embeddings on every save with sub-second
+  debounce.
+- ⚙️ **Configurable System Prompts**: For `cn ask`, customize agent persona,
+  auditing constraints, or architectural instructions via CLI flags, environment
+  variables, or TOML config.
 
 ## Quick Start
 
@@ -53,16 +83,6 @@ Ensure these command-line tools are installed on your system:
 
 ### Model Context Protocol (MCP) Server
 
-`codebase-navigator` includes a built-in **MCP server** that provides AI agents (in Antigravity, Claude Desktop, Cursor, Cline, etc.) with 6 zero-token-waste code intelligence tools:
-- `codebase_search`: Hybrid vector & keyword search in docs and code.
-- `codebase_tags`: Ctags symbol definition lookups.
-- `codebase_references`: 1-shot definitions and all caller/usage sites.
-- `codebase_call_tree`: AST & cross-file caller and callee hierarchy.
-- `codebase_read`: Precise line range reader with line numbers and clickable links.
-- `codebase_grep`: High-speed regex / literal pattern matcher.
-
-#### Adding to Your AI Harness / IDE
-
 Add to your MCP configuration file (e.g. `claude_desktop_config.json`, `~/.config/antigravity/mcp_config.json`, or `.cursor/mcp.json`):
 
 ```json
@@ -76,11 +96,20 @@ Add to your MCP configuration file (e.g. `claude_desktop_config.json`, `~/.confi
 }
 ```
 
-*Note: The MCP server operates completely standalone without requiring any LLM API keys or external endpoints — it performs local FastEmbed ONNX vector queries and ctags symbol lookups directly for your agent.*
+### Install Using `uv`
+
+```bash
+uv tool install codebase-navigator
+```
+
+### Install Using `pip`
+```bash
+pip install codebase-navigator
+```
 
 ### Try the CLI tools using uvx
 
-You can run `cn` using `uvx` (the tool runner from [uv](https://docs.astral.sh/uv/)). At the top level of a code tree under a git repository, run:
+At the top level of a code tree under a git repository, run:
 
 ```bash
 # Start the live watcher in one terminal:
@@ -101,40 +130,6 @@ uvx codebase-navigator tags flush_chunk
 # Search documentation and comments:
 uvx codebase-navigator search "Flush Chunk"
 ```
-
-## Installation
-
-### 1. Using `uv` / `uvx` (Recommended)
-No installation required! Run directly with `uvx`:
-```bash
-# Run CLI
-uvx codebase-navigator search "authentication flow"
-
-# Run Watcher Daemon
-uvx codebase-navigator watch
-
-# Run MCP Server
-uvx codebase-navigator mcp
-```
-
-Or install globally into your environment:
-```bash
-uv tool install codebase-navigator
-```
-
-### 2. Using `pip`
-```bash
-pip install codebase-navigator
-```
-
-### 3. Using Nix & Direnv (For Developers)
-```bash
-git clone https://github.com/9gel/codebase-navigator.git
-cd codebase-navigator
-direnv allow
-uv run cn --help
-```
-
 
 ## CLI Commands
 
@@ -268,11 +263,27 @@ When resolving settings, `cn` applies the following order of precedence:
   ask` commands. Follow-up questions hit provider-side prefix KV caches for
   instant responses and lower token cost.
 
+### MCP
+
+`codebase-navigator`'s **MCP server** provides AI agents (in Antigravity, Claude Desktop, Cursor, Cline, etc.) with 6 code intelligence tools:
+
+- `codebase_search`: Hybrid vector & keyword search in docs and code.
+- `codebase_tags`: Ctags symbol definition lookups.
+- `codebase_references`: 1-shot definitions and all caller/usage sites.
+- `codebase_call_tree`: AST & cross-file caller and callee hierarchy.
+- `codebase_read`: Precise line range reader with line numbers and clickable links.
+- `codebase_grep`: High-speed regex / literal pattern matcher.
+
+The MCP server operates without requiring any LLM API keys or external
+endpoints — your agent performs local FastEmbed ONNX vector queries and ctags
+symbol lookups directly for their work.
+
 ## Development
 
 The project uses nix and `direnv`. Ensure you have both installed, then:
 
 ```bash
+git clone https://github.com/9gel/codebase-navigator.git
 cd codebase-navigator/
 direnv allow
 uv run pytest

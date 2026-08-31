@@ -629,7 +629,20 @@ class StatusSpinner:
         for frame in itertools.cycle(self.FRAMES):
             if self._stop_event.is_set():
                 break
-            self.stream.write(f"\r\033[36m{frame}\033[0m {self.message}")
+            # Calculate available width to prevent terminal line wrapping
+            prefix = f"\r\033[36m{frame}\033[0m "
+            try:
+                term_width = shutil.get_terminal_size((80, 20)).columns
+            except Exception:
+                term_width = 80
+
+            # 2 chars for frame icon + space
+            avail = max(10, term_width - 3)
+            msg = self.message
+            if len(msg) > avail:
+                msg = msg[: avail - 3].rstrip() + "..."
+
+            self.stream.write(f"\r\033[2K{prefix}{msg}")
             self.stream.flush()
             time.sleep(0.08)
 
