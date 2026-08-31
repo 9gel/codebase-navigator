@@ -518,8 +518,13 @@ def run_benchmark(
                         if base_tokens > 0:
                             token_savings_pct = round(((base_tokens - cn_tokens) / base_tokens) * 100, 1)
 
+                        time_savings_pct = round(((base_dt - cn_dt) / base_dt) * 100, 1) if base_dt > 0 else 0.0
+
                         print(f"    [Baseline] Status: {'✅ PASS' if base_passed else '❌ FAIL'} (took {base_dt:.2f}s, tokens: {base_tokens:,})")
-                        print(f"    ⚡ Token Savings: {token_savings_pct:+.1f}% ({cn_tokens:,} vs {base_tokens:,})")
+                        print(
+                            f"    ⚡ Savings: Tokens {token_savings_pct:+.1f}% ({cn_tokens:,} vs {base_tokens:,}) | "
+                            f"Time {time_savings_pct:+.1f}% ({cn_dt:.2f}s vs {base_dt:.2f}s)"
+                        )
                     except Exception as e_base:
                         if spinner:
                             spinner.stop()
@@ -535,8 +540,10 @@ def run_benchmark(
                     "tokens": cn_tokens,
                     "judge_rationale": cn_rationale,
                     "baseline_passed": base_passed if compare_baseline else None,
+                    "baseline_duration_seconds": round(base_dt, 2) if compare_baseline else None,
                     "baseline_tokens": base_tokens if compare_baseline else None,
                     "token_savings_percentage": token_savings_pct if compare_baseline else None,
+                    "time_savings_percentage": time_savings_pct if compare_baseline else None,
                     "answer_preview": cn_answer[:300] + ("..." if len(cn_answer) > 300 else ""),
                 })
 
@@ -560,23 +567,36 @@ def run_benchmark(
     if compare_baseline and total_tasks > 0:
         base_score_pct = (baseline_passed_tasks / total_tasks * 100)
 
-        # Only compute token savings on mutually successful tasks for fair comparison
+        # Only compute savings on mutually successful tasks for fair comparison
         valid_pairs = [
             r for r in results_report
             if r.get("passed") and r.get("baseline_passed") and (r.get("baseline_tokens") or 0) > 0
         ]
         valid_cn_tokens = sum(r["tokens"] for r in valid_pairs)
         valid_base_tokens = sum(r["baseline_tokens"] for r in valid_pairs)
+        valid_cn_time = sum(r["duration_seconds"] for r in valid_pairs)
+        valid_base_time = sum(r["baseline_duration_seconds"] for r in valid_pairs)
 
-        overall_savings = (
+        overall_token_savings = (
             round(((valid_base_tokens - valid_cn_tokens) / valid_base_tokens) * 100, 1)
             if valid_base_tokens > 0
             else 0.0
         )
+        overall_time_savings = (
+            round(((valid_base_time - valid_cn_time) / valid_base_time) * 100, 1)
+            if valid_base_time > 0
+            else 0.0
+        )
+        speedup = (valid_base_time / valid_cn_time) if valid_cn_time > 0 else 1.0
+
         print(f"📊 Baseline Evaluation Score: {baseline_passed_tasks}/{total_tasks} passed ({base_score_pct:.1f}%)")
         print(
-            f"💰 Validated Token Savings:   {overall_savings:+.1f}% "
+            f"💰 Validated Token Savings:   {overall_token_savings:+.1f}% "
             f"(CN: {valid_cn_tokens:,} vs Base: {valid_base_tokens:,} across {len(valid_pairs)} mutually passed tasks)"
+        )
+        print(
+            f"⏱️  Validated Time Savings:    {overall_time_savings:+.1f}% ({speedup:.2f}x speedup — "
+            f"CN: {valid_cn_time:.1f}s vs Base: {valid_base_time:.1f}s)"
         )
     print("=" * 75)
 
