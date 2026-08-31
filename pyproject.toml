@@ -10,6 +10,7 @@ authors = [{ name = "Nigel Choi" }]
 dependencies = [
     "lancedb>=0.17.0",
     "sentence-transformers>=3.0.0",
+    "torch",
     "watchfiles>=0.24.0",
     "pyarrow>=14.0.0",
     "numpy>=1.24.0",
@@ -43,3 +44,12 @@ target-version = "py311"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+

@@ -42,11 +42,10 @@
           sourcePreference = "wheel";
         };
 
-        # Disable auto-patchelf for torch and nvidia wheels so their $ORIGIN RPATHs are preserved
-        pyprojectOverrides = final: prev:
-          lib.genAttrs
-            (builtins.filter (n: lib.hasPrefix "nvidia-" n) (builtins.attrNames prev) ++ [ "torch" ])
-            (n: prev.${n}.overrideAttrs (_: { dontAutoPatchelf = true; }));
+        # Disable auto-patchelf for torch wheel so its $ORIGIN RPATHs are preserved
+        pyprojectOverrides = final: prev: {
+          torch = prev.torch.overrideAttrs (_: { dontAutoPatchelf = true; });
+        };
 
         pythonSet = (pkgs.callPackage pyproject-nix.build.packages {
           inherit python;
@@ -57,7 +56,7 @@
         ]);
 
         runtimeEnv = pythonSet.mkVirtualEnv "devel-tools-env" workspace.deps.default;
-        runtimeLibs = "${lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib pkgs.zlib ]}:/run/opengl-driver/lib";
+        runtimeLibs = "${lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib pkgs.zlib ]}";
 
         # Runtime wrapper with universal-ctags, git, and offline HF environment
         develTools = pkgs.runCommand "devel-tools"
