@@ -1,12 +1,56 @@
 # codebase-navigator
 
-Tools for ultra-fast semantic codebase navigation, Git-aware ctags indexing,
-live watchers, and [LanceDB](https://github.com/lancedb/lancedb) semantic
-search. Self-contained runtime, no additional servers (e.g. Ollama) to run for
-embeddings.
+Tools for ultra-fast semantic codebase navigation for humans and AI agents,
+Git-aware ctags indexing, live watchers, and
+[LanceDB](https://github.com/lancedb/lancedb) semantic search. Self-contained
+runtime, no additional servers (e.g. Ollama) to run for embeddings.
+
+Cut 40%-80% token use by having your LLM search precisely, instead of ingesting
+entire code bases or search incorrectly using ripgreps.
+
+Get oriented to a codebase quickly by asking natural language questions, instead
+of wasting time switcing between files and losing your train of thought.
 
 ## How it works
 
+Launch the `cn watch` daemon in one terminal pane, and use it in another.
+
+| Pane 1 | Pane 2 |
+|
+```
+❯ cn watch
+🚀 Starting cn watch for: /home/user/code/project
+  Performing initial sync...
+  .tags: Indexed 924 source files (1.78 MB)
+  LanceDB: 954 files updated (7814 chunks), 0 pruned.
+  Index location: /home/user/code/project/.codebase-navigator
+  🔌 IPC Socket: /home/user/code/project/.codebase-navigator/watch.sock
+👀 Watching for file changes (Ctrl+C to stop)...
+
+[18:15:08] ⚡ Synced 1 file(s) (4 chunks) in 784ms
+[18:54:52] ⚡ Synced 1 file(s) (4 chunks) in 710ms
+[18:56:19] 🏷️  Tags updated: Indexed 924 source files (1.78 MB)
+[18:56:19] ⚡ Synced 134 file(s) (1505 chunks) in 111142ms
+[19:04:26] 🏷️  Tags updated: Indexed 924 source files (1.78 MB)
+[19:04:26] ⚡ Synced 1 file(s) (7 chunks) in 1226ms
+[19:04:27] 🏷️  Tags updated: Indexed 924 source files (1.78 MB)
+[19:04:27] ⚡ Synced 1 file(s) (6 chunks) in 1064ms
+[19:19:08] ⚡ Synced 1 file(s) (4 chunks) in 753ms
+[20:18:13] 🏷️  Tags updated: Indexed 924 source files (1.78 MB)
+[20:18:13] ⚡ Synced 1 file(s) (21 chunks) in 3220ms
+[20:18:39] 🏷️  Tags updated: Indexed 924 source files (1.78 MB)
+[20:18:39] ⚡ Synced 1 file(s) (13 chunks) in 1939ms
+[20:19:03] 🏷️  Tags updated: Indexed 924 source files (1.78 MB)
+[20:19:03] ⚡ Synced 1 file(s) (16 chunks) in 1703ms
+[20:19:29] ⚡ Synced 1 file(s) (4 chunks) in 1285ms
+[20:20:50] 🏷️  Tags updated: Indexed 924 source files (1.78 MB)
+[20:20:50] ⚡ Synced 1 file(s) (60 chunks) in 3779ms
+[20:21:01] 🏷️  Tags updated: Indexed 924 source files (1.78 MB)
+[20:21:01] ⚡ Synced 1 file(s) (21 chunks) in 1681ms
+[20:22:50] 🏷️  Tags updated: Indexed 924 source files (1.78 MB)
+[20:22:50] ⚡ Synced 2 file(s) (73 chunks) in 4747ms
+```
+||
 
 ## Features
 
@@ -20,8 +64,8 @@ embeddings.
 - 🧠 **LanceDB Semantic & Hybrid Search**: (the retrival) Vector search powered
   by `sentence-transformers/all-MiniLM-L6-v2` with hybrid phrase/title match
   boosting for markdown documentation, glossary terms, and code comments.
-  Perfect for coding harnesses to home in on the right code, without wildly
-  ripgrep'ping a bunch of code and waste time and tokens.
+  Perfect for LLM in coding harnesses to home in on the right code, without
+  wildly ripgrep'ping a bunch of code and waste time and tokens.
 - 🏷️ **Git-Aware `.tags` Generation**: (exact symbol match) Uses
   `universal-ctags` to index genuine source code while completely ignoring huge
   data dumps, JSON caches, `.git`, `node_modules`, and build artifacts. Another
@@ -213,3 +257,6 @@ direnv allow
 uv run pytest
 ```
 
+## References
+
+* [How RAG Can Cut Your AI Coding Costs by 80%](https://blog.mornati.net/how-rag-can-cut-your-ai-coding-costs-by-80)
