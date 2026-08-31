@@ -599,7 +599,7 @@ class AgentSession:
             custom_index_dir=self.custom_index_dir,
         )
 
-        emit(f"✓ Found {len(initial_chunks)} relevant code/doc chunks.")
+        emit(f"✅ Found {len(initial_chunks)} relevant code/doc chunks.")
         emit("🤖 Analyzing initial retrieval with LLM agent...")
 
         initial_context_text = format_chunks_for_llm(initial_chunks)
@@ -710,6 +710,7 @@ def ask_codebase(
     verbose: bool = True,
     output_stream=sys.stderr,
     new_session: bool = False,
+    progress_callback = None,
 ) -> tuple[str, dict[str, Any]]:
     """Query codebase using daemon session over socket if running, or standalone session."""
     socket_path = get_socket_path(folder, custom_index_dir)
@@ -722,6 +723,8 @@ def ask_codebase(
             def handle_remote_progress(line: str):
                 if verbose:
                     print(line, file=output_stream, flush=True)
+                if progress_callback:
+                    progress_callback(line)
 
             res = send_socket_command(
                 socket_path,
@@ -730,10 +733,10 @@ def ask_codebase(
                     "question": question,
                     "config": config.to_dict(),
                     "new_session": new_session,
-                    "verbose": verbose,
+                    "verbose": True,
                 },
                 timeout=180.0,
-                progress_callback=handle_remote_progress if verbose else None,
+                progress_callback=handle_remote_progress,
             )
             if res:
                 if res.get("status") == "version_mismatch":
@@ -752,4 +755,4 @@ def ask_codebase(
         )
 
     session = AgentSession(folder, config, custom_index_dir=custom_index_dir)
-    return session.ask(question, verbose=verbose, output_stream=output_stream)
+    return session.ask(question, verbose=verbose, output_stream=output_stream, progress_callback=progress_callback)

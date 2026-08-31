@@ -603,6 +603,57 @@ def _run_tags(folder: Path, symbol: str, exact: bool = False, limit: int = 20):
     print(format_tag_results(results))
 
 
+import itertools
+import threading
+import time
+
+
+class StatusSpinner:
+    """Lightweight animated terminal spinner for long-running steps on TTY."""
+
+    FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+    def __init__(self, message: str, stream=sys.stderr):
+        self.message = message
+        self.stream = stream
+        self.is_tty = hasattr(stream, "isatty") and stream.isatty()
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def _spin(self):
+        for frame in itertools.cycle(self.FRAMES):
+            if self._stop_event.is_set():
+                break
+            self.stream.write(f"\r\033[36m{frame}\033[0m {self.message}")
+            self.stream.flush()
+            time.sleep(0.08)
+
+    def start(self):
+        if self.is_tty:
+            self._thread = threading.Thread(target=self._spin, daemon=True)
+            self._thread.start()
+        else:
+            self.stream.write(f"{self.message}\n")
+            self.stream.flush()
+
+    def update_message(self, new_message: str):
+        self.message = new_message
+        if not self.is_tty:
+            self.stream.write(f"{new_message}\n")
+            self.stream.flush()
+
+    def stop(self, final_line: str | None = None):
+        if self._thread and self._thread.is_alive():
+            self._stop_event.set()
+            self._thread.join()
+        if self.is_tty:
+            # Clear spinner line
+            self.stream.write("\r\033[2K")
+            if final_line:
+                self.stream.write(f"{final_line}\n")
+            self.stream.flush()
+
+
 def _run_ask(
     folder: Path,
     question: str,
@@ -649,14 +700,44 @@ def _run_ask(
     )
 
     try:
-        answer, stats = ask_codebase(
-            folder=folder,
-            question=question,
-            config=config,
-            custom_index_dir=custom_index_dir,
-            verbose=not quiet,
-            new_session=new_session,
-        )
+        spinner: StatusSpinner | None = None
+        is_tty = sys.stderr.isatty() if hasattr(sys.stderr, "isatty") else False
+
+        def handle_progress_cli(line: str):
+            nonlocal spinner
+            if quiet:
+                return
+            if not is_tty:
+                print(line, file=sys.stderr, flush=True)
+                return
+
+            if "🔍 Searching codebase" in line or "🤖 Analyzing initial retrieval" in line or "🔎 [Tool" in line:
+                if spinner:
+                    spinner.stop()
+                spinner = StatusSpinner(line, stream=sys.stderr)
+                spinner.start()
+            else:
+                if spinner:
+                    spinner.stop(final_line=line)
+                    spinner = None
+                else:
+                    print(line, file=sys.stderr, flush=True)
+
+        try:
+            # When TTY, we let handle_progress_cli manage the animated spinner output
+            answer, stats = ask_codebase(
+                folder=folder,
+                question=question,
+                config=config,
+                custom_index_dir=custom_index_dir,
+                verbose=False if is_tty else (not quiet),
+                output_stream=sys.stderr,
+                new_session=new_session,
+                progress_callback=handle_progress_cli if not quiet else None,
+            )
+        finally:
+            if spinner:
+                spinner.stop()
         if not quiet:
             term_cols = shutil.get_terminal_size((80, 24)).columns
             if resolved_width:
