@@ -611,8 +611,9 @@ class AgentSession:
 
         searches_remaining = self.config.max_searches
         seen_tool_calls: set[str] = set()
-        turn_prompt_tokens = 0
         turn_completion_tokens = 0
+        last_prompt_tokens = 0
+        tool_calls_count = 0
 
         while True:
             payload: dict[str, Any] = {
@@ -628,9 +629,9 @@ class AgentSession:
             usage = response_data.get("usage", {})
             p_tok = usage.get("prompt_tokens", 0)
             c_tok = usage.get("completion_tokens", 0)
-            turn_prompt_tokens += p_tok
+            last_prompt_tokens = p_tok
             turn_completion_tokens += c_tok
-            self.lifetime_prompt_tokens += p_tok
+            self.lifetime_prompt_tokens = max(self.lifetime_prompt_tokens, p_tok)
             self.lifetime_completion_tokens += c_tok
 
             choices = response_data.get("choices", [])
@@ -654,6 +655,7 @@ class AgentSession:
                         fn_args = {}
 
                     search_num = (self.config.max_searches - searches_remaining) + 1
+                    tool_calls_count += 1
                     call_sig = f"{fn_name}:{json.dumps(fn_args, sort_keys=True)}"
 
                     arg_summary = ", ".join(f"{k}={v!r}" for k, v in list(fn_args.items())[:3])
@@ -700,9 +702,10 @@ class AgentSession:
             is_refusal = any(p in content_lower for p in refusal_patterns)
 
             stats = {
-                "turn_prompt_tokens": turn_prompt_tokens,
+                "turn_prompt_tokens": last_prompt_tokens,
                 "turn_completion_tokens": turn_completion_tokens,
-                "turn_total_tokens": turn_prompt_tokens + turn_completion_tokens,
+                "turn_total_tokens": last_prompt_tokens + turn_completion_tokens,
+                "tool_calls_count": tool_calls_count,
                 "lifetime_prompt_tokens": self.lifetime_prompt_tokens,
                 "lifetime_completion_tokens": self.lifetime_completion_tokens,
                 "lifetime_total_tokens": self.lifetime_prompt_tokens + self.lifetime_completion_tokens,

@@ -788,13 +788,11 @@ def _run_ask(
             turn_in = stats.get("turn_prompt_tokens", 0)
             turn_out = stats.get("turn_completion_tokens", 0)
             turn_total = stats.get("turn_total_tokens", 0)
-            life_in = stats.get("lifetime_prompt_tokens", 0)
-            life_out = stats.get("lifetime_completion_tokens", 0)
-            life_total = stats.get("lifetime_total_tokens", 0)
+            tool_count = stats.get("tool_calls_count", 0)
 
+            tool_suffix = f" | {tool_count} tool call{'s' if tool_count != 1 else ''}" if tool_count > 0 else ""
             print(
-                f"\n\033[2mTokens: {turn_total:,} (prompt: {turn_in:,}, completion: {turn_out:,}) | "
-                f"Session Lifetime: {life_total:,} (in: {life_in:,}, out: {life_out:,})\033[0m",
+                f"\n\033[2mTokens: {turn_total:,} (prompt: {turn_in:,}, completion: {turn_out:,}){tool_suffix}\033[0m",
                 file=sys.stderr,
             )
     except Exception as e:  # noqa: BLE001
