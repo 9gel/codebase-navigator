@@ -659,7 +659,7 @@ class AgentSession:
                     call_sig = f"{fn_name}:{json.dumps(fn_args, sort_keys=True)}"
 
                     arg_summary = ", ".join(f"{k}={v!r}" for k, v in list(fn_args.items())[:3])
-                    emit(f"🔎 [Tool {search_num}/{self.config.max_searches}: {fn_name}] {arg_summary}...")
+                    emit(f"🔎 [Tool {tool_calls_count}: {fn_name}] {arg_summary}...")
 
                     tool_output = execute_tool_call(
                         self.folder,
