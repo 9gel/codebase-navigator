@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import threading
 import time
 
@@ -9,7 +10,7 @@ from watchfiles import Change, DefaultFilter, watch
 
 from .config import CODE_EXTENSIONS, DOC_EXTENSIONS, IGNORE_DIR_NAMES, get_socket_path
 from .index import VectorIndex
-from .ipc import IPCServer
+from .ipc import IPCServer, ping_socket
 from .tags import TagsManager
 
 
