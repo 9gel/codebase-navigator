@@ -63,7 +63,7 @@ class _IPCRequestHandler(socketserver.StreamRequestHandler):
                                 prog_payload = json.dumps({"type": "progress", "message": msg_text}).encode("utf-8") + b"\n"
                                 self.wfile.write(prog_payload)
                                 self.wfile.flush()
-                            except Exception:
+                            except (BrokenPipeError, ConnectionResetError, OSError):
                                 pass
 
                         answer, stats = self.server.watcher.handle_ask(
@@ -95,9 +95,12 @@ class _IPCRequestHandler(socketserver.StreamRequestHandler):
             except Exception as e:
                 resp = {"status": "error", "error": str(e)}
 
-            response_bytes = json.dumps(resp).encode("utf-8") + b"\n"
-            self.wfile.write(response_bytes)
-            self.wfile.flush()
+            try:
+                response_bytes = json.dumps(resp).encode("utf-8") + b"\n"
+                self.wfile.write(response_bytes)
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                break
 
 
 class _IPCUnixStreamServer(socketserver.ThreadingUnixStreamServer):
