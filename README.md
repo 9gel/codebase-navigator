@@ -8,8 +8,9 @@ runtime, no additional servers (e.g. Ollama) to run for embeddings.
 Cut 40%-80% token use by having your LLM search precisely, instead of ingesting
 entire code bases or searching incorrectly using blind ripgreps.
 
-Get oriented to a codebase quickly by asking natural language questions, instead
-of wasting time switching between files and losing your train of thought.
+For the human: get oriented to a codebase quickly by asking natural language
+questions, instead of wasting time switching between files and losing your train
+of thought.
 
 ## How it works
 
@@ -23,16 +24,7 @@ Launch the `cn watch` daemon in one terminal pane, and use it in another.
 
 - 💬 **Autonomous Agent Harness (`cn ask`)**: Ask architectural and
   implementation questions in natural language. Powered by an iterative LLM
-  reasoning loop with 1-shot hybrid code intelligence tools:
-  - `search`: Semantic and hybrid search over code comments and markdown docs.
-  - `tags_lookup`: Instant symbol definition resolution via `.tags`.
-  - `read_code`: Range-bounded source inspection with line numbers and clickable file links.
-  - `find_references`: 1-shot hybrid symbol definitions + all call and usage sites.
-  - `call_tree`: AST & cross-file caller and callee tracer.
-  - `grep_search`: Fast pattern search via `rg` (with pure-Python fallback).
-- ⚡ **Multi-Turn Session Memory & KV Prompt Caching**: When running `cn watch`,
-  conversational context is preserved in-memory across successive `cn ask` commands.
-  Follow-up questions hit provider-side prefix KV caches for instant responses and lower token cost.
+  reasoning loop with 1-shot hybrid code intelligence tools.
 - 🧠 **LanceDB Semantic & Hybrid Search**: Vector search powered by
   `FastEmbed ONNX `all-MiniLM-L6-v2`` with hybrid phrase/title match
   boosting for markdown documentation, glossary terms, and code comments.
@@ -49,18 +41,6 @@ Launch the `cn watch` daemon in one terminal pane, and use it in another.
   HuggingFace network requests.
 
 ## Quick Start
-
-### Embedding Model & First-Time Download
-
-`codebase-navigator` uses **FastEmbed** with ONNX runtime for ultra-fast vector embeddings:
-- **Default Model**: `FastEmbed ONNX `all-MiniLM-L6-v2`` (384-dimensional vector embeddings).
-- **First Run**: On the very first invocation of `cn sync`, `cn watch`, or `cn search`, the ~80MB ONNX model weights are automatically downloaded once to your local machine.
-- **Cache Location**: Stored in `~/.cache/fastembed/` (or `$FASTEMBED_CACHE_DIR`).
-- **Customizing Cache Directory**:
-  ```bash
-  export FASTEMBED_CACHE_DIR="/path/to/custom/cache/fastembed"
-  ```
-- **100% Offline After Download**: Once downloaded, `cn` operates strictly from disk with zero external network calls for embeddings.
 
 ### Prerequisites
 
@@ -188,11 +168,47 @@ Environment variables take precedence over config files:
 ### Precedence Order
 
 When resolving settings, `cn` applies the following order of precedence:
-1. **CLI flags** (e.g. `--api-key`, `--model`, `--system-prompt`, `--width`, `--theme`, `--links`, `--wrap`)
-2. **Environment variables** (`OPENROUTER_API_KEY`, `CN_SYSTEM_PROMPT`, `CN_WIDTH`, etc.)
+1. **CLI flags** (e.g. `--api-key`, `--model`, `--system-prompt`, `--width`,
+   `--theme`, `--links`, `--wrap`)
+2. **Environment variables** (`OPENROUTER_API_KEY`, `CN_SYSTEM_PROMPT`,
+   `CN_WIDTH`, etc.)
 3. **Project config** (`.codebase-navigator/config.toml`)
 4. **User config** (`~/.config/codebase-navigator/config.toml`)
 5. **Built-in defaults**
+
+### Embedding Model & First-Time Download
+
+`cn` uses **FastEmbed** with ONNX runtime for ultra-fast vector embeddings:
+- **Default Model**: `FastEmbed ONNX `all-MiniLM-L6-v2`` (384-dimensional vector
+  embeddings).
+- **First Run**: On the very first invocation of `cn sync`, `cn watch`, or `cn
+  search`, the ~80MB ONNX model weights are automatically downloaded once to
+  your local machine.
+- **Cache Location**: Stored in `~/.cache/fastembed/` (or
+  `$FASTEMBED_CACHE_DIR`).
+- **Customizing Cache Directory**: ```bash export
+  FASTEMBED_CACHE_DIR="/path/to/custom/cache/fastembed" ```
+- **100% Offline After Download**: Once downloaded, `cn` operates strictly from
+  disk with zero external network calls for embeddings.
+
+## How it works
+
+- `cn ask` functions as a lightweight agent harness, where the agent's context
+  is stored in the `cn watch` server.
+- When you call `cn ask`, your question is used to perform a nearest neighbor
+  search using LanceDB. The results and your question is then sent to the LLM
+  for the LLM to answer your question. It will then home in on the answer by
+  using these tools to efficiently find the answer in the codebase:
+  - `search`: Semantic and hybrid search over code comments and markdown docs.
+  - `tags_lookup`: Instant symbol definition resolution via `.tags`.
+  - `read_code`: Range-bounded source inspection with line numbers and clickable file links.
+  - `find_references`: 1-shot hybrid symbol definitions + all call and usage sites.
+  - `call_tree`: AST & cross-file caller and callee tracer.
+  - `grep_search`: Fast pattern search via `rg` (with pure-Python fallback).
+- Multi-turn session memory & KV prompt caching: as long as you keep `cn watch`
+  running, conversational context is preserved in-memory across successive `cn
+  ask` commands. Follow-up questions hit provider-side prefix KV caches for
+  instant responses and lower token cost.
 
 ## Development
 
