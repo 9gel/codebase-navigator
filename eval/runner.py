@@ -242,7 +242,12 @@ def execute_baseline_tool(folder: Path, name: str, args: dict[str, Any]) -> str:
     return f"Unknown tool: {name}"
 
 
-def run_baseline_agent(folder: Path, question: str, config) -> tuple[str, dict[str, Any]]:
+def run_baseline_agent(
+    folder: Path,
+    question: str,
+    config,
+    progress_callback = None,
+) -> tuple[str, dict[str, Any]]:
     """Run typical agent harness with standard tools (read_file, grep, find_files, list_dir)."""
     messages = [
         {
@@ -301,6 +306,10 @@ def run_baseline_agent(folder: Path, question: str, config) -> tuple[str, dict[s
                     fn_args = {}
 
                 tool_calls_count += 1
+                arg_summary = ", ".join(f"{k}={v!r}" for k, v in list(fn_args.items())[:2])
+                if progress_callback:
+                    progress_callback(f"🔎 [Baseline Tool {tool_calls_count}: {fn_name}] {arg_summary}...")
+
                 tool_output = execute_baseline_tool(folder, fn_name, fn_args)
                 messages.append(
                     {
@@ -313,6 +322,8 @@ def run_baseline_agent(folder: Path, question: str, config) -> tuple[str, dict[s
 
             searches_remaining -= 1
             if searches_remaining <= 0:
+                if progress_callback:
+                    progress_callback("ℹ️ Baseline search budget reached. Synthesizing answer...")
                 messages.append(
                     {
                         "role": "user",
@@ -344,6 +355,9 @@ def run_benchmark(
 
     with open(BENCHMARK_CONFIG, "r", encoding="utf-8") as f:
         benchmarks = json.load(f)
+
+    from codebase_navigator.cli import StatusSpinner
+    is_tty = sys.stderr.isatty() if hasattr(sys.stderr, "isatty") else False
 
     title_suffix = " (A/B Baseline Comparison)" if compare_baseline else ""
     print("\n" + "=" * 75)
@@ -388,16 +402,37 @@ def run_benchmark(
             total_tasks += 1
             print(f"\n  ▶ [{task_id}] Q: {question}")
 
+            spinner: StatusSpinner | None = None
+
+            def handle_cn_progress(line: str):
+                nonlocal spinner
+                if not is_tty:
+                    return
+                if spinner:
+                    spinner.update_message(f"CN: {line}")
+                else:
+                    spinner = StatusSpinner(f"CN: {line}", stream=sys.stderr)
+                    spinner.start()
+
             # 1. Evaluate Codebase-Navigator Agent
             t0 = time.time()
             try:
+                if is_tty:
+                    spinner = StatusSpinner("CN: 🔍 Searching codebase...", stream=sys.stderr)
+                    spinner.start()
+
                 cn_answer, cn_stats = ask_codebase(
                     folder=r_dir,
                     question=question,
                     config=config,
                     verbose=False,
                     new_session=True,
+                    progress_callback=handle_cn_progress,
                 )
+                if spinner:
+                    spinner.stop()
+                    spinner = None
+
                 cn_dt = time.time() - t0
                 cn_kw_matches = [kw for kw in req_kws if kw.lower() in cn_answer.lower()]
                 cn_file_matches = [f for f in req_files if f.lower() in cn_answer.lower()]
@@ -408,7 +443,13 @@ def run_benchmark(
                 cn_judge_pass = False
                 cn_rationale = ""
                 if use_llm_judge and config.api_key:
+                    if is_tty:
+                        spinner = StatusSpinner("CN: ⚖️ Running LLM Judge evaluation...", stream=sys.stderr)
+                        spinner.start()
                     cn_judge_pass, cn_rationale = llm_judge_answer(question, key, cn_answer, config)
+                    if spinner:
+                        spinner.stop()
+                        spinner = None
 
                 cn_passed = cn_judge_pass if use_llm_judge else cn_rule_pass
                 if cn_passed:
@@ -426,9 +467,29 @@ def run_benchmark(
                 token_savings_pct = 0.0
 
                 if compare_baseline:
+                    def handle_base_progress(line: str):
+                        nonlocal spinner
+                        if not is_tty:
+                            return
+                        if spinner:
+                            spinner.update_message(f"Baseline: {line}")
+                        else:
+                            spinner = StatusSpinner(f"Baseline: {line}", stream=sys.stderr)
+                            spinner.start()
+
                     t_b0 = time.time()
                     try:
-                        base_answer, base_stats = run_baseline_agent(r_dir, question, config)
+                        if is_tty:
+                            spinner = StatusSpinner("Baseline: 🤖 Reasoning with agent...", stream=sys.stderr)
+                            spinner.start()
+
+                        base_answer, base_stats = run_baseline_agent(
+                            r_dir, question, config, progress_callback=handle_base_progress
+                        )
+                        if spinner:
+                            spinner.stop()
+                            spinner = None
+
                         base_dt = time.time() - t_b0
                         base_kw_matches = [kw for kw in req_kws if kw.lower() in base_answer.lower()]
                         base_file_matches = [f for f in req_files if f.lower() in base_answer.lower()]
@@ -437,7 +498,13 @@ def run_benchmark(
                         )
 
                         if use_llm_judge and config.api_key:
+                            if is_tty:
+                                spinner = StatusSpinner("Baseline: ⚖️ Running LLM Judge evaluation...", stream=sys.stderr)
+                                spinner.start()
                             base_judge_pass, base_rationale = llm_judge_answer(question, key, base_answer, config)
+                            if spinner:
+                                spinner.stop()
+                                spinner = None
                         else:
                             base_judge_pass = base_rule_pass
 
@@ -454,6 +521,9 @@ def run_benchmark(
                         print(f"    [Baseline] Status: {'✅ PASS' if base_passed else '❌ FAIL'} (took {base_dt:.2f}s, tokens: {base_tokens:,})")
                         print(f"    ⚡ Token Savings: {token_savings_pct:+.1f}% ({cn_tokens:,} vs {base_tokens:,})")
                     except Exception as e_base:
+                        if spinner:
+                            spinner.stop()
+                            spinner = None
                         print(f"    ❌ Baseline Error: {e_base}")
 
                 results_report.append({
@@ -471,6 +541,9 @@ def run_benchmark(
                 })
 
             except Exception as e:
+                if spinner:
+                    spinner.stop()
+                    spinner = None
                 print(f"    ❌ Error executing task: {e}")
                 results_report.append({
                     "task_id": task_id,
