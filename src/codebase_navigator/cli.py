@@ -711,17 +711,12 @@ def _run_ask(
                 print(line, file=sys.stderr, flush=True)
                 return
 
-            if "🔍 Searching codebase" in line or "🤖 Analyzing initial retrieval" in line or "🔎 [Tool" in line:
-                if spinner:
-                    spinner.stop()
+            # Keep spinner active and updating dynamically in-place
+            if spinner:
+                spinner.update_message(line)
+            else:
                 spinner = StatusSpinner(line, stream=sys.stderr)
                 spinner.start()
-            else:
-                if spinner:
-                    spinner.stop(final_line=line)
-                    spinner = None
-                else:
-                    print(line, file=sys.stderr, flush=True)
 
         try:
             # When TTY, we let handle_progress_cli manage the animated spinner output
@@ -738,6 +733,13 @@ def _run_ask(
         finally:
             if spinner:
                 spinner.stop()
+
+        if not quiet and is_tty:
+            ans_status = stats.get("status", "answered") if stats else "answered"
+            if ans_status == "refusal":
+                print("⚠️  Off-topic / Answer not found in codebase", file=sys.stderr)
+            else:
+                print("✅ Answer found by agent", file=sys.stderr)
         if not quiet:
             term_cols = shutil.get_terminal_size((80, 24)).columns
             if resolved_width:

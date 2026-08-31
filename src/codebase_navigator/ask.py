@@ -599,8 +599,7 @@ class AgentSession:
             custom_index_dir=self.custom_index_dir,
         )
 
-        emit(f"✅ Found {len(initial_chunks)} relevant code/doc chunks.")
-        emit("🤖 Analyzing initial retrieval with LLM agent...")
+        emit(f"🤖 Retrieved {len(initial_chunks)} code/doc chunks. Reasoning with agent...")
 
         initial_context_text = format_chunks_for_llm(initial_chunks)
 
@@ -691,6 +690,15 @@ class AgentSession:
             # Final answer
             content = msg.get("content") or ""
             self.messages.append({"role": "assistant", "content": content})
+            # Check if model refused or could not find answer
+            content_lower = content.lower()
+            refusal_patterns = [
+                "cannot answer", "unable to answer", "i cannot find", "could not find",
+                "not related to this codebase", "outside the scope of this repository",
+                "weather", "i am a codebase intelligence", "no relevant code",
+            ]
+            is_refusal = any(p in content_lower for p in refusal_patterns)
+
             stats = {
                 "turn_prompt_tokens": turn_prompt_tokens,
                 "turn_completion_tokens": turn_completion_tokens,
@@ -698,6 +706,7 @@ class AgentSession:
                 "lifetime_prompt_tokens": self.lifetime_prompt_tokens,
                 "lifetime_completion_tokens": self.lifetime_completion_tokens,
                 "lifetime_total_tokens": self.lifetime_prompt_tokens + self.lifetime_completion_tokens,
+                "status": "refusal" if is_refusal else "answered",
             }
             return content, stats
 
