@@ -16,41 +16,8 @@ of wasting time switcing between files and losing your train of thought.
 Launch the `cn watch` daemon in one terminal pane, and use it in another.
 
 | Pane 1 | Pane 2 |
-|
-```
-❯ cn watch
-🚀 Starting cn watch for: /home/user/code/project
-  Performing initial sync...
-  .tags: Indexed 924 source files (1.78 MB)
-  LanceDB: 954 files updated (7814 chunks), 0 pruned.
-  Index location: /home/user/code/project/.codebase-navigator
-  🔌 IPC Socket: /home/user/code/project/.codebase-navigator/watch.sock
-👀 Watching for file changes (Ctrl+C to stop)...
-
-[18:15:08] ⚡ Synced 1 file(s) (4 chunks) in 784ms
-[18:54:52] ⚡ Synced 1 file(s) (4 chunks) in 710ms
-[18:56:19] 🏷️  Tags updated: Indexed 924 source files (1.78 MB)
-[18:56:19] ⚡ Synced 134 file(s) (1505 chunks) in 111142ms
-[19:04:26] 🏷️  Tags updated: Indexed 924 source files (1.78 MB)
-[19:04:26] ⚡ Synced 1 file(s) (7 chunks) in 1226ms
-[19:04:27] 🏷️  Tags updated: Indexed 924 source files (1.78 MB)
-[19:04:27] ⚡ Synced 1 file(s) (6 chunks) in 1064ms
-[19:19:08] ⚡ Synced 1 file(s) (4 chunks) in 753ms
-[20:18:13] 🏷️  Tags updated: Indexed 924 source files (1.78 MB)
-[20:18:13] ⚡ Synced 1 file(s) (21 chunks) in 3220ms
-[20:18:39] 🏷️  Tags updated: Indexed 924 source files (1.78 MB)
-[20:18:39] ⚡ Synced 1 file(s) (13 chunks) in 1939ms
-[20:19:03] 🏷️  Tags updated: Indexed 924 source files (1.78 MB)
-[20:19:03] ⚡ Synced 1 file(s) (16 chunks) in 1703ms
-[20:19:29] ⚡ Synced 1 file(s) (4 chunks) in 1285ms
-[20:20:50] 🏷️  Tags updated: Indexed 924 source files (1.78 MB)
-[20:20:50] ⚡ Synced 1 file(s) (60 chunks) in 3779ms
-[20:21:01] 🏷️  Tags updated: Indexed 924 source files (1.78 MB)
-[20:21:01] ⚡ Synced 1 file(s) (21 chunks) in 1681ms
-[20:22:50] 🏷️  Tags updated: Indexed 924 source files (1.78 MB)
-[20:22:50] ⚡ Synced 2 file(s) (73 chunks) in 4747ms
-```
-||
+| -------- | -------- |
+| <pre><code>❯ cn watch<br/> 🚀 Starting cn watch for: /home/user/code/project<br/>   Performing initial sync...<br/>   .tags: Indexed 924 source files (1.78 MB)<br/>   LanceDB: 954 files updated (7814 chunks), 0 pruned.<br/>   Index location: /home/user/code/project/.codebase-navigator<br/>   🔌 IPC Socket: /home/user/code/project/.codebase-navigator/watch.sock<br/> 👀 Watching for file changes (Ctrl+C to stop)...<br/> <br/> [18:15:08] ⚡ Synced 1 file(s) (4 chunks) in 784ms<br/> [18:54:52] ⚡ Synced 1 file(s) (4 chunks) in 710ms<br/> [18:56:19] 🏷️  Tags updated: Indexed 924 source files (1.78 MB)<br/> [18:56:19] ⚡ Synced 134 file(s) (1505 chunks) in 111142ms<br/> [19:04:26] 🏷️  Tags updated: Indexed 924 source files (1.78 MB)<br/> [19:04:26] ⚡ Synced 1 file(s) (7 chunks) in 1226ms<br/> [19:04:27] 🏷️  Tags updated: Indexed 924 source files (1.78 MB)<br/> [19:04:27] ⚡ Synced 1 file(s) (6 chunks) in 1064ms<br/> [19:19:08] ⚡ Synced 1 file(s) (4 chunks) in 753ms<br/> [20:18:13] 🏷️  Tags updated: Indexed 924 source files (1.78 MB)<br/> [20:18:13] ⚡ Synced 1 file(s) (21 chunks) in 3220ms<br/> [20:18:39] 🏷️  Tags updated: Indexed 924 source files (1.78 MB)<br/> [20:18:39] ⚡ Synced 1 file(s) (13 chunks) in 1939ms<br/> [20:19:03] 🏷️  Tags updated: Indexed 924 source files (1.78 MB)<br/> [20:19:03] ⚡ Synced 1 file(s) (16 chunks) in 1703ms<br/> [20:19:29] ⚡ Synced 1 file(s) (4 chunks) in 1285ms<br/> [20:20:50] 🏷️  Tags updated: Indexed 924 source files (1.78 MB)<br/> [20:20:50] ⚡ Synced 1 file(s) (60 chunks) in 3779ms<br/> [20:21:01] 🏷️  Tags updated: Indexed 924 source files (1.78 MB)<br/> [20:21:01] ⚡ Synced 1 file(s) (21 chunks) in 1681ms<br/> [20:22:50] 🏷️  Tags updated: Indexed 924 source files (1.78 MB)<br/> [20:22:50] ⚡ Synced 2 file(s) (73 chunks) in 4747ms</code></pre>||
 
 ## Features
 
@@ -222,9 +189,22 @@ max_searches = 5
 
 # Initial number of semantic search chunks provided to the LLM (default: 10)
 limit = 10
+
+[display]
+# Maximum width for terminal text wrapping and dividers (e.g. 80, 100, or terminal width)
+width = 80
+
+# Terminal color theme: "auto" (queries terminal background / OSC 11), "dark", "light"
+theme = "auto"
+
+# Link formatting: "auto" (detects OSC 8 & TTY), "osc8", "terminal" (clean path:line), "markdown"
+links = "auto"
+
+# Enable/disable line wrapping on TTY output
+wrap = true
 ```
 
-*Note: Keys can be specified either under the `[llm]` section or as top-level keys.*
+*Note: Keys can be specified either under their respective sections (`[llm]`, `[display]`) or as top-level keys.*
 
 ### Environment Variables
 
@@ -237,12 +217,16 @@ Environment variables take precedence over config files:
 | `CN_MODEL` / `OPENROUTER_MODEL` | Default LLM model | `google/gemini-2.5-flash` |
 | `CN_MAX_SEARCHES` | Max follow-up searches allowed by the LLM | `5` |
 | `CN_ASK_LIMIT` | Initial search result count | `10` |
+| `CN_WIDTH` / `CN_MAX_WIDTH` | Maximum terminal wrap width | `terminal width or 100` |
+| `CN_THEME` | Terminal theme (`auto`, `dark`, `light`) | `auto` |
+| `CN_LINKS` | Link mode (`auto`, `osc8`, `terminal`, `markdown`) | `auto` |
+| `CN_WRAP` | Line wrapping (`true`, `false`) | `true (on TTY)` |
 
 ### Precedence Order
 
 When resolving settings, `cn` applies the following order of precedence:
-1. **CLI flags** (e.g. `--api-key`, `--model`, `--endpoint`, `--limit`, `--max-searches`)
-2. **Environment variables** (`OPENROUTER_API_KEY`, `CN_ENDPOINT`, etc.)
+1. **CLI flags** (e.g. `--api-key`, `--model`, `--width`, `--theme`, `--links`, `--wrap`)
+2. **Environment variables** (`OPENROUTER_API_KEY`, `CN_WIDTH`, `CN_THEME`, etc.)
 3. **Project config** (`.codebase-navigator/config.toml`)
 4. **User config** (`~/.config/codebase-navigator/config.toml`)
 5. **Built-in defaults**
