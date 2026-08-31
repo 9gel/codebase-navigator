@@ -39,12 +39,14 @@ class LLMConfig:
         model: str = DEFAULT_MODEL,
         max_searches: int = DEFAULT_MAX_SEARCHES,
         initial_limit: int = DEFAULT_INITIAL_LIMIT,
+        system_prompt: str | None = None,
     ):
         self.endpoint = endpoint
         self.api_key = api_key
         self.model = model
         self.max_searches = max_searches
         self.initial_limit = initial_limit
+        self.system_prompt = system_prompt
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -53,6 +55,7 @@ class LLMConfig:
             "model": self.model,
             "max_searches": self.max_searches,
             "initial_limit": self.initial_limit,
+            "system_prompt": self.system_prompt,
         }
 
 
@@ -111,6 +114,7 @@ def load_llm_config(
             "max_searches",
             "initial_limit",
             "limit",
+            "system_prompt",
         ]:
             if k in src:
                 merged_toml[k] = src[k]
@@ -141,6 +145,7 @@ def load_llm_config(
     )
     env_max_searches = os.environ.get("CN_MAX_SEARCHES")
     env_initial_limit = os.environ.get("CN_ASK_LIMIT") or os.environ.get("CN_INITIAL_LIMIT")
+    env_system_prompt = os.environ.get("CN_SYSTEM_PROMPT") or os.environ.get("CODEBASE_NAVIGATOR_SYSTEM_PROMPT")
 
     endpoint = (
         cli.get("endpoint")
@@ -175,12 +180,19 @@ def load_llm_config(
     except (ValueError, TypeError):
         initial_limit = DEFAULT_INITIAL_LIMIT
 
+    system_prompt = (
+        cli.get("system_prompt")
+        or env_system_prompt
+        or merged_toml.get("system_prompt")
+    )
+
     return LLMConfig(
         endpoint=endpoint,
         api_key=api_key,
         model=model,
         max_searches=max_searches,
         initial_limit=initial_limit,
+        system_prompt=system_prompt,
     )
 
 
@@ -521,6 +533,14 @@ def execute_tool_call(
     return f"Unknown tool: {fn_name}"
 
 
+def build_effective_system_prompt(custom_prompt: str | None = None) -> str:
+    """Combine built-in system prompt guardrails with user-provided system instructions."""
+    base = SYSTEM_PROMPT.strip()
+    if not custom_prompt or not custom_prompt.strip():
+        return base
+    return f"{base}\n\nAdditional User Instructions:\n{custom_prompt.strip()}"
+
+
 class AgentSession:
     """Manages multi-turn conversation state to preserve context and leverage KV caching."""
 
@@ -528,12 +548,14 @@ class AgentSession:
         self.folder = folder
         self.config = config
         self.custom_index_dir = custom_index_dir
-        self.messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        self.effective_system_prompt = build_effective_system_prompt(config.system_prompt)
+        self.messages: list[dict[str, Any]] = [{"role": "system", "content": self.effective_system_prompt}]
         self.turn_count = 0
 
     def reset(self):
         """Reset conversation messages back to system prompt."""
-        self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        self.effective_system_prompt = build_effective_system_prompt(self.config.system_prompt)
+        self.messages = [{"role": "system", "content": self.effective_system_prompt}]
         self.turn_count = 0
 
     def ask(

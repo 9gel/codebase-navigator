@@ -403,6 +403,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_ask.add_argument("--model", default=None, help="LLM model name (default: google/gemini-2.5-flash)")
     p_ask.add_argument("--endpoint", "--base-url", dest="endpoint", default=None, help="OpenAI-compatible LLM endpoint (default: https://openrouter.ai/api/v1)")
     p_ask.add_argument("--api-key", default=None, help="LLM API key")
+    p_ask.add_argument("--system-prompt", default=None, help="Additional custom system prompt / persona instructions")
     p_ask.add_argument("--limit", type=int, default=None, help="Initial search results count (default: 10)")
     p_ask.add_argument("--max-searches", type=int, default=None, help="Max additional LLM-driven searches (default: 5)")
     p_ask.add_argument(
@@ -600,6 +601,7 @@ def _run_ask(
     model: str | None = None,
     endpoint: str | None = None,
     api_key: str | None = None,
+    system_prompt: str | None = None,
     limit: int | None = None,
     max_searches: int | None = None,
     links: str = "auto",
@@ -632,6 +634,7 @@ def _run_ask(
             "model": model,
             "endpoint": endpoint,
             "api_key": api_key,
+            "system_prompt": system_prompt,
             "limit": limit,
             "max_searches": max_searches,
         },

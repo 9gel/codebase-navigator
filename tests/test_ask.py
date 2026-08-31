@@ -240,3 +240,28 @@ def test_ask_codebase_with_tool_calling_loop(tmp_path: Path):
         assert answer == "IPCServer is implemented in `src/ipc.py`."
         assert mock_search.call_count == 2
         assert mock_chat.call_count == 2
+
+
+def test_custom_system_prompt_configuration(tmp_path: Path, monkeypatch):
+    for env in ["CN_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY"]:
+        monkeypatch.delenv(env, raising=False)
+
+    dot_cn = tmp_path / ".codebase-navigator"
+    dot_cn.mkdir()
+    cfg_file = dot_cn / "config.toml"
+    cfg_file.write_text('''
+[llm]
+system_prompt = "You are a specialized security auditor."
+''')
+
+    cfg = load_llm_config(folder=tmp_path)
+    assert cfg.system_prompt == "You are a specialized security auditor."
+
+    from codebase_navigator.ask import build_effective_system_prompt, AgentSession
+    eff_prompt = build_effective_system_prompt(cfg.system_prompt)
+    assert "Additional User Instructions:" in eff_prompt
+    assert "You are a specialized security auditor." in eff_prompt
+
+    session = AgentSession(tmp_path, cfg)
+    assert session.messages[0]["role"] == "system"
+    assert "You are a specialized security auditor." in session.messages[0]["content"]

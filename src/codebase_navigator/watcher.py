@@ -71,6 +71,7 @@ class DirectoryWatcher:
                 model=cfg_data.get("model", "google/gemini-2.5-flash"),
                 max_searches=int(cfg_data.get("max_searches", 15)),
                 initial_limit=int(cfg_data.get("initial_limit", 10)),
+                system_prompt=cfg_data.get("system_prompt"),
             )
             if self.session is None or new_session:
                 self.session = AgentSession(self.folder, config, custom_index_dir=self.custom_index_dir)
