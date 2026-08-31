@@ -1,40 +1,40 @@
 
-name: dev-devel-tools
+name: codebase-navigator
 description: Efficiently navigate codebases and project documentation using cn tools (cn search, cn tags, cn status, cn sync, cn watch). Use when locating concepts, architecture docs, symbol definitions, or maintaining live semantic indexes across development sessions.
 ---
 
-# devel-tools Navigation Guide
+# Codebase Navigatory Guide
 
-`devel-tools` (`cn`) provides high-speed code and documentation discovery for agents and developers. It complements `ripgrep` (`rg`) by providing semantic concept search and indexed ctags symbol navigation.
+`codebase-navigator` (`cn`) provides high-speed code and documentation discovery for agents and developers. It complements `ripgrep` (`rg`) by providing semantic concept search and indexed ctags symbol navigation.
 
 ## Tool Suite Overview
 
 | Command | Purpose | When to Use |
 |---|---|---|
 | `cn search` | Semantic vector search | Finding concepts, architectural docs, domain rules, and code docstrings |
-| `ac tags` | Universal Ctags symbol lookup | Finding exact class, function, struct, or variable definitions |
-| `ac status` | Index and daemon health | Checking indexed file counts and verifying if `ac watch` is active |
-| `ac sync` | Full index synchronization | Forcing an immediate refresh of `.tags` and LanceDB vector embeddings |
-| `ac watch` | Live background watcher & IPC daemon | Keeping indexes live and serving in-memory queries over Unix domain socket |
+| `cn tags` | Universal Ctags symbol lookup | Finding exact class, function, struct, or variable definitions |
+| `cn status` | Index and daemon health | Checking indexed file counts and verifying if `ac watch` is active |
+| `cn sync` | Full index synchronization | Forcing an immediate refresh of `.tags` and LanceDB vector embeddings |
+| `cn watch` | Live background watcher & IPC daemon | Keeping indexes live and serving in-memory queries over Unix domain socket |
 
 ---
 
-## 1. Finding Concepts & Documentation (`ac search`)
+## 1. Finding Concepts & Documentation (`cn search`)
 
-Use `ac search` when you know *what* you want to achieve conceptually, but do not know the exact variable or file names:
+Use `cn search` when you know *what* you want to achieve conceptually, but do not know the exact variable or file names:
 
 ```bash
 # General conceptual search
-ac search "content-addressed publisher bytes" .
+cn search "content-addressed publisher bytes" .
 
 # Filter for documentation only (.md, .rst, etc.)
-ac search "data migration ledger" . --type md
+cn search "data migration ledger" . --type md
 
 # Filter for code comments and docstrings only
-ac search "lot geometry transformation" . --type code
+cn search "lot geometry transformation" . --type code
 
 # Limit result count (default: 5)
-ac search "authentication tokens" . --limit 3
+cn search "authentication tokens" . --limit 3
 ```
 
 Results provide direct Markdown links with line ranges:
@@ -44,19 +44,19 @@ Results provide direct Markdown links with line ranges:
 
 ---
 
-## 2. Locating Symbols & Definitions (`ac tags`)
+## 2. Locating Symbols & Definitions (`cn tags`)
 
-Use `ac tags` for fast symbol lookups across large codebases without scanning file trees:
+Use `cn tags` for fast symbol lookups across large codebases without scanning file trees:
 
 ```bash
 # Substring or regex symbol lookup
-ac tags calculate_metrics .
+cn tags calculate_metrics .
 
 # Exact symbol lookup
-ac tags Defs . --exact
+cn tags Defs . --excn
 
 # Limit symbol results
-ac tags parse_ . --limit 10
+cn tags parse_ . --limit 10
 ```
 
 Results output the symbol type, path, and definition snippet:
@@ -69,8 +69,8 @@ Results output the symbol type, path, and definition snippet:
 
 ## 3. Tool Selection: When to Use What
 
-- **Use `ac search`** for domain logic questions, API specifications, workflow descriptions, and module purposes (e.g., *"where is the cache expiration logic?"*).
-- **Use `ac tags`** when you know the identifier name (e.g., `BarrierReferenceStore`, `transform_records`) and need its declaration location.
+- **Use `cn search`** for domain logic questions, API specifications, workflow descriptions, and module purposes (e.g., *"where is the cache expiration logic?"*).
+- **Use `cn tags`** when you know the identifier name (e.g., `BarrierReferenceStore`, `transform_records`) and need its declaration location.
 - **Use `ripgrep` (`rg`)** for exact string occurrences, import statements, or regular expressions across code lines.
 
 ---
@@ -78,16 +78,16 @@ Results output the symbol type, path, and definition snippet:
 ## 4. Index Lifecycle & Daemon Management
 
 ### Project Directory Layout
-Indexes and runtime sockets are stored in the project-local `.devel-tools/` directory:
-- `.devel-tools/lancedb` — Vector database
-- `.devel-tools/files_meta.json` — Incremental mtime/size cache
-- `.devel-tools/watch.sock` — Unix Domain Socket for fast IPC
+Indexes and runtime sockets are stored in the project-local `.cn/` directory:
+- `.cn/lancedb` — Vector database
+- `.cn/files_meta.json` — Incremental mtime/size cache
+- `.cn/watch.sock` — Unix Domain Socket for fast IPC
 
-### Checking Daemon & Index Status (`ac status`)
+### Checking Daemon & Index Status (`cn status`)
 Always check the health and daemon status before starting work in a repository:
 
 ```bash
-ac status .
+cn status .
 ```
 
 Example output:
@@ -95,29 +95,29 @@ Example output:
 📊 Navigation Status for: /path/to/project
   Available files: 924 source code files, 48 doc files
   🏷️  Tags file: /path/to/project/.tags (1.77 MB)
-  🟢 ac watch daemon: ACTIVE (socket: /path/to/project/.devel-tools/watch.sock)
-  🧠 Vector index: /path/to/project/.devel-tools
+  🟢 cn watch daemon: ACTIVE (socket: /path/to/project/.cn/watch.sock)
+  🧠 Vector index: /path/to/project/.cn
      Indexed files: 952, Total chunks: 7771
 ```
 
-### Running the Live Daemon (`ac watch`)
-A coordinating agent or background task can launch `ac watch` in the repository root:
+### Running the Live Daemon (`cn watch`)
+A coordinating agent or background task can launch `cn watch` in the repository root:
 
 ```bash
-ac watch .
+cn watch .
 ```
 
-- **Socket Acceleration**: When `ac watch` is running, `ac search` queries the in-memory index via `.devel-tools/watch.sock` in **< 30ms**, skipping Python ML library loading.
-- **Concurrency Safety**: If multiple agents run `ac watch` under the same project directory, subsequent runs will detect the active socket and safely exit without conflicting.
-- **Crash Recovery**: If `ac watch` was killed unexpectedly, stale socket files are automatically detected, unlinked, and recovered on subsequent commands.
+- **Socket Acceleration**: When `cn watch` is running, `cn search` queries the in-memory index via `.cn/watch.sock` in **< 30ms**, skipping Python ML library loading.
+- **Concurrency Safety**: If multiple agents run `cn watch` under the same project directory, subsequent runs will detect the active socket and safely exit without conflicting.
+- **Crash Recovery**: If `cn watch` was killed unexpectedly, stale socket files are automatically detected, unlinked, and recovered on subsequent commands.
 
-### Manual Synchronization (`ac sync`)
-If `ac watch` is not running and you pulled major changes or switched branches:
+### Manual Synchronization (`cn sync`)
+If `cn watch` is not running and you pulled major changes or switched branches:
 
 ```bash
 # Incremental sync (only changed files)
-ac sync .
+cn sync .
 
 # Complete re-indexing from scratch
-ac sync . --force
+cn sync . --force
 ```
