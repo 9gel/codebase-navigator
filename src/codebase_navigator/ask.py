@@ -563,6 +563,7 @@ class AgentSession:
         question: str,
         verbose: bool = True,
         output_stream=sys.stderr,
+        progress_callback=None,
     ) -> str:
         """Run multi-tool reasoning turn on top of ongoing conversation session."""
         if not self.config.api_key:
@@ -577,15 +578,17 @@ class AgentSession:
 
         self.turn_count += 1
 
+        def emit(line: str):
+            if verbose:
+                print(line, file=output_stream, flush=True)
+            if progress_callback:
+                progress_callback(line)
+
         # Check ripgrep status for best performance
         check_ripgrep_installed(verbose=verbose, output_stream=output_stream)
 
         # Pre-flight seed search for new questions
-        if verbose:
-            print(
-                f'🔍 Searching codebase for: "{question}" (limit: {self.config.initial_limit})...',
-                file=output_stream,
-            )
+        emit(f'🔍 Searching codebase for: "{question}" (limit: {self.config.initial_limit})...')
 
         initial_chunks = execute_search(
             self.folder,
@@ -594,8 +597,8 @@ class AgentSession:
             custom_index_dir=self.custom_index_dir,
         )
 
-        if verbose:
-            print(f"✓ Found {len(initial_chunks)} relevant code/doc chunks.", file=output_stream)
+        emit(f"✓ Found {len(initial_chunks)} relevant code/doc chunks.")
+        emit("🤖 Analyzing initial retrieval with LLM agent...")
 
         initial_context_text = format_chunks_for_llm(initial_chunks)
 
@@ -642,12 +645,8 @@ class AgentSession:
                     search_num = (self.config.max_searches - searches_remaining) + 1
                     call_sig = f"{fn_name}:{json.dumps(fn_args, sort_keys=True)}"
 
-                    if verbose:
-                        arg_summary = ", ".join(f"{k}={v!r}" for k, v in list(fn_args.items())[:3])
-                        print(
-                            f"🔎 [Tool {search_num}/{self.config.max_searches}: {fn_name}] {arg_summary}...",
-                            file=output_stream,
-                        )
+                    arg_summary = ", ".join(f"{k}={v!r}" for k, v in list(fn_args.items())[:3])
+                    emit(f"🔎 [Tool {search_num}/{self.config.max_searches}: {fn_name}] {arg_summary}...")
 
                     tool_output = execute_tool_call(
                         self.folder,
@@ -668,11 +667,7 @@ class AgentSession:
 
                 searches_remaining -= 1
                 if searches_remaining <= 0:
-                    if verbose:
-                        print(
-                            "ℹ️ Search budget limit reached. Generating final answer...",
-                            file=output_stream,
-                        )
+                    emit("ℹ️ Search budget limit reached. Generating final answer...")
                     self.messages.append(
                         {
                             "role": "user",
@@ -704,6 +699,10 @@ def ask_codebase(
         ping_res = ping_socket(socket_path)
         if ping_res is not None:
             # Query active daemon
+            def handle_remote_progress(line: str):
+                if verbose:
+                    print(line, file=output_stream, flush=True)
+
             res = send_socket_command(
                 socket_path,
                 action="ask",
@@ -711,8 +710,10 @@ def ask_codebase(
                     "question": question,
                     "config": config.to_dict(),
                     "new_session": new_session,
+                    "verbose": verbose,
                 },
                 timeout=180.0,
+                progress_callback=handle_remote_progress if verbose else None,
             )
             if res and res.get("status") == "ok":
                 return res.get("answer", "")

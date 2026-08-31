@@ -40,11 +40,26 @@ class _IPCRequestHandler(socketserver.StreamRequestHandler):
                     question = req.get("question", "")
                     cfg_data = req.get("config", {})
                     new_session = req.get("new_session", False)
+                    verbose = req.get("verbose", True)
                     if self.server.watcher:
-                        answer = self.server.watcher.handle_ask(question, cfg_data, new_session=new_session)
-                        resp = {"status": "ok", "answer": answer}
+                        def progress_cb(msg_text: str):
+                            try:
+                                prog_payload = json.dumps({"type": "progress", "message": msg_text}).encode("utf-8") + b"\n"
+                                self.wfile.write(prog_payload)
+                                self.wfile.flush()
+                            except Exception:
+                                pass
+
+                        answer = self.server.watcher.handle_ask(
+                            question,
+                            cfg_data,
+                            new_session=new_session,
+                            verbose=verbose,
+                            progress_callback=progress_cb if verbose else None,
+                        )
+                        resp = {"type": "final", "status": "ok", "answer": answer}
                     else:
-                        resp = {"status": "error", "error": "Watcher daemon not configured for ask"}
+                        resp = {"type": "final", "status": "error", "error": "Watcher daemon not configured for ask"}
                 elif action == "reset_session":
                     if self.server.watcher and self.server.watcher.session:
                         self.server.watcher.session.reset()
@@ -149,8 +164,9 @@ def send_socket_command(
     action: str,
     payload: dict[str, Any] | None = None,
     timeout: float = 180.0,
+    progress_callback = None,
 ) -> dict[str, Any] | None:
-    """Send arbitrary command to cn watch daemon and return response dict."""
+    """Send arbitrary command to cn watch daemon and return response dict with streaming support."""
     if not socket_path.exists():
         return None
 
@@ -163,17 +179,30 @@ def send_socket_command(
         sock.sendall(payload_bytes)
 
         buffer = b""
-        while b"\n" not in buffer:
+        while True:
             chunk = sock.recv(65536)
             if not chunk:
                 break
             buffer += chunk
+            while b"\n" in buffer:
+                line_bytes, buffer = buffer.split(b"\n", 1)
+                line_str = line_bytes.decode("utf-8").strip()
+                if not line_str:
+                    continue
+                try:
+                    data = json.loads(line_str)
+                    if data.get("type") == "progress":
+                        if progress_callback:
+                            progress_callback(data.get("message", ""))
+                    else:
+                        return data
+                except json.JSONDecodeError:
+                    continue
 
         if not buffer:
             return None
 
-        line = buffer.split(b"\n")[0]
-        return json.loads(line.decode("utf-8"))
+        return None
     except ConnectionRefusedError:
         try:
             socket_path.unlink()

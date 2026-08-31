@@ -62,7 +62,14 @@ class DirectoryWatcher:
         self.session_lock = threading.Lock()
         self.ipc_server = IPCServer(self.socket_path, self.index, lock=self.index_lock, watcher=self)
 
-    def handle_ask(self, question: str, cfg_data: dict[str, Any], new_session: bool = False) -> str:
+    def handle_ask(
+        self,
+        question: str,
+        cfg_data: dict[str, Any],
+        new_session: bool = False,
+        verbose: bool = False,
+        progress_callback = None,
+    ) -> str:
         """Execute or continue an LLM agent reasoning session within the daemon."""
         with self.session_lock:
             config = LLMConfig(
@@ -78,7 +85,11 @@ class DirectoryWatcher:
             else:
                 self.session.config = config
 
-            return self.session.ask(question, verbose=False)
+            return self.session.ask(
+                question,
+                verbose=verbose,
+                progress_callback=progress_callback,
+            )
 
     def start(self):
         """Run blocking live watcher loop and IPC server."""
