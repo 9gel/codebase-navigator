@@ -85,9 +85,11 @@ class DirectoryWatcher:
             else:
                 self.session.config = config
 
+            # Always pass verbose=False to AgentSession in daemon so watcher terminal stays quiet,
+            # while progress_callback streams updates back to the requesting client over the socket.
             return self.session.ask(
                 question,
-                verbose=verbose,
+                verbose=False,
                 progress_callback=progress_callback,
             )
 
