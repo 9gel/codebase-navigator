@@ -52,7 +52,7 @@ IGNORE_DIR_NAMES = {
     "node_modules", "target", "build", "dist",
     ".venv", "venv", "env", ".direnv",
     "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
-    ".cache", ".devel-index", ".dagster_home", "pipeline-cache",
+    ".cache", ".devel-index", ".devel-tools", ".dagster_home", "pipeline-cache",
 }
 
 
@@ -78,19 +78,17 @@ def silence_stdio() -> Iterator[None]:
 
 
 def get_cache_dir(folder: Path, custom_index_dir: str | None = None) -> Path:
-    """Determine the persistence directory for vector indexes."""
+    """Determine the persistence directory for vector indexes and tools metadata."""
     if custom_index_dir:
         cdir = Path(custom_index_dir).resolve()
         cdir.mkdir(parents=True, exist_ok=True)
         return cdir
 
-    local_idx = folder / ".devel-index"
-    if local_idx.exists() and local_idx.is_dir():
-        return local_idx
-
-    abs_p = str(folder.resolve())
-    h = hashlib.sha256(abs_p.encode("utf-8")).hexdigest()[:12]
-    base = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "devel-nav"
-    target = base / f"{folder.name}-{h}"
+    target = folder / ".devel-tools"
     target.mkdir(parents=True, exist_ok=True)
     return target
+
+
+def get_socket_path(folder: Path, custom_index_dir: str | None = None) -> Path:
+    """Return the Unix Domain Socket path used for IPC with devel-watch."""
+    return get_cache_dir(folder, custom_index_dir) / "watch.sock"

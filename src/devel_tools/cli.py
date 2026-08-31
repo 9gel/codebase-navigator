@@ -6,7 +6,8 @@ import argparse
 from pathlib import Path
 import sys
 
-from .index import VectorIndex
+from .config import get_socket_path
+from .ipc import ping_socket, query_socket
 from .tags import TagsManager, get_available_files
 from .watcher import DirectoryWatcher
 
@@ -75,6 +76,7 @@ def main_nav():
     # status
     p_status = subparsers.add_parser("status", help="Check indexing status")
     p_status.add_argument("folder", nargs="?", default=".", help="Target folder (default: current directory)")
+    p_status.add_argument("--index-dir", default=None, help="Custom LanceDB directory")
 
     # sync
     p_sync = subparsers.add_parser("sync", help="Synchronize .tags and LanceDB index")
@@ -112,7 +114,7 @@ def main_nav():
     folder = Path(args.folder).resolve()
 
     if args.command == "status":
-        _run_status(folder)
+        _run_status(folder, custom_index_dir=args.index_dir)
     elif args.command == "sync":
         _run_sync(folder, force=args.force, custom_index_dir=args.index_dir)
     elif args.command == "watch":
@@ -170,11 +172,12 @@ def main_tags():
 def main_status():
     parser = argparse.ArgumentParser(prog="devel-status", description="Check tags and index status")
     parser.add_argument("folder", nargs="?", default=".", help="Folder context (default: .)")
+    parser.add_argument("--index-dir", default=None, help="Custom index directory")
     args = parser.parse_args()
-    _run_status(Path(args.folder).resolve())
+    _run_status(Path(args.folder).resolve(), custom_index_dir=args.index_dir)
 
 
-def _run_status(folder: Path):
+def _run_status(folder: Path, custom_index_dir: str | None = None):
     print(f"📊 Navigation Status for: {folder}")
     code_files, doc_files = get_available_files(folder)
     print(f"  Available files: {len(code_files)} source code files, {len(doc_files)} doc files")
@@ -187,7 +190,15 @@ def _run_status(folder: Path):
     else:
         print("  🏷️  Tags file: Not found (run devel-sync)")
 
-    idx = VectorIndex(folder)
+    socket_path = get_socket_path(folder, custom_index_dir)
+    daemon_status = ping_socket(socket_path)
+    if daemon_status:
+        print(f"  🟢 devel-watch daemon: ACTIVE (socket: {socket_path})")
+    else:
+        print(f"  ⚪ devel-watch daemon: NOT RUNNING (socket: {socket_path})")
+
+    from .index import VectorIndex
+    idx = VectorIndex(folder, custom_index_dir)
     meta = idx.load_meta()
     chunk_count = sum(m.get("chunks", 0) for m in meta.values())
     print(f"  🧠 Vector index: {idx.cache_dir}")
@@ -205,6 +216,7 @@ def _run_sync(folder: Path, force: bool = False, custom_index_dir: str | None = 
     print(f"  .tags generation: {msg if ok else 'FAILED: ' + msg}")
 
     print("Syncing LanceDB embeddings...")
+    from .index import VectorIndex
     idx = VectorIndex(folder, custom_index_dir)
     u_files, u_chunks, p_files = idx.sync(force=force)
     print(f"✓ Complete: {u_files} files updated ({u_chunks} chunks indexed), {p_files} deleted files pruned.")
@@ -217,6 +229,14 @@ def _run_watch(folder: Path, debounce_ms: int = 1000, custom_index_dir: str | No
 
 
 def _run_search(folder: Path, query: str, limit: int = 5, doc_type: str = "all", custom_index_dir: str | None = None):
+    socket_path = get_socket_path(folder, custom_index_dir)
+    results = query_socket(socket_path, query, limit=limit, doc_type=doc_type)
+    if results is not None:
+        print(format_search_results(results, folder))
+        return
+
+    # Fallback to direct in-process search
+    from .index import VectorIndex
     idx = VectorIndex(folder, custom_index_dir)
     results = idx.search(query, limit=limit, doc_type=doc_type)
     print(format_search_results(results, folder))
