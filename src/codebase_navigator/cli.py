@@ -432,6 +432,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_ask.add_argument("-n", "--new-session", action="store_true", help="Start a fresh conversation session with the daemon")
     p_ask.add_argument("-q", "--quiet", action="store_true", help="Suppress progress output")
 
+    # mcp
+    p_mcp = subparsers.add_parser("mcp", help="Run Model Context Protocol (MCP) server over stdio")
+    p_mcp.add_argument("folder", nargs="?", default=None, help="Initial default workspace repository root")
+    p_mcp.add_argument("--transport", choices=["stdio", "sse"], default="stdio", help="MCP transport (default: stdio)")
+
     return parser
 
 
@@ -777,3 +782,10 @@ def _run_ask(
     except Exception as e:  # noqa: BLE001
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
+
+
+def _run_mcp(folder: Path | None = None, transport: str = "stdio"):
+    from .mcp_server import run_mcp_server, resolve_repository_root
+    if folder:
+        resolve_repository_root(str(folder))
+    run_mcp_server(transport=transport)

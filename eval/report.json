@@ -1,0 +1,149 @@
+{
+  "total_tasks": 10,
+  "passed_tasks": 8,
+  "score_percentage": 80.0,
+  "results": [
+    {
+      "task_id": "flask-before-request",
+      "repo": "flask",
+      "question": "Where in the request handling lifecycle is the `before_request` hook executed, and what method dispatches it?",
+      "passed": true,
+      "duration_seconds": 19.14,
+      "tokens": 25715,
+      "keyword_matches": [
+        "preprocess_request",
+        "full_dispatch_request",
+        "app.py"
+      ],
+      "judge_rationale": "The candidate correctly identifies that before_request hooks are executed in preprocess_request and dispatched by full_dispatch_request, matching the expected answer and providing accurate supporting details.",
+      "answer_preview": "## Answer\n\nThe `before_request` hooks are executed in `Flask.preprocess_request()`, which is dispatched by `Flask.full_dispatch_request()` \u2014 the central method of Flask's request handling lifecycle.\n\n### The dispatching method: `full_dispatch_request`\n\nThe lifecycle is orchestrated by `full_dispatch..."
+    },
+    {
+      "task_id": "flask-cli-click",
+      "repo": "flask",
+      "question": "How does Flask integrate Click for its CLI commands, and where is the FlaskGroup class defined?",
+      "passed": true,
+      "duration_seconds": 36.45,
+      "tokens": 76048,
+      "keyword_matches": [
+        "FlaskGroup",
+        "cli.py"
+      ],
+      "judge_rationale": "The candidate answer thoroughly and accurately explains Flask's Click integration, correctly identifies FlaskGroup as defined in src/flask/cli.py as a Click Group subclass, and details its dynamic app loading behavior, matching and expanding upon the expected ground truth without any hallucinations.",
+      "answer_preview": "## How Flask integrates Click for CLI commands\n\n### 1. Entry point wiring\n\nFlask exposes its CLI through a console script defined in [pyproject.toml:81-82](file:///home/nigel/code/codebase-navigator/exercises/flask/pyproject.toml#L81-L82):\n\n```toml\n[project.scripts]\nflask = \"flask.cli:main\"\n```\n\n`ma..."
+    },
+    {
+      "task_id": "fastapi-dependency-overrides",
+      "repo": "fastapi",
+      "question": "How does FastAPI check and apply `app.dependency_overrides` during request dependency resolution?",
+      "passed": true,
+      "duration_seconds": 62.77,
+      "tokens": 176242,
+      "keyword_matches": [
+        "dependency_overrides",
+        "solve_dependencies"
+      ],
+      "judge_rationale": "The candidate correctly identifies the core mechanism in solve_dependencies, accurately explains how dependency_overrides_provider is threaded through routing, and precisely describes the lookup, Dependant rebuilding, recursion, and per-request caching behavior. It aligns with the expected answer and provides accurate architectural detail without significant hallucinations.",
+      "answer_preview": "FastAPI does this in two distinct phases: a **registration/plumbing phase** where the app instance is threaded down to each route as `dependency_overrides_provider`, and a **per-request resolution phase** where the live dict is consulted inside `solve_dependencies`.\n\n## 1. Setup: where the dict live..."
+    },
+    {
+      "task_id": "fastapi-custom-middleware",
+      "repo": "fastapi",
+      "question": "Where is the BaseHTTPMiddleware or middleware dispatch stack assembled in FastAPI/Starlette routing?",
+      "passed": true,
+      "duration_seconds": 88.39,
+      "tokens": 82028,
+      "keyword_matches": [
+        "middleware",
+        "applications.py"
+      ],
+      "judge_rationale": "The candidate correctly identifies the build_middleware_stack() method in fastapi/applications.py, explains the assembly order and lazy build, and accurately describes the role of BaseHTTPMiddleware and user_middleware, matching the expected ground truth.",
+      "answer_preview": "The middleware dispatch stack is assembled in `FastAPI.build_middleware_stack()`, which lives in [fastapi/applications.py:1020-1068](file:///home/nigel/code/codebase-navigator/exercises/fastapi/fastapi/applications.py#L1020-L1068). Here's the full picture:\n\n## 1. Where `BaseHTTPMiddleware` comes fro..."
+    },
+    {
+      "task_id": "httpx-transport-routing",
+      "repo": "httpx",
+      "question": "How does httpx.Client choose between default HTTPTransport and custom mounted transports for a request?",
+      "passed": true,
+      "duration_seconds": 49.46,
+      "tokens": 97849,
+      "keyword_matches": [
+        "_transport_for_url",
+        "mounts",
+        "_client.py"
+      ],
+      "judge_rationale": "The candidate correctly identifies the mechanism: httpx.Client builds a mounts dictionary and uses _transport_for_url to match URL patterns, falling back to the default transport. The answer includes accurate code references and explains the matching logic, matching the expected answer.",
+      "answer_preview": "## How httpx.Client routes a request to a transport\n\nThe decision happens in two phases: **setup** (building the routing table) and **per-request selection** (matching the URL against that table).\n\n### 1. Setup: the routing table is built in `Client.__init__`\n\nIn [httpx/_client.py:688-716](file:///h..."
+    },
+    {
+      "task_id": "httpx-event-hooks",
+      "repo": "httpx",
+      "question": "Where are request and response event hooks ('request' and 'response') triggered in Client.send?",
+      "passed": true,
+      "duration_seconds": 19.41,
+      "tokens": 21362,
+      "keyword_matches": [
+        "event_hooks",
+        "_client.py"
+      ],
+      "judge_rationale": "The candidate correctly identifies that request and response hooks are triggered in `_send_handling_redirects` (and the async equivalent) within `_client.py`, and accurately describes their placement inside the redirect loop, matching the expected answer.",
+      "answer_preview": "The hooks live in the redirect-handling layer, not directly in `Client.send` itself. The call chain is:\n\n**Sync** (`Client.send` at [httpx/_client.py:879](file:///home/nigel/code/codebase-navigator/exercises/httpx/httpx/_client.py#L879)):\n`send` \u2192 `_send_handling_auth` ([L930](file:///home/nigel/cod..."
+    },
+    {
+      "task_id": "express-route-matching",
+      "repo": "express",
+      "question": "Where does Express router process middleware and match route layers?",
+      "passed": false,
+      "duration_seconds": 39.3,
+      "tokens": 45486,
+      "keyword_matches": [
+        "router",
+        "layer"
+      ],
+      "judge_rationale": "The candidate answer contradicts the expected ground truth, which identifies lib/router/index.js and lib/router/layer.js inside proto.handle or proto.process_params as the location. The candidate instead claims the router is external, so it does not correctly answer per the expected key.",
+      "answer_preview": "## Answer\n\nIn this repository, the router is **not implemented inside the Express source tree** \u2014 Express 5.x extracted it into the standalone [`router`](https://www.npmjs.com/package/router) npm package. So the literal \"process middleware and match route layers\" engine lives upstream, and the code ..."
+    },
+    {
+      "task_id": "express-app-listen",
+      "repo": "express",
+      "question": "How is `app.listen()` implemented in Express and what Node.js http method does it wrap?",
+      "passed": true,
+      "duration_seconds": 18.06,
+      "tokens": 17179,
+      "keyword_matches": [
+        "http.createServer",
+        "application.js"
+      ],
+      "judge_rationale": "The candidate correctly identifies that app.listen is implemented in lib/application.js, creates an HTTP server via http.createServer(this), and delegates to server.listen. The answer provides accurate code and explanation, matching the expected ground truth.",
+      "answer_preview": "## How `app.listen()` works in Express\n\n`app.listen()` is defined in [lib/application.js:598-606](file:///home/nigel/code/codebase-navigator/exercises/express/lib/application.js#L598-L606):\n\n```js\napp.listen = function listen() {\n  var server = http.createServer(this)\n  var args = slice.call(argumen..."
+    },
+    {
+      "task_id": "vikunja-task-reminders",
+      "repo": "vikunja",
+      "question": "Where are task reminders or background periodic jobs scheduled and processed in Vikunja?",
+      "passed": false,
+      "duration_seconds": 42.45,
+      "tokens": 108721,
+      "keyword_matches": [
+        "reminder",
+        "pkg"
+      ],
+      "judge_rationale": "Judge evaluation error: Expecting value: line 1 column 1 (char 0)",
+      "answer_preview": "## Summary\n\nVikunja runs task reminders and all other background periodic jobs through a single cron scheduler ([pkg/cron/cron.go](file:///home/nigel/code/codebase-navigator/exercises/vikunja/pkg/cron/cron.go#L17-L40)), which is a thin wrapper around `github.com/robfig/cron/v3`. Jobs are registered ..."
+    },
+    {
+      "task_id": "uv-resolver-dispatch",
+      "repo": "uv",
+      "question": "Where is the core dependency resolution algorithm entry point in the uv crate workspace?",
+      "passed": true,
+      "duration_seconds": 34.95,
+      "tokens": 65450,
+      "keyword_matches": [
+        "uv-resolver",
+        "crates"
+      ],
+      "judge_rationale": "The candidate correctly identifies the core dependency resolution entry point as Resolver::resolve() in the uv-resolver crate, matching the expected answer key's location in crates/uv-resolver/src/resolver/ and Resolver struct. The additional call-chain details are consistent with the codebase and do not introduce major hallucinations.",
+      "answer_preview": "## Answer\n\nThe core dependency resolution algorithm entry point in the uv workspace is the `resolve()` method on `uv_resolver::Resolver`, in the `uv-resolver` crate:\n\n**[crates/uv-resolver/src/resolver/mod.rs:280](file:///home/nigel/code/codebase-navigator/exercises/uv/crates/uv-resolver/src/resolve..."
+    }
+  ]
+}
