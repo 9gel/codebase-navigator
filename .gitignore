@@ -31,6 +31,7 @@ ENV/
 .coverage
 htmlcov/
 /exercises/
+eval/report.json
 
 # Ruff
 .ruff_cache/

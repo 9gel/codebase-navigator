@@ -75,7 +75,7 @@ class DirectoryWatcher:
             config = LLMConfig(
                 endpoint=cfg_data.get("endpoint", "https://openrouter.ai/api/v1"),
                 api_key=cfg_data.get("api_key"),
-                model=cfg_data.get("model", "google/gemini-2.5-flash"),
+                model=cfg_data.get("model", "deepseek/deepseek-v4-flash-0731"),
                 max_searches=int(cfg_data.get("max_searches", 15)),
                 initial_limit=int(cfg_data.get("initial_limit", 10)),
                 system_prompt=cfg_data.get("system_prompt"),

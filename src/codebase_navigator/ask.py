@@ -24,7 +24,7 @@ from .tools import (
 )
 
 DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1"
-DEFAULT_MODEL = "google/gemini-2.5-flash"
+DEFAULT_MODEL = "deepseek/deepseek-v4-flash-0731"
 DEFAULT_MAX_SEARCHES = 15
 DEFAULT_INITIAL_LIMIT = 10
 

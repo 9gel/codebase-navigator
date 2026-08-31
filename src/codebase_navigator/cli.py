@@ -408,7 +408,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_ask = subparsers.add_parser("ask", help="Ask an LLM questions about the codebase using iterative semantic search")
     p_ask.add_argument("question", help="Question about the codebase")
     p_ask.add_argument("folder", nargs="?", default=".", help="Target folder (default: current directory)")
-    p_ask.add_argument("--model", default=None, help="LLM model name (default: google/gemini-2.5-flash)")
+    p_ask.add_argument("--model", default=None, help="LLM model name (default: deepseek/deepseek-v4-flash-0731)")
     p_ask.add_argument("--endpoint", "--base-url", dest="endpoint", default=None, help="OpenAI-compatible LLM endpoint (default: https://openrouter.ai/api/v1)")
     p_ask.add_argument("--api-key", default=None, help="LLM API key")
     p_ask.add_argument("--system-prompt", default=None, help="Additional custom system prompt / persona instructions")
