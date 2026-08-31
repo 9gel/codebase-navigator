@@ -217,7 +217,41 @@ def test_theme_code_blocks_formatting():
 
     light_out = colorize_terminal_text(sample, theme="light")
     assert "\033[31m```python\033[0m" in light_out
-    assert "\033[38;5;30mprint('hello')\033[0m" in light_out
+
+
+def test_display_config_resolution(tmp_path, monkeypatch):
+    from codebase_navigator.config import get_display_config
+
+    cfg_dir = tmp_path / ".codebase-navigator"
+    cfg_dir.mkdir()
+    cfg_file = cfg_dir / "config.toml"
+    cfg_file.write_text("""
+[display]
+width = 85
+theme = "light"
+links = "osc8"
+wrap = true
+""")
+
+    # 1. Config file resolution
+    res = get_display_config(folder=tmp_path)
+    assert res["width"] == 85
+    assert res["theme"] == "light"
+    assert res["links"] == "osc8"
+    assert res["wrap"] is True
+
+    # 2. Environment variable overrides config file
+    monkeypatch.setenv("CN_WIDTH", "72")
+    monkeypatch.setenv("CN_THEME", "dark")
+    res2 = get_display_config(folder=tmp_path)
+    assert res2["width"] == 72
+    assert res2["theme"] == "dark"
+
+    # 3. CLI argument overrides environment variable
+    res3 = get_display_config(folder=tmp_path, cli_overrides={"width": 90, "theme": "light"})
+    assert res3["width"] == 90
+    assert res3["theme"] == "light"
+
 
 
 

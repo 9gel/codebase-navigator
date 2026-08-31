@@ -11,7 +11,7 @@ import sys
 import textwrap
 from pathlib import Path
 
-from .config import get_socket_path
+from .config import get_display_config, get_socket_path
 from .ipc import ping_socket, query_socket
 from .tags import TagsManager, get_available_files
 
@@ -108,9 +108,12 @@ def detect_terminal_theme(theme_override: str | None = None) -> str:
 
 def wrap_terminal_text(text: str, width: int | None = None) -> str:
     """Wrap markdown-like text for terminal display, preserving code blocks, bullet indentation, and headers."""
-    if width is None:
-        term_cols = shutil.get_terminal_size((80, 24)).columns
-        width = max(40, min(term_cols, 80))
+    term_cols = shutil.get_terminal_size((80, 24)).columns
+    if width is not None and width > 0:
+        target_width = min(width, term_cols) if term_cols > 0 else width
+        target_width = max(20, target_width)
+    else:
+        target_width = max(40, min(term_cols, 100))
 
     lines = text.splitlines()
     wrapped_lines = []
@@ -533,11 +536,33 @@ def _run_search(
     width: int | None = None,
     custom_index_dir: str | None = None,
 ):
+    display_cfg = get_display_config(
+        folder=folder,
+        cli_overrides={
+            "width": width,
+            "theme": theme,
+            "links": links,
+            "wrap": wrap,
+        },
+    )
+    resolved_width = display_cfg.get("width")
+    resolved_theme = display_cfg.get("theme", "auto")
+    resolved_links = display_cfg.get("links", "auto")
+    resolved_wrap = display_cfg.get("wrap")
+
     socket_path = get_socket_path(folder, custom_index_dir)
     results = query_socket(socket_path, query, limit=limit, doc_type=doc_type)
     if results is not None:
         raw_out = format_search_results(results, folder)
-        print(format_output_links(raw_out, mode=links, wrap=wrap, width=width, theme=theme))
+        print(
+            format_output_links(
+                raw_out,
+                mode=resolved_links,
+                wrap=resolved_wrap,
+                width=resolved_width,
+                theme=resolved_theme,
+            )
+        )
         return
 
     # Fallback to direct in-process search
@@ -545,7 +570,15 @@ def _run_search(
     idx = VectorIndex(folder, custom_index_dir)
     results = idx.search(query, limit=limit, doc_type=doc_type)
     raw_out = format_search_results(results, folder)
-    print(format_output_links(raw_out, mode=links, wrap=wrap, width=width, theme=theme))
+    print(
+        format_output_links(
+            raw_out,
+            mode=resolved_links,
+            wrap=resolved_wrap,
+            width=resolved_width,
+            theme=resolved_theme,
+        )
+    )
 
 
 def _run_tags(folder: Path, symbol: str, exact: bool = False, limit: int = 20):
@@ -571,6 +604,20 @@ def _run_ask(
 ):
     from .ask import ask_codebase, load_llm_config
 
+    display_cfg = get_display_config(
+        folder=folder,
+        cli_overrides={
+            "width": width,
+            "theme": theme,
+            "links": links,
+            "wrap": wrap,
+        },
+    )
+    resolved_width = display_cfg.get("width")
+    resolved_theme = display_cfg.get("theme", "auto")
+    resolved_links = display_cfg.get("links", "auto")
+    resolved_wrap = display_cfg.get("wrap")
+
     config = load_llm_config(
         folder=folder,
         cli_overrides={
@@ -591,11 +638,24 @@ def _run_ask(
             verbose=not quiet,
         )
         if not quiet:
-            term_w = min(width or shutil.get_terminal_size((80, 24)).columns, 80)
-            det_theme = detect_terminal_theme(theme)
+            term_cols = shutil.get_terminal_size((80, 24)).columns
+            if resolved_width:
+                divider_width = min(resolved_width, term_cols) if term_cols > 0 else resolved_width
+            else:
+                divider_width = min(term_cols, 100)
+            divider_width = max(20, divider_width)
+            det_theme = detect_terminal_theme(resolved_theme)
             divider_color = "\033[34m" if det_theme == "light" else "\033[36m"
-            print(f"\n{divider_color}{'=' * term_w}\033[0m\n")
-        print(format_output_links(answer, mode=links, wrap=wrap, width=width, theme=theme))
+            print(f"\n{divider_color}{'=' * divider_width}\033[0m\n")
+        print(
+            format_output_links(
+                answer,
+                mode=resolved_links,
+                wrap=resolved_wrap,
+                width=resolved_width,
+                theme=resolved_theme,
+            )
+        )
     except Exception as e:  # noqa: BLE001
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)

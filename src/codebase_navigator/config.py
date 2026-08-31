@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import os
+import tomllib
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
+from typing import Any
 
 # Ensure portable user caching & offline environment variables before importing ML libraries
 _cache_base = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache"))
@@ -81,8 +82,103 @@ def silence_stdio() -> Iterator[None]:
             os.close(null_fd)
             os.close(save_stdout)
             os.close(save_stderr)
-    except Exception:
+    except Exception:  # noqa: BLE001
         yield
+
+
+def parse_toml_file(p: Path) -> dict[str, Any]:
+    """Safely parse a TOML file if it exists."""
+    if p.is_file():
+        try:
+            with open(p, "rb") as f:
+                return tomllib.load(f)
+        except (tomllib.TOMLDecodeError, OSError):
+            return {}
+    return {}
+
+
+def get_display_config(
+    folder: Path | None = None,
+    cli_overrides: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Hierarchical resolution for display options (width, max_width, theme, links, wrap):
+    CLI > ENV > project config.toml > global ~/.config/codebase-navigator/config.toml > defaults.
+    """
+    cli = {k: v for k, v in (cli_overrides or {}).items() if v is not None}
+
+    # 1. Global user config
+    home = Path.home()
+    user_candidates = [
+        home / ".config" / "codebase-navigator" / "config.toml",
+        home / ".config" / "codebase-navigator.toml",
+    ]
+    user_data: dict[str, Any] = {}
+    for uc in user_candidates:
+        if uc.is_file():
+            user_data = parse_toml_file(uc)
+            break
+
+    # 2. Project local config
+    project_data: dict[str, Any] = {}
+    if folder:
+        project_candidates = [
+            folder / ".codebase-navigator" / "config.toml",
+            folder / "codebase-navigator.toml",
+            folder / ".codebase-navigator.toml",
+        ]
+        for pc in project_candidates:
+            if pc.is_file():
+                project_data = parse_toml_file(pc)
+                break
+
+    # Merge config layers
+    merged: dict[str, Any] = {}
+    for src in [user_data, project_data]:
+        display_sec = src.get("display", {}) if isinstance(src.get("display"), dict) else {}
+        for k in ("width", "max_width", "theme", "links", "wrap"):
+            val = display_sec.get(k) if k in display_sec else src.get(k)
+            if val is not None:
+                if k in ("width", "max_width"):
+                    try:
+                        merged["width"] = int(val)
+                    except ValueError:
+                        pass
+                else:
+                    merged[k] = val
+
+    # Environment variable overrides
+    env_width = os.environ.get("CN_WIDTH") or os.environ.get("CN_MAX_WIDTH")
+    if env_width:
+        try:
+            merged["width"] = int(env_width)
+        except ValueError:
+            pass
+
+    if "CN_THEME" in os.environ:
+        merged["theme"] = os.environ["CN_THEME"]
+    if "CN_LINKS" in os.environ:
+        merged["links"] = os.environ["CN_LINKS"]
+    if "CN_WRAP" in os.environ:
+        v = os.environ["CN_WRAP"].lower()
+        merged["wrap"] = v in ("1", "true", "yes")
+
+    # CLI overrides
+    if "width" in cli:
+        merged["width"] = cli["width"]
+    if "theme" in cli and cli["theme"] != "auto":
+        merged["theme"] = cli["theme"]
+    elif "theme" not in merged:
+        merged["theme"] = cli.get("theme", "auto")
+
+    if "links" in cli and cli["links"] != "auto":
+        merged["links"] = cli["links"]
+    elif "links" not in merged:
+        merged["links"] = cli.get("links", "auto")
+
+    if "wrap" in cli and cli["wrap"] is not None:
+        merged["wrap"] = cli["wrap"]
+
+    return merged
 
 
 def get_cache_dir(folder: Path, custom_index_dir: str | None = None) -> Path:
