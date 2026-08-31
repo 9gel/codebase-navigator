@@ -8,12 +8,10 @@ This document provides mandatory project instructions, standards, and operationa
 
 > [!IMPORTANT]
 > **Every push or set of changes MUST bump the package build version.**
-> Automated CI checks (`.github/workflows/check-version-bump.yml`) enforce that `pyproject.toml` version is incremented on every commit/PR and exactly matches `src/codebase_navigator/__init__.py`.
+> Automated CI checks (`.github/workflows/check-version-bump.yml`) enforce that `src/codebase_navigator/__init__.py` (`__version__`) is incremented on every commit/PR. `pyproject.toml` uses dynamic versioning via Hatchling (`[tool.hatch.version] path = "src/codebase_navigator/__init__.py"`).
 
 When making changes:
-1. **Patch / Minor Bump**: Increment `version` in [`pyproject.toml`](file:///home/nigel/code/codebase-navigator/pyproject.toml).
-2. **Sync `__init__.py`**: Increment `__version__` in [`src/codebase_navigator/__init__.py`](file:///home/nigel/code/codebase-navigator/src/codebase_navigator/__init__.py).
-3. **Keep in sync**: Both files must have identical version strings.
+1. **Single Source of Truth**: Increment `__version__` in [`src/codebase_navigator/__init__.py`](file:///home/nigel/code/codebase-navigator/src/codebase_navigator/__init__.py).
 
 ---
 

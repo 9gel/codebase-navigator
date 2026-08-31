@@ -1,6 +1,6 @@
 [project]
 name = "codebase-navigator"
-version = "0.3.7"
+dynamic = ["version"]
 description = "Fast Git-aware ctags indexing, live watchers, and LanceDB semantic search for developers"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -31,6 +31,9 @@ cn = "codebase_navigator.cli:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/codebase_navigator/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/codebase_navigator"]

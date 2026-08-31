@@ -25,21 +25,15 @@ jobs:
             exit 0
           fi
 
-          CURR_VER=$(grep -E '^version = ' pyproject.toml | head -n1 | cut -d'"' -f2)
-          PREV_VER=$(git show HEAD~1:pyproject.toml 2>/dev/null | grep -E '^version = ' | head -n1 | cut -d'"' -f2 || echo "")
+          CURR_VER=$(grep -E '^__version__ = ' src/codebase_navigator/__init__.py | head -n1 | cut -d'"' -f2)
+          PREV_VER=$(git show HEAD~1:src/codebase_navigator/__init__.py 2>/dev/null | grep -E '^__version__ = ' | head -n1 | cut -d'"' -f2 || echo "")
 
           echo "Previous version: $PREV_VER"
           echo "Current version:  $CURR_VER"
 
           if [ -n "$PREV_VER" ] && [ "$CURR_VER" = "$PREV_VER" ]; then
-            echo "❌ ERROR: pyproject.toml version ($CURR_VER) has not been bumped compared to previous commit ($PREV_VER)!"
-            echo "👉 Please bump the version in pyproject.toml and src/codebase_navigator/__init__.py before pushing."
-            exit 1
-          fi
-
-          INIT_VER=$(grep -E '__version__ = ' src/codebase_navigator/__init__.py | head -n1 | cut -d'"' -f2)
-          if [ "$CURR_VER" != "$INIT_VER" ]; then
-            echo "❌ ERROR: pyproject.toml version ($CURR_VER) does not match __init__.py version ($INIT_VER)!"
+            echo "❌ ERROR: src/codebase_navigator/__init__.py version ($CURR_VER) has not been bumped compared to previous commit ($PREV_VER)!"
+            echo "👉 Please bump __version__ in src/codebase_navigator/__init__.py before pushing."
             exit 1
           fi
 
