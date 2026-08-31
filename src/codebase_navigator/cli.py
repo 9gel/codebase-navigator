@@ -140,7 +140,7 @@ def wrap_terminal_text(text: str, width: int | None = None) -> str:
             content = bm.group(2)
             indent_len = len(prefix) + 1
             w = textwrap.TextWrapper(
-                width=width,
+                width=target_width,
                 initial_indent=f"{prefix} ",
                 subsequent_indent=" " * indent_len,
                 break_long_words=False,
@@ -153,7 +153,7 @@ def wrap_terminal_text(text: str, width: int | None = None) -> str:
         if stripped.startswith(">"):
             content = stripped[1:].strip()
             w = textwrap.TextWrapper(
-                width=width,
+                width=target_width,
                 initial_indent="> ",
                 subsequent_indent="> ",
                 break_long_words=False,
@@ -169,7 +169,7 @@ def wrap_terminal_text(text: str, width: int | None = None) -> str:
 
         # Regular paragraph line
         w = textwrap.TextWrapper(
-            width=width,
+            width=target_width,
             break_long_words=False,
             break_on_hyphens=False,
         )

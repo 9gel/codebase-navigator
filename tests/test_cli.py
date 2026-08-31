@@ -205,6 +205,11 @@ def test_wrap_terminal_text_structures():
     # Check bullet item indented subsequent lines
     assert "  " in wrapped
 
+    # Test width=None (default terminal width auto-detection without error)
+    wrapped_default = wrap_terminal_text(sample, width=None)
+    assert "long_code_line_that_must_not_be_wrapped_under_any_circumstances = 123456789" in wrapped_default
+    assert "### Header Title" in wrapped_default
+
 
 def test_theme_code_blocks_formatting():
     from codebase_navigator.cli import colorize_terminal_text
