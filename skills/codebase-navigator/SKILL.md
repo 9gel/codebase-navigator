@@ -78,10 +78,10 @@ Results output the symbol type, path, and definition snippet:
 ## 4. Index Lifecycle & Daemon Management
 
 ### Project Directory Layout
-Indexes and runtime sockets are stored in the project-local `.cn/` directory:
-- `.cn/lancedb` — Vector database
-- `.cn/files_meta.json` — Incremental mtime/size cache
-- `.cn/watch.sock` — Unix Domain Socket for fast IPC
+Indexes and runtime sockets are stored in the project-local `.codebase-navigator/` directory:
+- `.codebase-navigator/lancedb` — Vector database
+- `.codebase-navigator/files_meta.json` — Incremental mtime/size cache
+- `.codebase-navigator/watch.sock` — Unix Domain Socket for fast IPC
 
 ### Checking Daemon & Index Status (`cn status`)
 Always check the health and daemon status before starting work in a repository:
@@ -95,8 +95,8 @@ Example output:
 📊 Navigation Status for: /path/to/project
   Available files: 924 source code files, 48 doc files
   🏷️  Tags file: /path/to/project/.tags (1.77 MB)
-  🟢 cn watch daemon: ACTIVE (socket: /path/to/project/.cn/watch.sock)
-  🧠 Vector index: /path/to/project/.cn
+  🟢 cn watch daemon: ACTIVE (socket: /path/to/project/.codebase-navigator/watch.sock)
+  🧠 Vector index: /path/to/project/.codebase-navigator
      Indexed files: 952, Total chunks: 7771
 ```
 
@@ -107,7 +107,7 @@ A coordinating agent or background task can launch `cn watch` in the repository 
 cn watch .
 ```
 
-- **Socket Acceleration**: When `cn watch` is running, `cn search` queries the in-memory index via `.cn/watch.sock` in **< 30ms**, skipping Python ML library loading.
+- **Socket Acceleration**: When `cn watch` is running, `cn search` queries the in-memory index via `.codebase-navigator/watch.sock` in **< 30ms**, skipping Python ML library loading.
 - **Concurrency Safety**: If multiple agents run `cn watch` under the same project directory, subsequent runs will detect the active socket and safely exit without conflicting.
 - **Crash Recovery**: If `cn watch` was killed unexpectedly, stale socket files are automatically detected, unlinked, and recovered on subsequent commands.
 
