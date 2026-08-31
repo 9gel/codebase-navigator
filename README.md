@@ -1,9 +1,9 @@
 # codebase-navigator
 
-Tools for ultra-fast semantic codebase navigation for humans and AI agents,
-Git-aware ctags indexing, live watchers, and
-[LanceDB](https://github.com/lancedb/lancedb) semantic search. Self-contained
-runtime, no additional servers (e.g. Ollama) to run for embeddings.
+Ultra-fast semantic codebase navigation for humans and AI agents, Git-aware
+ctags indexing, live watchers, and [LanceDB](https://github.com/lancedb/lancedb)
+semantic search. Self-contained runtime, no additional servers (e.g. Ollama) to
+run for embeddings.
 
 Cut 40%-80% token use by having your LLM search precisely, instead of ingesting
 entire code bases or searching incorrectly using blind ripgreps.
@@ -25,20 +25,17 @@ Launch the `cn watch` daemon in one terminal pane, and use it in another.
 - 💬 **Autonomous Agent Harness (`cn ask`)**: Ask architectural and
   implementation questions in natural language. Powered by an iterative LLM
   reasoning loop with 1-shot hybrid code intelligence tools.
-- 🧠 **LanceDB Semantic & Hybrid Search**: Vector search powered by
-  `FastEmbed ONNX `all-MiniLM-L6-v2`` with hybrid phrase/title match
-  boosting for markdown documentation, glossary terms, and code comments.
+- 🧠 **LanceDB Semantic & Hybrid Search**: Vector search powered by `FastEmbed
+  ONNX `all-MiniLM-L6-v2`` with hybrid phrase/title match boosting for markdown
+  documentation, glossary terms, and code comments.
 - 🏷️ **Git-Aware `.tags` Generation**: Uses `universal-ctags` to index genuine
-  source code while ignoring huge data dumps, JSON caches, `.git`, `node_modules`,
-  and build artifacts.
+  source code while ignoring huge data dumps, JSON caches, `.git`,
+  `node_modules`, and build artifacts.
 - 👀 **Live File Watcher**: Automatically re-indexes `.tags` and incrementally
   updates LanceDB embeddings on every save with sub-second debounce.
-- 🔗 **Clickable GitHub Markdown Links**: Returns results formatted as
-  `[file:Lstart-Lend](file:///abs_path#Lstart-Lend)`.
-- ⚙️ **Configurable System Prompts**: Customize agent persona, auditing constraints,
-  or architectural instructions via CLI flags, environment variables, or TOML config.
-- ⚡ **Strict Offline Mode**: Can run 100% locally from disk, with zero
-  HuggingFace network requests.
+- ⚙️ **Configurable System Prompts**: Customize agent persona, auditing
+  constraints, or architectural instructions via CLI flags, environment
+  variables, or TOML config, for the `ask` command.
 
 ## Quick Start
 
@@ -54,7 +51,34 @@ Ensure these command-line tools are installed on your system:
   Provides blazing-fast pattern searching and reference tracing. If missing, `cn`
   falls back to pure-Python traversal.
 
-### Try it out using uvx
+### Model Context Protocol (MCP) Server
+
+`codebase-navigator` includes a built-in **MCP server** that provides AI agents (in Antigravity, Claude Desktop, Cursor, Cline, etc.) with 6 zero-token-waste code intelligence tools:
+- `codebase_search`: Hybrid vector & keyword search in docs and code.
+- `codebase_tags`: Ctags symbol definition lookups.
+- `codebase_references`: 1-shot definitions and all caller/usage sites.
+- `codebase_call_tree`: AST & cross-file caller and callee hierarchy.
+- `codebase_read`: Precise line range reader with line numbers and clickable links.
+- `codebase_grep`: High-speed regex / literal pattern matcher.
+
+#### Adding to Your AI Harness / IDE
+
+Add to your MCP configuration file (e.g. `claude_desktop_config.json`, `~/.config/antigravity/mcp_config.json`, or `.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "codebase-navigator": {
+      "command": "uvx",
+      "args": ["codebase-navigator", "mcp"]
+    }
+  }
+}
+```
+
+*Note: The MCP server operates completely standalone without requiring any LLM API keys or external endpoints — it performs local FastEmbed ONNX vector queries and ctags symbol lookups directly for your agent.*
+
+### Try the CLI tools using uvx
 
 You can run `cn` using `uvx` (the tool runner from [uv](https://docs.astral.sh/uv/)). At the top level of a code tree under a git repository, run:
 
@@ -77,6 +101,40 @@ uvx codebase-navigator tags flush_chunk
 # Search documentation and comments:
 uvx codebase-navigator search "Flush Chunk"
 ```
+
+## Installation
+
+### 1. Using `uv` / `uvx` (Recommended)
+No installation required! Run directly with `uvx`:
+```bash
+# Run CLI
+uvx codebase-navigator search "authentication flow"
+
+# Run Watcher Daemon
+uvx codebase-navigator watch
+
+# Run MCP Server
+uvx codebase-navigator mcp
+```
+
+Or install globally into your environment:
+```bash
+uv tool install codebase-navigator
+```
+
+### 2. Using `pip`
+```bash
+pip install codebase-navigator
+```
+
+### 3. Using Nix & Direnv (For Developers)
+```bash
+git clone https://github.com/9gel/codebase-navigator.git
+cd codebase-navigator
+direnv allow
+uv run cn --help
+```
+
 
 ## CLI Commands
 

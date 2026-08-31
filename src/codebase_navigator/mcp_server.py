@@ -11,7 +11,6 @@ from urllib.parse import unquote, urlparse
 from mcp.server.mcpserver import MCPServer, Context
 
 from . import __version__
-from .ask import ask_codebase, load_llm_config
 from .config import get_socket_path
 from .index import VectorIndex
 from .ipc import ping_socket, query_socket
@@ -294,46 +293,6 @@ def codebase_grep(
     for m in matches:
         lines.append(f"- [{m['path']}:{m['line']}](file://{m['abs_path']}#L{m['line']}): `{m['content']}`")
     return "\n".join(lines)
-
-
-@mcp.tool()
-def codebase_ask(
-    question: str,
-    system_prompt: str | None = None,
-    new_session: bool = False,
-    repo_root: str | None = None,
-    ctx: Context = None,
-) -> str:
-    """Ask natural language architectural or implementation questions about the repository.
-
-    Args:
-        question: Architectural or implementation question.
-        system_prompt: Optional custom persona or instructions.
-        new_session: Start a fresh reasoning session (default: false).
-        repo_root: Optional path to target repository root.
-    """
-    folder = resolve_repository_root(repo_root, ctx)
-    config = load_llm_config(
-        folder=folder,
-        cli_overrides={"system_prompt": system_prompt},
-    )
-    if not config.api_key:
-        return (
-            "Error: No LLM API key configured for codebase_ask.\n"
-            "Please set OPENROUTER_API_KEY in environment or ~/.config/codebase-navigator/config.toml."
-        )
-
-    try:
-        answer, _ = ask_codebase(
-            folder=folder,
-            question=question,
-            config=config,
-            verbose=False,
-            new_session=new_session,
-        )
-        return answer
-    except Exception as e:
-        return f"Error executing codebase_ask: {e}"
 
 
 def _format_search_chunks(results: list[dict[str, Any]], folder: Path) -> str:
