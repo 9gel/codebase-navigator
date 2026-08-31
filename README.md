@@ -1,18 +1,37 @@
 # codebase-navigator
 
-Tools for ultra-fast semantic codebase navigation, Git-aware ctags indexing, live watchers, and [LanceDB](https://github.com/lancedb/lancedb) semantic search. Self-contained runtime, no additional servers (e.g. Ollama) to run for embeddings.
+Tools for ultra-fast semantic codebase navigation, Git-aware ctags indexing,
+live watchers, and [LanceDB](https://github.com/lancedb/lancedb) semantic
+search. Self-contained runtime, no additional servers (e.g. Ollama) to run for
+embeddings.
 
 ## How it works
 
 
 ## Features
 
-- 💬 **Agentic Codebase Q&A (`cn ask`)**: Ask complex architectural and implementation questions in natural language. Powered by an iterative LLM reasoning loop with autonomous tool-calling that actively investigates your codebase across multiple search rounds, synthesizing clear, accurate answers backed by clickable file and line links.
-- 🧠 **LanceDB Semantic & Hybrid Search**: Vector search powered by `sentence-transformers/all-MiniLM-L6-v2` with hybrid phrase/title match boosting for markdown documentation, glossary terms, and code comments.
-- 🏷️ **Git-Aware `.tags` Generation**: Uses `universal-ctags` to index genuine source code while completely ignoring huge data dumps, JSON caches, `.git`, `node_modules`, and build artifacts.
-- ⚡ **Strict Offline Mode**: Runs 100% locally from disk cache with zero HuggingFace network requests or unauthenticated token warnings.
-- 👀 **Live File Watcher**: Automatically re-indexes `.tags` and incrementally updates LanceDB embeddings on every save with sub-second debounce.
-- 🔗 **Clickable GitHub Markdown Links**: Returns results formatted as `[file:Lstart-Lend](file:///abs_path#Lstart-Lend)`.
+- 💬 **Agentic Codebase Q&A (`cn ask`)**: (the full RAG) Ask architectural and
+  implementation questions in natural language. Powered by an iterative LLM
+  reasoning loop with autonomous tool-calling that actively investigates your
+  codebase across multiple search rounds, synthesizing clear answers backed by
+  clickable file and line links (when supported). Perfect for humans: no need
+  to spin up a harness (e.g. opencode), have the LLM ripgrep, consume lots of
+  code and wasting a bunch of tokens, and wait forever for an answer.
+- 🧠 **LanceDB Semantic & Hybrid Search**: (the retrival) Vector search powered
+  by `sentence-transformers/all-MiniLM-L6-v2` with hybrid phrase/title match
+  boosting for markdown documentation, glossary terms, and code comments.
+  Perfect for coding harnesses to home in on the right code, without wildly
+  ripgrep'ping a bunch of code and waste time and tokens.
+- 🏷️ **Git-Aware `.tags` Generation**: (exact symbol match) Uses
+  `universal-ctags` to index genuine source code while completely ignoring huge
+  data dumps, JSON caches, `.git`, `node_modules`, and build artifacts. Another
+  efficient tool for agents to find code.
+- 👀 **Live File Watcher**: Automatically re-indexes `.tags` and incrementally
+  updates LanceDB embeddings on every save with sub-second debounce.
+- 🔗 **Clickable GitHub Markdown Links**: If your terminal supports it, returns
+  results formatted as `[file:Lstart-Lend](file:///abs_path#Lstart-Lend)`.
+- ⚡ **Strict Offline Mode**: Can run 100% locally from disk, with zero
+  HuggingFace network requests.
 
 ## Quick Start
 
@@ -20,14 +39,19 @@ Tools for ultra-fast semantic codebase navigation, Git-aware ctags indexing, liv
 
 Ensure these command-line tools are installed on your system:
 
-- **[Git](https://git-scm.com/downloads)**: Used for repository discovery and ignoring non-tracked files.
-- **[universal-ctags](https://github.com/universal-ctags/ctags#installation)**: Required for generating `.tags` code symbol indexes. Installation instructions for various platforms:
+- **[Git](https://git-scm.com/downloads)**: Used for repository discovery and
+  ignoring non-tracked files.
+- **[universal-ctags](https://github.com/universal-ctags/ctags#installation)**:
+  Required for generating `.tags` code symbol indexes. Installation instructions
+  for various platforms:
   - macOS (Homebrew): `brew install universal-ctags`
   - Ubuntu / Debian: `sudo apt install universal-ctags`
   - Arch Linux: `sudo pacman -S universal-ctags`
-  - Windows (Chocolatey / Scoop): `choco install universal-ctags` or `scoop install universal-ctags`
+  - Windows (Chocolatey / Scoop): `choco install universal-ctags` or `scoop
+    install universal-ctags`
 
-*(Note: When running via Nix Flakes or `nix run`, these dependencies are automatically bundled and handled for you).*
+*(Note: When running via Nix Flakes or `nix run`, these dependencies are
+automatically bundled and handled for you).*
 
 ### Try it out using uvx
 
