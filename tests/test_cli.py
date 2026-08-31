@@ -1,5 +1,5 @@
-import pytest
 from pathlib import Path
+
 from codebase_navigator.cli import format_search_results, format_tag_results
 
 
@@ -78,10 +78,32 @@ def test_cn_parser_subcommands():
     assert args.folder == "."
     assert args.debounce == 500
 
+    # ask
+    args = parser.parse_args([
+        "ask", "How does indexing work?", "/my/repo",
+        "--model", "test-model",
+        "--endpoint", "https://api.openai.com/v1",
+        "--api-key", "test-key",
+        "--limit", "15",
+        "--max-searches", "4",
+        "--index-dir", "/custom/idx",
+        "-q",
+    ])
+    assert args.command == "ask"
+    assert args.question == "How does indexing work?"
+    assert args.folder == "/my/repo"
+    assert args.model == "test-model"
+    assert args.endpoint == "https://api.openai.com/v1"
+    assert args.api_key == "test-key"
+    assert args.limit == 15
+    assert args.max_searches == 4
+    assert args.index_dir == "/custom/idx"
+    assert args.quiet is True
+
 
 def test_cn_main_dispatch(monkeypatch, tmp_path: Path):
-    from codebase_navigator.cli import main
     import codebase_navigator.cli as cli_mod
+    from codebase_navigator.cli import main
 
     called = {}
 
@@ -100,11 +122,15 @@ def test_cn_main_dispatch(monkeypatch, tmp_path: Path):
     def mock_tags(folder, symbol, exact=False, limit=20):
         called["tags"] = (folder, symbol, exact, limit)
 
+    def mock_ask(folder, question, model=None, endpoint=None, api_key=None, limit=None, max_searches=None, custom_index_dir=None, quiet=False):
+        called["ask"] = (folder, question, model, endpoint, api_key, limit, max_searches, custom_index_dir, quiet)
+
     monkeypatch.setattr(cli_mod, "_run_status", mock_status)
     monkeypatch.setattr(cli_mod, "_run_sync", mock_sync)
     monkeypatch.setattr(cli_mod, "_run_watch", mock_watch)
     monkeypatch.setattr(cli_mod, "_run_search", mock_search)
     monkeypatch.setattr(cli_mod, "_run_tags", mock_tags)
+    monkeypatch.setattr(cli_mod, "_run_ask", mock_ask)
 
     main(["status", str(tmp_path)])
     assert called["status"] == (tmp_path.resolve(), None)
@@ -120,3 +146,7 @@ def test_cn_main_dispatch(monkeypatch, tmp_path: Path):
 
     main(["tags", "MySymbol", str(tmp_path), "--exact"])
     assert called["tags"] == (tmp_path.resolve(), "MySymbol", True, 20)
+
+    main(["ask", "What is the architecture?", str(tmp_path), "--model", "custom-model", "--limit", "12"])
+    assert called["ask"] == (tmp_path.resolve(), "What is the architecture?", "custom-model", None, None, 12, None, None, False)
+

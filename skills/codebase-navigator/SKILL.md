@@ -1,25 +1,61 @@
-
+---
 name: codebase-navigator
-description: Efficiently navigate codebases and project documentation using cn tools (cn search, cn tags, cn status, cn sync, cn watch). Use when locating concepts, architecture docs, symbol definitions, or maintaining live semantic indexes across development sessions.
+description: Efficiently navigate codebases and project documentation using cn tools (cn ask, cn search, cn tags, cn status, cn sync, cn watch). Use when answering questions about the codebase, locating concepts, architecture docs, symbol definitions, or maintaining live semantic indexes across development sessions.
 ---
 
 # Codebase Navigatory Guide
 
-`codebase-navigator` (`cn`) provides high-speed code and documentation discovery for agents and developers. It complements `ripgrep` (`rg`) by providing semantic concept search and indexed ctags symbol navigation.
+`codebase-navigator` (`cn`) provides high-speed code and documentation discovery for agents and developers. It complements `ripgrep` (`rg`) by providing semantic concept search, LLM-assisted code understanding, and indexed ctags symbol navigation.
 
 ## Tool Suite Overview
 
 | Command | Purpose | When to Use |
 |---|---|---|
+| `cn ask` | LLM codebase Q&A with iterative search | High-level architectural or domain questions; synthesizes answers using evidence |
 | `cn search` | Semantic vector search | Finding concepts, architectural docs, domain rules, and code docstrings |
 | `cn tags` | Universal Ctags symbol lookup | Finding exact class, function, struct, or variable definitions |
-| `cn status` | Index and daemon health | Checking indexed file counts and verifying if `ac watch` is active |
+| `cn status` | Index and daemon health | Checking indexed file counts and verifying if `cn watch` is active |
 | `cn sync` | Full index synchronization | Forcing an immediate refresh of `.tags` and LanceDB vector embeddings |
 | `cn watch` | Live background watcher & IPC daemon | Keeping indexes live and serving in-memory queries over Unix domain socket |
 
 ---
 
-## 1. Finding Concepts & Documentation (`cn search`)
+## 1. Asking Questions About Code (`cn ask`)
+
+Use `cn ask` to query the codebase with an LLM. It retrieves relevant documentation and code via vector embeddings, presents them to an LLM, and allows the model to execute bounded follow-up searches (up to 5 iterations) to formulate an accurate, evidence-backed answer:
+
+```bash
+# Ask a question about the project
+cn ask "Explain how publisher sources and data ingestion work in this pipeline." .
+
+# Specify a custom model or initial limit
+cn ask "Where are user auth tokens validated?" . --model anthropic/claude-3.5-sonnet --limit 10
+
+# Quiet mode (clean response on stdout)
+cn ask "What are the core database models?" . --quiet
+```
+
+### Configuring LLM Endpoints & Keys
+
+Configuration is read hierarchically:
+1. CLI flags (`--api-key`, `--endpoint`, `--model`, `--max-searches`, `--limit`)
+2. Environment variables: `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `CN_API_KEY`, `CN_ENDPOINT`, `CN_MODEL`
+3. Project configuration: `.codebase-navigator/config.toml`
+4. User configuration: `~/.config/codebase-navigator/config.toml`
+
+Example `.codebase-navigator/config.toml` or `~/.config/codebase-navigator/config.toml`:
+```toml
+[llm]
+endpoint = "https://openrouter.ai/api/v1"
+model = "google/gemini-2.5-flash"
+api_key = "sk-or-v1-..."
+max_searches = 5
+limit = 10
+```
+
+---
+
+## 2. Finding Concepts & Documentation (`cn search`)
 
 Use `cn search` when you know *what* you want to achieve conceptually, but do not know the exact variable or file names:
 
@@ -44,7 +80,7 @@ Results provide direct Markdown links with line ranges:
 
 ---
 
-## 2. Locating Symbols & Definitions (`cn tags`)
+## 3. Locating Symbols & Definitions (`cn tags`)
 
 Use `cn tags` for fast symbol lookups across large codebases without scanning file trees:
 
@@ -67,15 +103,16 @@ Results output the symbol type, path, and definition snippet:
 
 ---
 
-## 3. Tool Selection: When to Use What
+## 4. Tool Selection: When to Use What
 
+- **Use `cn ask`** for high-level codebase understanding, architecture explanations, and synthesizing answers across multiple files.
 - **Use `cn search`** for domain logic questions, API specifications, workflow descriptions, and module purposes (e.g., *"where is the cache expiration logic?"*).
 - **Use `cn tags`** when you know the identifier name (e.g., `BarrierReferenceStore`, `transform_records`) and need its declaration location.
 - **Use `ripgrep` (`rg`)** for exact string occurrences, import statements, or regular expressions across code lines.
 
 ---
 
-## 4. Index Lifecycle & Daemon Management
+## 5. Index Lifecycle & Daemon Management
 
 ### Project Directory Layout
 Indexes and runtime sockets are stored in the project-local `.codebase-navigator/` directory:

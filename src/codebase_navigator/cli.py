@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import sys
+from pathlib import Path
 
 from .config import get_socket_path
 from .ipc import ping_socket, query_socket
@@ -109,6 +109,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_tags.add_argument("--exact", action="store_true", help="Match exact symbol name")
     p_tags.add_argument("--limit", type=int, default=20, help="Maximum results (default: 20)")
 
+    # ask
+    p_ask = subparsers.add_parser("ask", help="Ask an LLM questions about the codebase using iterative semantic search")
+    p_ask.add_argument("question", help="Question about the codebase")
+    p_ask.add_argument("folder", nargs="?", default=".", help="Target folder (default: current directory)")
+    p_ask.add_argument("--model", default=None, help="LLM model name (default: google/gemini-2.5-flash)")
+    p_ask.add_argument("--endpoint", "--base-url", dest="endpoint", default=None, help="OpenAI-compatible LLM endpoint (default: https://openrouter.ai/api/v1)")
+    p_ask.add_argument("--api-key", default=None, help="LLM API key")
+    p_ask.add_argument("--limit", type=int, default=None, help="Initial search results count (default: 10)")
+    p_ask.add_argument("--max-searches", type=int, default=None, help="Max additional LLM-driven searches (default: 5)")
+    p_ask.add_argument("--index-dir", default=None, help="Custom LanceDB directory")
+    p_ask.add_argument("-q", "--quiet", action="store_true", help="Suppress progress output")
+
     return parser
 
 
@@ -128,6 +140,18 @@ def main(argv: list[str] | None = None):
         _run_search(folder, args.query, limit=args.limit, doc_type=args.type, custom_index_dir=args.index_dir)
     elif args.command == "tags":
         _run_tags(folder, args.symbol, exact=args.exact, limit=args.limit)
+    elif args.command == "ask":
+        _run_ask(
+            folder,
+            args.question,
+            model=args.model,
+            endpoint=args.endpoint,
+            api_key=args.api_key,
+            limit=args.limit,
+            max_searches=args.max_searches,
+            custom_index_dir=args.index_dir,
+            quiet=args.quiet,
+        )
 
 
 # Backward compatibility aliases
@@ -204,3 +228,41 @@ def _run_tags(folder: Path, symbol: str, exact: bool = False, limit: int = 20):
     mgr = TagsManager(folder)
     results = mgr.lookup_symbol(symbol, exact=exact, limit=limit)
     print(format_tag_results(results))
+
+
+def _run_ask(
+    folder: Path,
+    question: str,
+    model: str | None = None,
+    endpoint: str | None = None,
+    api_key: str | None = None,
+    limit: int | None = None,
+    max_searches: int | None = None,
+    custom_index_dir: str | None = None,
+    quiet: bool = False,
+):
+    from .ask import ask_codebase, load_llm_config
+
+    config = load_llm_config(
+        folder=folder,
+        cli_overrides={
+            "model": model,
+            "endpoint": endpoint,
+            "api_key": api_key,
+            "limit": limit,
+            "max_searches": max_searches,
+        },
+    )
+
+    try:
+        answer = ask_codebase(
+            folder=folder,
+            question=question,
+            config=config,
+            custom_index_dir=custom_index_dir,
+            verbose=not quiet,
+        )
+        print(answer)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
