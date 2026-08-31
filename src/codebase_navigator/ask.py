@@ -1,36 +1,59 @@
-"""LLM-assisted codebase questioning with iterative semantic search."""
+"""LLM-assisted codebase questioning with iterative multi-tool navigation and session memory."""
 
 from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 import sys
 import tomllib
+from typing import Any
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
 
 from .config import get_socket_path
 from .index import VectorIndex
-from .ipc import query_socket
+from .ipc import ping_socket, query_socket, send_socket_command
+from .tags import TagsManager
+from .tools import (
+    check_ripgrep_installed,
+    find_references,
+    get_call_tree,
+    grep_search,
+    read_code,
+)
 
 DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1"
 DEFAULT_MODEL = "google/gemini-2.5-flash"
-DEFAULT_MAX_SEARCHES = 5
+DEFAULT_MAX_SEARCHES = 15
 DEFAULT_INITIAL_LIMIT = 10
 
 
-@dataclass
 class LLMConfig:
     """Configuration settings for LLM queries."""
 
-    endpoint: str = DEFAULT_ENDPOINT
-    api_key: str | None = None
-    model: str = DEFAULT_MODEL
-    max_searches: int = DEFAULT_MAX_SEARCHES
-    initial_limit: int = DEFAULT_INITIAL_LIMIT
+    def __init__(
+        self,
+        endpoint: str = DEFAULT_ENDPOINT,
+        api_key: str | None = None,
+        model: str = DEFAULT_MODEL,
+        max_searches: int = DEFAULT_MAX_SEARCHES,
+        initial_limit: int = DEFAULT_INITIAL_LIMIT,
+    ):
+        self.endpoint = endpoint
+        self.api_key = api_key
+        self.model = model
+        self.max_searches = max_searches
+        self.initial_limit = initial_limit
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "endpoint": self.endpoint,
+            "api_key": self.api_key,
+            "model": self.model,
+            "max_searches": self.max_searches,
+            "initial_limit": self.initial_limit,
+        }
 
 
 def _parse_toml_file(p: Path) -> dict[str, Any]:
@@ -48,14 +71,7 @@ def load_llm_config(
     folder: Path | None = None,
     cli_overrides: dict[str, Any] | None = None,
 ) -> LLMConfig:
-    """Load LLM configuration with hierarchical resolution:
-
-    1. CLI argument overrides (highest priority)
-    2. Environment variables (CN_API_KEY, OPENROUTER_API_KEY, etc.)
-    3. Project configuration (.codebase-navigator/config.toml, etc.)
-    4. User global configuration (~/.config/codebase-navigator/config.toml, etc.)
-    5. Built-in defaults
-    """
+    """Load LLM configuration with hierarchical resolution."""
     cli = {k: v for k, v in (cli_overrides or {}).items() if v is not None}
 
     # 1. Global user configs
@@ -87,7 +103,6 @@ def load_llm_config(
     # Merge TOML layers (user < project)
     merged_toml: dict[str, Any] = {}
     for src in [user_data, project_data]:
-        # Handle top-level keys
         for k in [
             "endpoint",
             "base_url",
@@ -99,7 +114,6 @@ def load_llm_config(
         ]:
             if k in src:
                 merged_toml[k] = src[k]
-        # Handle [llm] section
         llm_sec = src.get("llm", {})
         if isinstance(llm_sec, dict):
             for k, v in llm_sec.items():
@@ -128,7 +142,6 @@ def load_llm_config(
     env_max_searches = os.environ.get("CN_MAX_SEARCHES")
     env_initial_limit = os.environ.get("CN_ASK_LIMIT") or os.environ.get("CN_INITIAL_LIMIT")
 
-    # Resolve endpoint
     endpoint = (
         cli.get("endpoint")
         or env_endpoint
@@ -136,14 +149,9 @@ def load_llm_config(
         or merged_toml.get("base_url")
         or DEFAULT_ENDPOINT
     )
-
-    # Resolve api_key
     api_key = cli.get("api_key") or env_api_key or merged_toml.get("api_key")
-
-    # Resolve model
     model = cli.get("model") or env_model or merged_toml.get("model") or DEFAULT_MODEL
 
-    # Resolve max_searches
     max_searches_raw = (
         cli.get("max_searches")
         or env_max_searches
@@ -155,7 +163,6 @@ def load_llm_config(
     except (ValueError, TypeError):
         max_searches = DEFAULT_MAX_SEARCHES
 
-    # Resolve initial_limit
     initial_limit_raw = (
         cli.get("limit")
         or env_initial_limit
@@ -217,32 +224,159 @@ def format_chunks_for_llm(results: list[dict[str, Any]]) -> str:
     return "\n\n".join(chunks_text)
 
 
-SEARCH_TOOL_SPEC = {
-    "type": "function",
-    "function": {
-        "name": "search",
-        "description": "Perform semantic and keyword search across codebase files and documentation chunks. Use this to find functions, classes, comments, architecture, and module logic.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Natural language or keyword search query. Vary your terms if initial queries do not yield enough detail.",
+AGENT_TOOLS_SPEC = [
+    {
+        "type": "function",
+        "function": {
+            "name": "search",
+            "description": "Perform semantic and hybrid search across codebase documentation, docstrings, and comments.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Natural language query describing the concept, feature, or function to find.",
+                    },
+                    "type": {
+                        "type": "string",
+                        "enum": ["all", "md", "code_doc", "markdown", "code"],
+                        "description": "Filter by document type (optional, default: all).",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of search results to return (optional, default: 5).",
+                    },
                 },
-                "type": {
-                    "type": "string",
-                    "enum": ["all", "md", "code_doc", "markdown", "code"],
-                    "description": "Filter by document type (optional, default: all).",
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Maximum number of search results to return (optional, default: 5).",
-                },
+                "required": ["query"],
             },
-            "required": ["query"],
         },
     },
-}
+    {
+        "type": "function",
+        "function": {
+            "name": "read_code",
+            "description": "Inspect exact source code lines in a file to verify implementations, class structures, or function bodies.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative file path within the repository.",
+                    },
+                    "start_line": {
+                        "type": "integer",
+                        "description": "1-indexed starting line number to read (optional, default: 1).",
+                    },
+                    "end_line": {
+                        "type": "integer",
+                        "description": "1-indexed ending line number to read (optional).",
+                    },
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "tags_lookup",
+            "description": "Quickly locate exact or regex symbol definitions (classes, methods, functions) across the codebase using the .tags index.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {
+                        "type": "string",
+                        "description": "The exact symbol name or regex pattern to look up.",
+                    },
+                    "exact": {
+                        "type": "boolean",
+                        "description": "Whether to match the exact symbol name (default: false).",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of tag matches to return (default: 10).",
+                    },
+                },
+                "required": ["symbol"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "find_references",
+            "description": "1-shot hybrid tool: finds symbol definitions and all caller/usage sites across the codebase.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {
+                        "type": "string",
+                        "description": "The exact function, method, or class name to find definitions and usages for.",
+                    },
+                    "path_filter": {
+                        "type": "string",
+                        "description": "Optional glob filter for file paths (e.g. '*.py' or 'src/*').",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max number of call/usage sites to return (default: 15).",
+                    },
+                },
+                "required": ["symbol"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "call_tree",
+            "description": "Trace incoming callers and outgoing callees for a function or class using AST and cross-file references.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {
+                        "type": "string",
+                        "description": "The function or class name to trace call hierarchy for.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Optional file path where the symbol is defined.",
+                    },
+                },
+                "required": ["symbol"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "grep_search",
+            "description": "Run pattern or literal keyword search across codebase files using ripgrep.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Regular expression or keyword string to search for.",
+                    },
+                    "path_glob": {
+                        "type": "string",
+                        "description": "Optional file glob filter (e.g. '*.go', '*.rs', 'pkg/**').",
+                    },
+                    "case_sensitive": {
+                        "type": "boolean",
+                        "description": "Whether search is case-sensitive (default: false).",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max matches to return (default: 25).",
+                    },
+                },
+                "required": ["pattern"],
+            },
+        },
+    },
+]
 
 
 def call_chat_completions(
@@ -258,8 +392,8 @@ def call_chat_completions(
 
     headers = {
         "Content-Type": "application/json",
-        "User-Agent": "codebase-navigator/0.1.0",
-        "HTTP-Referer": "https://github.com/9gel/devel-tools",
+        "User-Agent": "codebase-navigator/0.2.0",
+        "HTTP-Referer": "https://github.com/9gel/codebase-navigator",
         "X-Title": "codebase-navigator",
     }
     if api_key:
@@ -284,15 +418,251 @@ def call_chat_completions(
         raise RuntimeError(f"Failed to connect to LLM endpoint ({url}): {e.reason}") from e
 
 
-SYSTEM_PROMPT = """You are an expert codebase intelligence assistant.
-Your goal is to answer the developer's question accurately and thoroughly using evidence from the codebase.
+SYSTEM_PROMPT = """You are an expert codebase intelligence assistant and code navigation agent.
+Your primary role is to answer questions about this repository accurately, thoroughly, and concisely using concrete evidence from the code and documentation.
 
-Instructions:
-1. You are provided with initial semantic search results from the codebase.
-2. If you need more details, specific function definitions, or related docs, you can invoke the `search` function with varied descriptive queries. Do not repeat the exact same search query.
-3. When referencing files and line ranges, use markdown links format: [path:Lstart-Lend](file:///abs_path#Lstart-Lend).
-4. Provide concrete explanations, citing relevant files and line numbers.
+Core Operating Principles:
+1. Grounding & Code Verification: Never speculate or guess implementation details. Inspect source files using `read_code`, `find_references`, `call_tree`, or `tags_lookup` before making factual assertions.
+2. Token Economy & Efficiency: Conserve tokens by avoiding repetitive searches or multiple tool calls with identical/similar terms. If initial results show what you need, synthesize your answer immediately without superfluous queries.
+3. Scope & Topic Boundary: Strictly focus on the codebase, its architecture, functions, data models, APIs, and workflows. If the user asks general, off-topic, or non-code questions, politely clarify that your focus is navigating and explaining this repository.
+4. Citing Evidence: Whenever referencing files or functions, cite them using markdown links: `[path:Lstart-Lend](file:///abs_path#Lstart-Lend)`.
 """
+
+
+def execute_tool_call(
+    folder: Path,
+    fn_name: str,
+    fn_args: dict[str, Any],
+    custom_index_dir: str | None = None,
+) -> str:
+    """Dispatch tool call to appropriate backend."""
+    if fn_name == "search":
+        query_term = fn_args.get("query", "").strip()
+        doc_type = fn_args.get("type", "all")
+        limit = int(fn_args.get("limit", 5))
+        res = execute_search(folder, query_term, limit=limit, doc_type=doc_type, custom_index_dir=custom_index_dir)
+        return format_chunks_for_llm(res)
+
+    elif fn_name == "read_code":
+        path = fn_args.get("path", "")
+        start_line = fn_args.get("start_line")
+        end_line = fn_args.get("end_line")
+        res = read_code(folder, path, start_line=start_line, end_line=end_line)
+        if "error" in res:
+            return f"Error: {res['error']}"
+        return res.get("content", "")
+
+    elif fn_name == "tags_lookup":
+        symbol = fn_args.get("symbol", "")
+        exact = bool(fn_args.get("exact", False))
+        limit = int(fn_args.get("limit", 10))
+        tags_mgr = TagsManager(folder)
+        matches = tags_mgr.lookup_symbol(symbol, exact=exact, limit=limit)
+        if not matches:
+            return f"No symbol tags found matching '{symbol}'."
+        out = []
+        for m in matches:
+            out.append(
+                f"- Symbol: `{m['symbol']}` ({m.get('kind', 'symbol')}) at [{m['path']}:{m['line']}](file://{m['abs_path']}#L{m['line']})\n  Preview: `{m.get('preview', '')}`"
+            )
+        return "\n".join(out)
+
+    elif fn_name == "find_references":
+        symbol = fn_args.get("symbol", "")
+        path_filter = fn_args.get("path_filter")
+        limit = int(fn_args.get("limit", 15))
+        refs = find_references(folder, symbol, path_filter=path_filter, limit=limit)
+        if not refs:
+            return f"No definitions or references found for '{symbol}'."
+        out = []
+        for r in refs:
+            t = r.get("type", "reference")
+            if t == "definition":
+                out.append(f"📌 Definition: [{r['path']}:{r['line']}](file://{r['abs_path']}#L{r['line']}) ({r.get('kind', 'symbol')}) - `{r.get('preview', '')}`")
+            else:
+                out.append(f"🔍 Usage/Caller: [{r['path']}:{r['line']}](file://{r['abs_path']}#L{r['line']}) - `{r.get('context', '')}`")
+        return "\n".join(out)
+
+    elif fn_name == "call_tree":
+        symbol = fn_args.get("symbol", "")
+        path = fn_args.get("path")
+        tree = get_call_tree(folder, symbol, path=path)
+        out = [f"Call Tree for `{symbol}`:"]
+        if tree.get("definitions"):
+            out.append("Definitions:")
+            for d in tree["definitions"]:
+                out.append(f"  - [{d['path']}:{d['line']}](file://{d['abs_path']}#L{d['line']})")
+        if tree.get("callers"):
+            out.append("Callers (Functions/Files that invoke this symbol):")
+            for c in tree["callers"]:
+                fn_ctx = f" (in `{c.get('caller_function')}`)" if c.get("caller_function") else ""
+                out.append(f"  - [{c['path']}:{c.get('call_line', 1)}](file://{c['abs_path']}#L{c.get('call_line', 1)}){fn_ctx}: `{c.get('preview', '')}`")
+        if tree.get("callees"):
+            out.append("Callees (Functions invoked by this symbol):")
+            for c in tree["callees"]:
+                out.append(f"  - Calls `{c.get('symbol')}` at [{c['path']}:{c['line']}](file://{c['abs_path']}#L{c['line']})")
+        if not tree.get("callers") and not tree.get("callees") and not tree.get("definitions"):
+            return f"No call tree data found for '{symbol}'."
+        return "\n".join(out)
+
+    elif fn_name == "grep_search":
+        pattern = fn_args.get("pattern", "")
+        path_glob = fn_args.get("path_glob")
+        case_sensitive = bool(fn_args.get("case_sensitive", False))
+        limit = int(fn_args.get("limit", 25))
+        matches = grep_search(folder, pattern, path_glob=path_glob, case_sensitive=case_sensitive, limit=limit)
+        if not matches:
+            return f"No pattern matches found for '{pattern}'."
+        out = []
+        for m in matches:
+            out.append(f"- [{m['path']}:{m['line']}](file://{m['abs_path']}#L{m['line']}): `{m['content']}`")
+        return "\n".join(out)
+
+    return f"Unknown tool: {fn_name}"
+
+
+class AgentSession:
+    """Manages multi-turn conversation state to preserve context and leverage KV caching."""
+
+    def __init__(self, folder: Path, config: LLMConfig, custom_index_dir: str | None = None):
+        self.folder = folder
+        self.config = config
+        self.custom_index_dir = custom_index_dir
+        self.messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        self.turn_count = 0
+
+    def reset(self):
+        """Reset conversation messages back to system prompt."""
+        self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        self.turn_count = 0
+
+    def ask(
+        self,
+        question: str,
+        verbose: bool = True,
+        output_stream=sys.stderr,
+    ) -> str:
+        """Run multi-tool reasoning turn on top of ongoing conversation session."""
+        if not self.config.api_key:
+            raise RuntimeError(
+                "No LLM API key found.\n"
+                "Please provide an API key via:\n"
+                "  1. Environment variable: export OPENROUTER_API_KEY=your_key (or CN_API_KEY)\n"
+                '  2. Project config: .codebase-navigator/config.toml (api_key = "...")\n'
+                "  3. Global config: ~/.config/codebase-navigator/config.toml\n"
+                '  4. CLI argument: cn ask --api-key your_key "question"'
+            )
+
+        self.turn_count += 1
+
+        # Check ripgrep status for best performance
+        check_ripgrep_installed(verbose=verbose, output_stream=output_stream)
+
+        # Pre-flight seed search for new questions
+        if verbose:
+            print(
+                f'🔍 Searching codebase for: "{question}" (limit: {self.config.initial_limit})...',
+                file=output_stream,
+            )
+
+        initial_chunks = execute_search(
+            self.folder,
+            question,
+            limit=self.config.initial_limit,
+            custom_index_dir=self.custom_index_dir,
+        )
+
+        if verbose:
+            print(f"✓ Found {len(initial_chunks)} relevant code/doc chunks.", file=output_stream)
+
+        initial_context_text = format_chunks_for_llm(initial_chunks)
+
+        user_content = (
+            f"Question:\n{question}\n\n"
+            f"Pre-flight Codebase Retrieval:\n{initial_context_text}"
+        )
+        self.messages.append({"role": "user", "content": user_content})
+
+        searches_remaining = self.config.max_searches
+        seen_tool_calls: set[str] = set()
+
+        while True:
+            payload: dict[str, Any] = {
+                "model": self.config.model,
+                "messages": self.messages,
+                "temperature": 0.2,
+            }
+            if searches_remaining > 0:
+                payload["tools"] = AGENT_TOOLS_SPEC
+                payload["tool_choice"] = "auto"
+
+            response_data = call_chat_completions(self.config.endpoint, self.config.api_key, payload)
+            choices = response_data.get("choices", [])
+            if not choices:
+                raise RuntimeError(f"Unexpected empty response from LLM: {response_data}")
+
+            choice = choices[0]
+            msg = choice.get("message", {})
+            tool_calls = msg.get("tool_calls")
+
+            # Handle tool calls
+            if tool_calls and searches_remaining > 0:
+                self.messages.append(msg)
+                for tool_call in tool_calls:
+                    fn = tool_call.get("function", {})
+                    fn_name = fn.get("name")
+                    fn_args_raw = fn.get("arguments", "{}")
+                    try:
+                        fn_args = json.loads(fn_args_raw) if isinstance(fn_args_raw, str) else fn_args_raw
+                    except (json.JSONDecodeError, TypeError, ValueError):
+                        fn_args = {}
+
+                    search_num = (self.config.max_searches - searches_remaining) + 1
+                    call_sig = f"{fn_name}:{json.dumps(fn_args, sort_keys=True)}"
+
+                    if verbose:
+                        arg_summary = ", ".join(f"{k}={v!r}" for k, v in list(fn_args.items())[:3])
+                        print(
+                            f"🔎 [Tool {search_num}/{self.config.max_searches}: {fn_name}] {arg_summary}...",
+                            file=output_stream,
+                        )
+
+                    tool_output = execute_tool_call(
+                        self.folder,
+                        fn_name,
+                        fn_args,
+                        custom_index_dir=self.custom_index_dir,
+                    )
+                    seen_tool_calls.add(call_sig)
+
+                    self.messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.get("id"),
+                            "name": fn_name,
+                            "content": tool_output,
+                        }
+                    )
+
+                searches_remaining -= 1
+                if searches_remaining <= 0:
+                    if verbose:
+                        print(
+                            "ℹ️ Search budget limit reached. Generating final answer...",
+                            file=output_stream,
+                        )
+                    self.messages.append(
+                        {
+                            "role": "user",
+                            "content": "You have completed your tool budget. Please synthesize your complete final answer using all the evidence gathered.",
+                        }
+                    )
+                continue
+
+            # Final answer
+            content = msg.get("content") or ""
+            self.messages.append({"role": "assistant", "content": content})
+            return content
 
 
 def ask_codebase(
@@ -302,127 +672,36 @@ def ask_codebase(
     custom_index_dir: str | None = None,
     verbose: bool = True,
     output_stream=sys.stderr,
+    new_session: bool = False,
 ) -> str:
-    """Execute LLM codebase Q&A with bounded iterative semantic search."""
-    if not config.api_key:
-        raise RuntimeError(
-            "No LLM API key found.\n"
-            "Please provide an API key via:\n"
-            "  1. Environment variable: export OPENROUTER_API_KEY=your_key (or CN_API_KEY)\n"
-            '  2. Project config: .codebase-navigator/config.toml (api_key = "...")\n'
-            "  3. Global config: ~/.config/codebase-navigator/config.toml\n"
-            '  4. CLI argument: cn ask --api-key your_key "question"'
-        )
+    """Query codebase using daemon session over socket if running, or standalone session."""
+    socket_path = get_socket_path(folder, custom_index_dir)
 
-    # Step 1: Initial semantic search
+    # 1. Try sending ask request to active cn watch daemon
+    if socket_path.exists():
+        ping_res = ping_socket(socket_path)
+        if ping_res is not None:
+            # Query active daemon
+            res = send_socket_command(
+                socket_path,
+                action="ask",
+                payload={
+                    "question": question,
+                    "config": config.to_dict(),
+                    "new_session": new_session,
+                },
+                timeout=180.0,
+            )
+            if res and res.get("status") == "ok":
+                return res.get("answer", "")
+
+    # 2. Standalone fallback (warn user)
     if verbose:
         print(
-            f'🔍 Searching codebase for: "{question}" (limit: {config.initial_limit})...',
+            "💡 Tip: 'cn watch' is not running. LanceDB index is loaded in-process and session context is not preserved.\n"
+            "   Run 'cn watch' in a separate terminal for instant vector searches and multi-turn KV prompt caching!\n",
             file=output_stream,
         )
 
-    initial_chunks = execute_search(
-        folder,
-        question,
-        limit=config.initial_limit,
-        custom_index_dir=custom_index_dir,
-    )
-
-    if verbose:
-        print(f"✓ Found {len(initial_chunks)} relevant code/doc chunks.", file=output_stream)
-
-    initial_context_text = format_chunks_for_llm(initial_chunks)
-
-    user_prompt = (
-        f"User Question:\n{question}\n\nInitial Codebase Search Results:\n{initial_context_text}"
-    )
-
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user_prompt},
-    ]
-
-    searches_remaining = config.max_searches
-    seen_queries: set[str] = set()
-
-    while True:
-        payload: dict[str, Any] = {
-            "model": config.model,
-            "messages": messages,
-            "temperature": 0.2,
-        }
-        if searches_remaining > 0:
-            payload["tools"] = [SEARCH_TOOL_SPEC]
-            payload["tool_choice"] = "auto"
-
-        response_data = call_chat_completions(config.endpoint, config.api_key, payload)
-        choices = response_data.get("choices", [])
-        if not choices:
-            raise RuntimeError(f"Unexpected empty response from LLM: {response_data}")
-
-        choice = choices[0]
-        msg = choice.get("message", {})
-        tool_calls = msg.get("tool_calls")
-
-        # If model responded with tool calls and we still have budget
-        if tool_calls and searches_remaining > 0:
-            messages.append(msg)
-            for tool_call in tool_calls:
-                fn = tool_call.get("function", {})
-                fn_name = fn.get("name")
-                fn_args_raw = fn.get("arguments", "{}")
-                try:
-                    fn_args = (
-                        json.loads(fn_args_raw) if isinstance(fn_args_raw, str) else fn_args_raw
-                    )
-                except (json.JSONDecodeError, TypeError, ValueError):
-                    fn_args = {}
-
-                if fn_name == "search":
-                    query_term = fn_args.get("query", "").strip()
-                    doc_type = fn_args.get("type", "all")
-                    limit = int(fn_args.get("limit", 5))
-
-                    search_num = (config.max_searches - searches_remaining) + 1
-                    if verbose:
-                        print(
-                            f'🔎 [Search {search_num}/{config.max_searches}] Query: "{query_term}" (type: {doc_type}, limit: {limit})...',
-                            file=output_stream,
-                        )
-
-                    search_results = execute_search(
-                        folder,
-                        query_term,
-                        limit=limit,
-                        doc_type=doc_type,
-                        custom_index_dir=custom_index_dir,
-                    )
-                    tool_content = format_chunks_for_llm(search_results)
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call.get("id"),
-                            "name": "search",
-                            "content": tool_content,
-                        }
-                    )
-                    seen_queries.add(query_term.lower())
-
-            searches_remaining -= 1
-            if searches_remaining <= 0:
-                if verbose:
-                    print(
-                        "ℹ️ Search budget limit reached. Generating final answer...",
-                        file=output_stream,
-                    )
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": "You have reached the maximum number of searches. Please synthesize your complete final answer using all the search results and context gathered.",
-                    }
-                )
-            continue
-
-        # Final answer received
-        content = msg.get("content") or ""
-        return content
+    session = AgentSession(folder, config, custom_index_dir=custom_index_dir)
+    return session.ask(question, verbose=verbose, output_stream=output_stream)

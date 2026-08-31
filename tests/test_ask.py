@@ -16,10 +16,13 @@ from codebase_navigator.ask import (
 )
 
 
-def test_load_llm_config_defaults(monkeypatch):
+def test_load_llm_config_defaults(monkeypatch, tmp_path):
     # Clear any ambient env vars
-    for env in ["CN_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY", "CN_ENDPOINT", "CN_MODEL"]:
+    for env in ["CN_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY", "CN_ENDPOINT", "CN_MODEL", "CODEBASE_NAVIGATOR_MODEL"]:
         monkeypatch.delenv(env, raising=False)
+
+    # Point home to clean tmp_path so user ~/.config is isolated
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
     cfg = load_llm_config(folder=Path("/nonexistent"))
     assert cfg.endpoint == DEFAULT_ENDPOINT

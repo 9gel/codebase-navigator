@@ -122,8 +122,8 @@ def test_cn_main_dispatch(monkeypatch, tmp_path: Path):
     def mock_tags(folder, symbol, exact=False, limit=20):
         called["tags"] = (folder, symbol, exact, limit)
 
-    def mock_ask(folder, question, model=None, endpoint=None, api_key=None, limit=None, max_searches=None, links="auto", theme="auto", wrap=None, width=None, custom_index_dir=None, quiet=False):
-        called["ask"] = (folder, question, model, endpoint, api_key, limit, max_searches, links, theme, wrap, width, custom_index_dir, quiet)
+    def mock_ask(folder, question, model=None, endpoint=None, api_key=None, limit=None, max_searches=None, links="auto", theme="auto", wrap=None, width=None, custom_index_dir=None, quiet=False, new_session=False):
+        called["ask"] = (folder, question, model, endpoint, api_key, limit, max_searches, links, theme, wrap, width, custom_index_dir, quiet, new_session)
 
     monkeypatch.setattr(cli_mod, "_run_status", mock_status)
     monkeypatch.setattr(cli_mod, "_run_sync", mock_sync)
@@ -148,7 +148,7 @@ def test_cn_main_dispatch(monkeypatch, tmp_path: Path):
     assert called["tags"] == (tmp_path.resolve(), "MySymbol", True, 20)
 
     main(["ask", "What is the architecture?", str(tmp_path), "--model", "custom-model", "--limit", "12", "--links", "terminal", "--theme", "light", "--wrap", "--width", "90"])
-    assert called["ask"] == (tmp_path.resolve(), "What is the architecture?", "custom-model", None, None, 12, None, "terminal", "light", True, 90, None, False)
+    assert called["ask"] == (tmp_path.resolve(), "What is the architecture?", "custom-model", None, None, 12, None, "terminal", "light", True, 90, None, False, False)
 
 
 def test_format_output_links_and_wrapping():

@@ -1,13 +1,15 @@
-"""Filesystem watcher for live ctags and LanceDB vector re-indexing."""
+"""Filesystem watcher for live ctags, LanceDB vector re-indexing, and agent session hosting."""
 
 from __future__ import annotations
 
 from pathlib import Path
 import threading
 import time
+from typing import Any
 
 from watchfiles import Change, DefaultFilter, watch
 
+from .ask import AgentSession, LLMConfig
 from .config import CODE_EXTENSIONS, DOC_EXTENSIONS, IGNORE_DIR_NAMES, get_socket_path
 from .index import VectorIndex
 from .ipc import IPCServer, ping_socket
@@ -41,7 +43,7 @@ class SourceFilter(DefaultFilter):
 
 
 class DirectoryWatcher:
-    """Watches folder, serves IPC Unix socket, and keeps .tags and LanceDB vector embeddings up to date."""
+    """Watches folder, serves IPC Unix socket, keeps LanceDB and .tags up to date, and hosts agent sessions."""
 
     def __init__(
         self,
@@ -51,15 +53,34 @@ class DirectoryWatcher:
     ):
         self.folder = folder
         self.debounce_ms = debounce_ms
+        self.custom_index_dir = custom_index_dir
         self.tags_mgr = TagsManager(folder)
         self.index = VectorIndex(folder, custom_index_dir)
         self.socket_path = get_socket_path(folder, custom_index_dir)
         self.index_lock = threading.Lock()
-        self.ipc_server = IPCServer(self.socket_path, self.index, lock=self.index_lock)
+        self.session: AgentSession | None = None
+        self.session_lock = threading.Lock()
+        self.ipc_server = IPCServer(self.socket_path, self.index, lock=self.index_lock, watcher=self)
+
+    def handle_ask(self, question: str, cfg_data: dict[str, Any], new_session: bool = False) -> str:
+        """Execute or continue an LLM agent reasoning session within the daemon."""
+        with self.session_lock:
+            config = LLMConfig(
+                endpoint=cfg_data.get("endpoint", "https://openrouter.ai/api/v1"),
+                api_key=cfg_data.get("api_key"),
+                model=cfg_data.get("model", "google/gemini-2.5-flash"),
+                max_searches=int(cfg_data.get("max_searches", 15)),
+                initial_limit=int(cfg_data.get("initial_limit", 10)),
+            )
+            if self.session is None or new_session:
+                self.session = AgentSession(self.folder, config, custom_index_dir=self.custom_index_dir)
+            else:
+                self.session.config = config
+
+            return self.session.ask(question, verbose=False)
 
     def start(self):
         """Run blocking live watcher loop and IPC server."""
-        # Early check: if an active instance is already watching, report and exit gracefully
         if self.socket_path.exists():
             active = ping_socket(self.socket_path, timeout=0.5)
             if active is not None:
@@ -79,6 +100,7 @@ class DirectoryWatcher:
 
         self.ipc_server.start()
         print(f"  🔌 IPC Socket: {self.socket_path}")
+        print("  🧠 Agent Session Daemon: Ready (KV prompt caching enabled)")
         print("👀 Watching for file changes (Ctrl+C to stop)...\n")
 
         source_filter = SourceFilter(self.folder)
@@ -110,12 +132,10 @@ class DirectoryWatcher:
                 t0 = time.time()
                 ts_str = time.strftime("%H:%M:%S")
 
-                # Update tags if source code changed
                 if code_changed:
                     ok, msg = self.tags_mgr.generate()
                     print(f"[{ts_str}] 🏷️  Tags updated: {msg}")
 
-                # Update LanceDB embeddings incrementally
                 total_chunks = 0
                 for fpath in affected_files:
                     try:

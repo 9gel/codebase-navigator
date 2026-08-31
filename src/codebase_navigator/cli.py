@@ -420,6 +420,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_ask.add_argument("--wrap", action=argparse.BooleanOptionalAction, default=None, help="Wrap terminal lines (default: enabled on TTY)")
     p_ask.add_argument("--width", type=int, default=None, help="Wrap line width (default: terminal width)")
     p_ask.add_argument("--index-dir", default=None, help="Custom LanceDB directory")
+    p_ask.add_argument("-n", "--new-session", action="store_true", help="Start a fresh conversation session with the daemon")
     p_ask.add_argument("-q", "--quiet", action="store_true", help="Suppress progress output")
 
     return parser
@@ -466,6 +467,7 @@ def main(argv: list[str] | None = None):
             width=args.width,
             custom_index_dir=args.index_dir,
             quiet=args.quiet,
+            new_session=args.new_session,
         )
 
 
@@ -566,6 +568,11 @@ def _run_search(
         return
 
     # Fallback to direct in-process search
+    print(
+        "💡 Tip: 'cn watch' is not running. Loading LanceDB embeddings in-process.\n"
+        "   Run 'cn watch' in a separate terminal for instant sub-second searches!\n",
+        file=sys.stderr,
+    )
     from .index import VectorIndex
     idx = VectorIndex(folder, custom_index_dir)
     results = idx.search(query, limit=limit, doc_type=doc_type)
@@ -601,6 +608,7 @@ def _run_ask(
     width: int | None = None,
     custom_index_dir: str | None = None,
     quiet: bool = False,
+    new_session: bool = False,
 ):
     from .ask import ask_codebase, load_llm_config
 
@@ -636,6 +644,7 @@ def _run_ask(
             config=config,
             custom_index_dir=custom_index_dir,
             verbose=not quiet,
+            new_session=new_session,
         )
         if not quiet:
             term_cols = shutil.get_terminal_size((80, 24)).columns

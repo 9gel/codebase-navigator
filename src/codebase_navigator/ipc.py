@@ -1,4 +1,4 @@
-"""Unix domain socket IPC server and client for fast semantic querying via cn watch."""
+"""Unix domain socket IPC server and client for fast semantic querying and agent session hosting."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .index import VectorIndex
+    from .watcher import DirectoryWatcher
 
 
 class _IPCRequestHandler(socketserver.StreamRequestHandler):
@@ -35,6 +36,19 @@ class _IPCRequestHandler(socketserver.StreamRequestHandler):
                     with self.server.lock:
                         results = self.server.index.search(query, limit=limit, doc_type=doc_type)
                     resp = {"status": "ok", "results": results}
+                elif action == "ask":
+                    question = req.get("question", "")
+                    cfg_data = req.get("config", {})
+                    new_session = req.get("new_session", False)
+                    if self.server.watcher:
+                        answer = self.server.watcher.handle_ask(question, cfg_data, new_session=new_session)
+                        resp = {"status": "ok", "answer": answer}
+                    else:
+                        resp = {"status": "error", "error": "Watcher daemon not configured for ask"}
+                elif action == "reset_session":
+                    if self.server.watcher and self.server.watcher.session:
+                        self.server.watcher.session.reset()
+                    resp = {"status": "ok", "reset": True}
                 elif action == "status":
                     with self.server.lock:
                         meta = self.server.index.load_meta()
@@ -59,37 +73,46 @@ class _IPCUnixStreamServer(socketserver.ThreadingUnixStreamServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, server_address: str, RequestHandlerClass, index: VectorIndex, lock: threading.Lock):
+    def __init__(
+        self,
+        server_address: str,
+        RequestHandlerClass,
+        index: VectorIndex,
+        lock: threading.Lock,
+        watcher: DirectoryWatcher | None = None,
+    ):
         self.index = index
         self.lock = lock
+        self.watcher = watcher
         super().__init__(server_address, RequestHandlerClass)
 
 
 class IPCServer:
-    """Unix Domain Socket server hosting in-memory index for fast search queries."""
+    """Unix Domain Socket server hosting in-memory index and agent sessions for fast queries."""
 
-    def __init__(self, socket_path: Path, index: VectorIndex, lock: threading.Lock | None = None):
+    def __init__(
+        self,
+        socket_path: Path,
+        index: VectorIndex,
+        lock: threading.Lock | None = None,
+        watcher: DirectoryWatcher | None = None,
+    ):
         self.socket_path = socket_path
         self.index = index
         self.lock = lock or threading.Lock()
+        self.watcher = watcher
         self._server: _IPCUnixStreamServer | None = None
         self._thread: threading.Thread | None = None
 
     def start(self):
-        """Start socket server in a background thread.
-
-        Raises RuntimeError if another active daemon is already listening on this socket.
-        Cleans up stale socket files from prior crashes automatically.
-        """
+        """Start socket server in a background thread."""
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
         if self.socket_path.exists():
-            # Check if another process is actively listening on this socket
             status = ping_socket(self.socket_path, timeout=0.5)
             if status is not None:
                 raise RuntimeError(
                     f"Another cn watch instance is already running on {self.socket_path}"
                 )
-            # Socket file exists but no process is listening -> stale socket from prior crash
             try:
                 self.socket_path.unlink()
             except OSError:
@@ -100,6 +123,7 @@ class IPCServer:
             _IPCRequestHandler,
             index=self.index,
             lock=self.lock,
+            watcher=self.watcher,
         )
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
@@ -120,6 +144,48 @@ class IPCServer:
                 pass
 
 
+def send_socket_command(
+    socket_path: Path,
+    action: str,
+    payload: dict[str, Any] | None = None,
+    timeout: float = 180.0,
+) -> dict[str, Any] | None:
+    """Send arbitrary command to cn watch daemon and return response dict."""
+    if not socket_path.exists():
+        return None
+
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    try:
+        sock.connect(str(socket_path))
+        req = {"action": action, **(payload or {})}
+        payload_bytes = json.dumps(req).encode("utf-8") + b"\n"
+        sock.sendall(payload_bytes)
+
+        buffer = b""
+        while b"\n" not in buffer:
+            chunk = sock.recv(65536)
+            if not chunk:
+                break
+            buffer += chunk
+
+        if not buffer:
+            return None
+
+        line = buffer.split(b"\n")[0]
+        return json.loads(line.decode("utf-8"))
+    except ConnectionRefusedError:
+        try:
+            socket_path.unlink()
+        except OSError:
+            pass
+        return None
+    except (OSError, socket.error, json.JSONDecodeError, TimeoutError):
+        return None
+    finally:
+        sock.close()
+
+
 def query_socket(
     socket_path: Path,
     query: str,
@@ -127,95 +193,18 @@ def query_socket(
     doc_type: str = "all",
     timeout: float = 3.0,
 ) -> list[dict[str, Any]] | None:
-    """Query the running cn watch daemon via Unix Domain Socket.
-
-    Returns search results if successful, or None if socket is unavailable/unresponsive.
-    Automatically unlinks stale socket files from dead daemons.
-    """
-    if not socket_path.exists():
-        return None
-
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.settimeout(timeout)
-    try:
-        sock.connect(str(socket_path))
-        req = {
-            "action": "search",
-            "query": query,
-            "limit": limit,
-            "type": doc_type,
-        }
-        payload = json.dumps(req).encode("utf-8") + b"\n"
-        sock.sendall(payload)
-
-        # Read response line
-        buffer = b""
-        while b"\n" not in buffer:
-            chunk = sock.recv(4096)
-            if not chunk:
-                break
-            buffer += chunk
-
-        if not buffer:
-            return None
-
-        line = buffer.split(b"\n")[0]
-        resp = json.loads(line.decode("utf-8"))
-        if resp.get("status") == "ok":
-            return resp.get("results")
-        return None
-    except ConnectionRefusedError:
-        # Socket file exists but no process is listening -> stale socket from prior crash
-        try:
-            socket_path.unlink()
-        except OSError:
-            pass
-        return None
-    except (OSError, socket.error, json.JSONDecodeError, TimeoutError):
-        return None
-    finally:
-        sock.close()
+    """Query the running cn watch daemon via Unix Domain Socket for fast vector search."""
+    res = send_socket_command(
+        socket_path,
+        action="search",
+        payload={"query": query, "limit": limit, "type": doc_type},
+        timeout=timeout,
+    )
+    if res and res.get("status") == "ok":
+        return res.get("results")
+    return None
 
 
 def ping_socket(socket_path: Path, timeout: float = 0.5) -> dict[str, Any] | None:
-    """Check if cn watch daemon is active and return its status info.
-
-    Automatically unlinks stale socket files from dead daemons.
-    """
-    if not socket_path.exists():
-        return None
-
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.settimeout(timeout)
-    try:
-        sock.connect(str(socket_path))
-        req = {"action": "status"}
-        payload = json.dumps(req).encode("utf-8") + b"\n"
-        sock.sendall(payload)
-
-        buffer = b""
-        while b"\n" not in buffer:
-            chunk = sock.recv(4096)
-            if not chunk:
-                break
-            buffer += chunk
-
-        if not buffer:
-            return None
-
-        line = buffer.split(b"\n")[0]
-        resp = json.loads(line.decode("utf-8"))
-        if resp.get("status") == "ok":
-            return resp
-        return None
-    except ConnectionRefusedError:
-        # Socket file exists but no process is listening -> stale socket from prior crash
-        try:
-            socket_path.unlink()
-        except OSError:
-            pass
-        return None
-    except (OSError, socket.error, json.JSONDecodeError, TimeoutError):
-        return None
-    finally:
-        sock.close()
+    """Check if cn watch daemon is active and return its status info."""
+    return send_socket_command(socket_path, action="status", timeout=timeout)
