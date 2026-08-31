@@ -710,7 +710,7 @@ def ask_codebase(
     verbose: bool = True,
     output_stream=sys.stderr,
     new_session: bool = False,
-) -> str:
+) -> tuple[str, dict[str, Any]]:
     """Query codebase using daemon session over socket if running, or standalone session."""
     socket_path = get_socket_path(folder, custom_index_dir)
 
@@ -735,8 +735,13 @@ def ask_codebase(
                 timeout=180.0,
                 progress_callback=handle_remote_progress if verbose else None,
             )
-            if res and res.get("status") == "ok":
-                return res.get("answer", "")
+            if res:
+                if res.get("status") == "version_mismatch":
+                    raise RuntimeError(res.get("error", "Version mismatch between cn client and cn watch daemon."))
+                if res.get("status") == "ok":
+                    return res.get("answer", ""), res.get("stats", {})
+                if res.get("status") == "error":
+                    raise RuntimeError(f"Daemon error: {res.get('error', 'Unknown error')}")
 
     # 2. Standalone fallback (warn user)
     if verbose:
