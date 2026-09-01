@@ -348,7 +348,7 @@ class WatcherTUI:
                 # control) before the TUI can display its exit hint.
                 terminal_attrs = termios.tcgetattr(fd)
                 terminal_attrs[0] &= ~termios.IXON
-                terminal_attrs[3] &= ~(termios.ISIG | termios.IEXTEN)
+                terminal_attrs[3] &= ~(termios.ECHO | termios.ECHONL | termios.ISIG | termios.IEXTEN)
                 termios.tcsetattr(fd, termios.TCSANOW, terminal_attrs)
                 sys.stdout.write("\033[?1000h\033[?1006h")
                 sys.stdout.flush()
