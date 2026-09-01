@@ -10,7 +10,7 @@ import threading
 import time
 from typing import Any, Callable
 
-from .cli import format_output_links
+from .cli import detect_terminal_theme, format_output_links
 
 
 class WatcherTUI:
@@ -296,7 +296,14 @@ class WatcherTUI:
             self.write_transcript(f"\n{self.on_status()}\n")
             return
 
-        self.write_transcript(f"\n\033[1;36m👤 You:\033[0m {query}\n")
+        theme = detect_terminal_theme()
+        divider_color = "\033[38;5;75m" if theme == "dark" else "\033[34m"
+        prompt_color = "\033[38;5;229m" if theme == "dark" else "\033[38;5;26m"
+        divider = f"{divider_color}{'─' * self.get_dimensions()[0]}\033[0m"
+        prompt = f"{prompt_color}👤 You: {query}\033[0m"
+        self.write_transcript(divider)
+        self.write_transcript(prompt)
+        self.write_transcript(divider)
         self.on_submit(query)
 
     def update_stats(self, total: int, prompt: int, completion: int, tool_count: int = 0):
