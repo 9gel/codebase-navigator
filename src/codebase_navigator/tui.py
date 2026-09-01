@@ -96,7 +96,8 @@ class WatcherTUI:
             sys.stdout.write(f"\033[{border_row};1H\033[2K\033[36m{'─' * cols}\033[0m")
 
             # 2. Prompt Line (row H-3), with a blank separator before status.
-            sys.stdout.write(f"\033[{prompt_row};1H\033[2K{prompt_text}")
+            prompt_display = f" {prompt_text}"
+            sys.stdout.write(f"\033[{prompt_row};1H\033[2K{prompt_display}")
             sys.stdout.write(f"\033[{blank_row};1H\033[2K")
 
             # 3. Status Bar (row H-1) - Inverse / highlighted banner
@@ -131,7 +132,7 @@ class WatcherTUI:
             sys.stdout.write(f"\033[{footer_row};1H\033[2K{footer_text}")
 
             # Return cursor to active prompt position
-            cursor_col = len(prompt_text) + 1
+            cursor_col = len(prompt_display) + 1
             sys.stdout.write(f"\033[{prompt_row};{cursor_col}H")
             sys.stdout.flush()
 
@@ -287,7 +288,15 @@ class WatcherTUI:
                 import tty
 
                 term_state = termios.tcgetattr(sys.stdin.fileno())
-                tty.setcbreak(sys.stdin.fileno())
+                fd = sys.stdin.fileno()
+                tty.setcbreak(fd)
+                # Keep control keys as input events instead of letting the
+                # terminal turn Ctrl-C into SIGINT (or Ctrl-Q into flow
+                # control) before the TUI can display its exit hint.
+                terminal_attrs = termios.tcgetattr(fd)
+                terminal_attrs[0] &= ~termios.IXON
+                terminal_attrs[3] &= ~(termios.ISIG | termios.IEXTEN)
+                termios.tcsetattr(fd, termios.TCSANOW, terminal_attrs)
                 sys.stdout.write("\033[?1000h\033[?1006h")
                 sys.stdout.flush()
 
