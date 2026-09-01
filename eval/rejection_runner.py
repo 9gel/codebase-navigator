@@ -10,7 +10,7 @@ import sys
 import time
 from typing import Any
 
-from codebase_navigator.ask import LLMConfig, ask_codebase
+from codebase_navigator.ask import LLMConfig, ask_codebase, load_llm_config
 from codebase_navigator.cli import StatusSpinner
 
 
@@ -55,6 +55,8 @@ def run_rejection_benchmark(
     benchmark_file: Path = Path("eval/rejection_tasks.json"),
     target_repo: Path = Path("."),
     save_report: Path | None = Path("eval/rejection_report.json"),
+    api_key: str | None = None,
+    model: str | None = None,
 ) -> bool:
     """Run all 100 rejection evaluation prompts."""
     if not benchmark_file.exists():
@@ -64,9 +66,15 @@ def run_rejection_benchmark(
     with open(benchmark_file, "r", encoding="utf-8") as f:
         tasks = json.load(f)
 
-    config = LLMConfig()
+    cli_overrides = {}
+    if api_key:
+        cli_overrides["api_key"] = api_key
+    if model:
+        cli_overrides["model"] = model
+
+    config = load_llm_config(folder=target_repo, cli_overrides=cli_overrides)
     if not config.api_key:
-        print("❌ Error: No API key found. Please set OPENROUTER_API_KEY or CN_API_KEY.")
+        print("❌ Error: No API key found. Please set OPENROUTER_API_KEY or CN_API_KEY, or pass --api-key.")
         return False
 
     print("=" * 75)
@@ -201,10 +209,14 @@ if __name__ == "__main__":
     parser.add_argument("--tasks", default="eval/rejection_tasks.json", help="Path to rejection tasks JSON")
     parser.add_argument("--repo", default=".", help="Repository folder to test against")
     parser.add_argument("--report", default="eval/rejection_report.json", help="Report output path")
+    parser.add_argument("--api-key", default=None, help="LLM API key (or set OPENROUTER_API_KEY / CN_API_KEY)")
+    parser.add_argument("--model", default=None, help="LLM model name (default: deepseek/deepseek-v4-flash-0731)")
     args = parser.parse_args()
 
     run_rejection_benchmark(
         benchmark_file=Path(args.tasks),
         target_repo=Path(args.repo),
         save_report=Path(args.report) if args.report else None,
+        api_key=args.api_key,
+        model=args.model,
     )
