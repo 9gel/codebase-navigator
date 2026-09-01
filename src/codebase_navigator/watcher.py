@@ -211,6 +211,10 @@ class DirectoryWatcher:
             for line in startup_logs:
                 print(line)
             print("👀 Watching for file changes (Ctrl+C to stop)...\n")
+            # stdout is block-buffered when piped (for example through
+            # ``tee``).  Flush before entering the long-running watch loop so
+            # startup diagnostics are visible immediately.
+            sys.stdout.flush()
 
         # Start watcher in background thread
         self.running = True
