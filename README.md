@@ -168,7 +168,7 @@ The unified `cn` command provides all indexing and search tools:
 | `cn search <query> [folder]` | Semantic & hybrid search in markdown docs and code comments |
 | `cn tags <symbol> [folder]` | Fast symbol definition lookup in `.tags` |
 | `cn sync [folder] [--force]` | Synchronize `.tags` and LanceDB vector embeddings |
-| `cn watch [folder]` | Live filesystem watcher, socket server, and agent session host |
+| `cn watch [folder]` | Live filesystem watcher, socket server, and **interactive Q&A console** |
 | `cn status [folder]` | Inspect index and `.tags` status |
 
 ### `cn ask` Options

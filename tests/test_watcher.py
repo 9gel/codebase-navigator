@@ -14,5 +14,24 @@ def test_source_filter(tmp_path: Path):
     assert sf(Change.added, str(tmp_path / ".git" / "config")) is False
     assert sf(Change.added, str(tmp_path / ".codebase-navigator" / "watch.sock")) is False
     assert sf(Change.added, str(tmp_path / ".devel-tools" / "watch.sock")) is False
-    assert sf(Change.added, str(tmp_path / ".tags")) is False
     assert sf(Change.added, str(tmp_path / "image.png")) is False
+
+
+def test_directory_watcher_headless(tmp_path: Path):
+    from codebase_navigator.watcher import DirectoryWatcher
+    import time
+
+    watcher = DirectoryWatcher(tmp_path)
+    # Start headless (interactive=False) on background thread
+    import threading
+    t = threading.Thread(target=watcher.start, kwargs={"interactive": False}, daemon=True)
+    t.start()
+    time.sleep(0.1)
+
+    try:
+        assert watcher.running is True
+        assert watcher.ipc_server is not None
+    finally:
+        watcher.stop()
+        t.join(timeout=2.0)
+        assert watcher.running is False

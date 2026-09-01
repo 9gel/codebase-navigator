@@ -365,10 +365,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_sync.add_argument("--index-dir", default=None, help="Custom LanceDB directory")
 
     # watch
-    p_watch = subparsers.add_parser("watch", help="Watch folder and continuously update indexes")
+    p_watch = subparsers.add_parser("watch", help="Watch folder and continuously update indexes (and host interactive console)")
     p_watch.add_argument("folder", nargs="?", default=".", help="Target folder (default: current directory)")
     p_watch.add_argument("--debounce", type=int, default=1000, help="Debounce milliseconds (default: 1000)")
     p_watch.add_argument("--index-dir", default=None, help="Custom LanceDB directory")
+    p_watch.add_argument("--no-interactive", "--headless", dest="no_interactive", action="store_true", help="Run strictly as a background daemon without interactive console")
 
     # search
     p_search = subparsers.add_parser("search", help="Semantic search in docs and code")
@@ -451,7 +452,12 @@ def main(argv: list[str] | None = None):
     elif args.command == "sync":
         _run_sync(folder, force=args.force, custom_index_dir=args.index_dir)
     elif args.command == "watch":
-        _run_watch(folder, debounce_ms=args.debounce, custom_index_dir=args.index_dir)
+        _run_watch(
+            folder,
+            debounce_ms=args.debounce,
+            custom_index_dir=args.index_dir,
+            interactive=not args.no_interactive,
+        )
     elif args.command == "search":
         _run_search(
             folder,
@@ -539,10 +545,15 @@ def _run_sync(folder: Path, force: bool = False, custom_index_dir: str | None = 
     print(f"📦 Embedding index location: {idx.cache_dir}")
 
 
-def _run_watch(folder: Path, debounce_ms: int = 1000, custom_index_dir: str | None = None):
+def _run_watch(
+    folder: Path,
+    debounce_ms: int = 1000,
+    custom_index_dir: str | None = None,
+    interactive: bool = True,
+):
     from .watcher import DirectoryWatcher
     watcher = DirectoryWatcher(folder, debounce_ms=debounce_ms, custom_index_dir=custom_index_dir)
-    watcher.start()
+    watcher.start(interactive=interactive)
 
 
 def _run_search(

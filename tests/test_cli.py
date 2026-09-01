@@ -113,8 +113,8 @@ def test_cn_main_dispatch(monkeypatch, tmp_path: Path):
     def mock_sync(folder, force=False, custom_index_dir=None):
         called["sync"] = (folder, force, custom_index_dir)
 
-    def mock_watch(folder, debounce_ms=1000, custom_index_dir=None):
-        called["watch"] = (folder, debounce_ms, custom_index_dir)
+    def mock_watch(folder, debounce_ms=1000, custom_index_dir=None, interactive=True):
+        called["watch"] = (folder, debounce_ms, custom_index_dir, interactive)
 
     def mock_search(folder, query, limit=5, doc_type="all", links="auto", theme="auto", wrap=None, width=None, custom_index_dir=None):
         called["search"] = (folder, query, limit, doc_type, links, theme, wrap, width, custom_index_dir)
@@ -138,8 +138,8 @@ def test_cn_main_dispatch(monkeypatch, tmp_path: Path):
     main(["sync", str(tmp_path), "--force"])
     assert called["sync"] == (tmp_path.resolve(), True, None)
 
-    main(["watch", str(tmp_path), "--debounce", "2000"])
-    assert called["watch"] == (tmp_path.resolve(), 2000, None)
+    main(["watch", str(tmp_path), "--debounce", "2000", "--no-interactive"])
+    assert called["watch"] == (tmp_path.resolve(), 2000, None, False)
 
     main(["search", "hello world", str(tmp_path), "--limit", "3", "--type", "code", "--links", "osc8", "--theme", "dark", "--no-wrap", "--width", "80"])
     assert called["search"] == (tmp_path.resolve(), "hello world", 3, "code", "osc8", "dark", False, 80, None)
