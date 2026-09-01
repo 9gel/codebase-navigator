@@ -216,10 +216,10 @@ class WatcherTUI:
             self.render_transcript()
             self.render_bottom_chrome(prompt_text)
 
-    def scroll_transcript(self, pages: int):
-        """Scroll the transcript up (positive) or down (negative) by pages."""
+    def scroll_transcript(self, lines: int):
+        """Scroll the transcript up (positive) or down (negative) by lines."""
         with self.lock:
-            self.scroll_offset += pages * max(1, self._viewport_height() - 1)
+            self.scroll_offset += lines
             self.render()
 
     def _read_key(self) -> tuple[str, str]:
@@ -385,13 +385,13 @@ class WatcherTUI:
                             self.history_index = len(self.prompt_history)
                             input_text = ""
                     elif kind == "page_up":
-                        self.scroll_transcript(1)
+                        self.scroll_transcript(max(1, self._viewport_height() - 1))
                     elif kind == "page_down":
-                        self.scroll_transcript(-1)
+                        self.scroll_transcript(-max(1, self._viewport_height() - 1))
                     elif kind == "mouse_up":
-                        self.scroll_transcript(1)
+                        self.scroll_transcript(3)
                     elif kind == "mouse_down":
-                        self.scroll_transcript(-1)
+                        self.scroll_transcript(-3)
                 else:
                     line = sys.stdin.readline()
                     if not line:

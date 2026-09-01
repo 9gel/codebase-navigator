@@ -173,3 +173,23 @@ def test_watcher_tui_prompt_echo_has_theme_colored_dividers(tmp_path: Path, caps
     assert prompt_index + 1 < len(tui.transcript_lines)
     assert "─" in tui.transcript_lines[prompt_index - 1]
     assert "─" in tui.transcript_lines[prompt_index + 1]
+
+
+def test_watcher_tui_mouse_scroll_moves_in_small_steps(tmp_path: Path, capsys):
+    from codebase_navigator.tui import WatcherTUI
+
+    tui = WatcherTUI(
+        folder=tmp_path,
+        model_name="test-model",
+        on_submit=lambda _query: None,
+        on_reset=lambda: None,
+        on_status=lambda: "status ok",
+        on_exit=lambda: None,
+    )
+    for number in range(40):
+        tui.write_transcript(f"line {number}")
+    capsys.readouterr()
+
+    tui.scroll_transcript(3)
+
+    assert tui.scroll_offset == 3
