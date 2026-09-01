@@ -37,7 +37,11 @@ class WatcherTUI:
         self.turn_count = 0
         self.last_tool_count = 0
         self.running = False
-        self.lock = threading.Lock()
+        # Transcript rendering calls ``render_bottom_chrome`` while already
+        # holding this lock.  A re-entrant lock keeps rendering atomic while
+        # allowing that nested call (the first startup transcript otherwise
+        # deadlocks the TUI before the prompt is shown).
+        self.lock = threading.RLock()
 
     def enter_screen(self):
         """Switch to alternate screen buffer and configure scrolling margins."""

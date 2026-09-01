@@ -56,3 +56,20 @@ def test_watcher_tui_layout_and_methods(tmp_path: Path):
     assert tui.tokens_total == 1500
     assert tui.turn_count == 1
     assert tui.last_tool_count == 2
+
+
+def test_watcher_tui_transcript_does_not_deadlock(tmp_path: Path, capsys):
+    from codebase_navigator.tui import WatcherTUI
+
+    tui = WatcherTUI(
+        folder=tmp_path,
+        model_name="test-model",
+        on_submit=lambda _query: None,
+        on_reset=lambda: None,
+        on_status=lambda: "status ok",
+        on_exit=lambda: None,
+    )
+
+    tui.write_transcript("startup complete")
+
+    assert "startup complete" in capsys.readouterr().out
