@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import select
 import shutil
@@ -239,45 +240,52 @@ class WatcherTUI:
 
     def _read_key(self) -> tuple[str, str]:
         """Read one key or terminal escape sequence in cbreak mode."""
-        if not select.select([sys.stdin], [], [], 0.2)[0]:
-            return "timeout", ""
-        first = sys.stdin.read(1)
+        fd = sys.stdin.fileno()
+
+        def read_byte(timeout: float) -> bytes:
+            if not select.select([fd], [], [], timeout)[0]:
+                return b""
+            return os.read(fd, 1)
+
+        first = read_byte(0.2)
         if not first:
-            return "eof", ""
-        if first != "\033":
-            return "char", first
+            return "timeout", ""
+        if first != b"\033":
+            return "char", first.decode("utf-8", errors="replace")
 
         sequence = first
         # Escape sequences can be fragmented by a PTY. Give each fragment a
         # short grace period, otherwise the rest of a mouse report would be
         # mistaken for prompt text.
-        while select.select([sys.stdin], [], [], 0.2)[0]:
-            sequence += sys.stdin.read(1)
-            if sequence in ("\033[A", "\033[B", "\033[C", "\033[D", "\033[5~", "\033[6~"):
+        while True:
+            next_byte = read_byte(0.2)
+            if not next_byte:
                 break
-            if sequence == "\033[M":
+            sequence += next_byte
+            if sequence in (b"\033[A", b"\033[B", b"\033[C", b"\033[D", b"\033[5~", b"\033[6~"):
+                break
+            if sequence == b"\033[M":
                 # Legacy X10 mouse reports append three binary bytes.
                 for _ in range(3):
-                    if select.select([sys.stdin], [], [], 0.2)[0]:
-                        sequence += sys.stdin.read(1)
+                    sequence += read_byte(0.2)
                 break
-            if sequence.startswith("\033[<") and sequence.endswith(("M", "m")):
+            if sequence.startswith(b"\033[<") and sequence.endswith((b"M", b"m")):
                 break
 
-        if sequence in ("\033[A", "\033[B"):
-            return ("up", "") if sequence.endswith("A") else ("down", "")
-        if sequence == "\033[5~":
+        if sequence in (b"\033[A", b"\033[B"):
+            return ("up", "") if sequence.endswith(b"A") else ("down", "")
+        if sequence == b"\033[5~":
             return "page_up", ""
-        if sequence == "\033[6~":
+        if sequence == b"\033[6~":
             return "page_down", ""
-        if sequence.startswith("\033[<") and sequence.endswith(("M", "m")):
+        if sequence.startswith(b"\033[<") and sequence.endswith((b"M", b"m")):
             try:
-                button, _, _ = sequence[3:-1].split(";")
-                if button in ("64", "65"):
-                    return ("mouse_up", "") if button == "64" else ("mouse_down", "")
+                button, _, _ = sequence[3:-1].split(b";")
+                if button in (b"64", b"65"):
+                    return ("mouse_up", "") if button == b"64" else ("mouse_down", "")
             except ValueError:
                 pass
-        return "ignored", sequence
+        return "ignored", sequence.decode("latin-1")
 
     def _handle_exit_key(self, key: str) -> bool:
         """Show an exit hint once, then exit when the same control key repeats."""
