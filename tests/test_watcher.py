@@ -141,6 +141,7 @@ def test_watcher_tui_spinner_is_transient(tmp_path: Path, capsys):
 
     tui.write_transcript("latest output")
     tui.start_spinner()
+    assert tui.spinner_active is True
     time.sleep(0.15)
     tui.stop_spinner()
 

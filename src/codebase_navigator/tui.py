@@ -130,7 +130,11 @@ class WatcherTUI:
             if self.exit_notice and time.monotonic() >= self.exit_notice_until:
                 self.exit_notice = ""
                 self.exit_notice_key = ""
-            footer_text = self.exit_notice or " Keep `cn watch` up to ensure `cn search` work efficiently elsewhere."
+            if self.spinner_active:
+                frame = self.SPINNER_FRAMES[self.spinner_frame]
+                footer_text = f" {frame} Agent is working..."
+            else:
+                footer_text = self.exit_notice or " Keep `cn watch` up to ensure `cn search` work efficiently elsewhere."
             if len(footer_text) > cols:
                 footer_text = footer_text[:cols]
             else:
@@ -193,8 +197,7 @@ class WatcherTUI:
     def render_transcript(self):
         """Render the retained transcript according to the current scroll offset."""
         _, rows = self.get_dimensions()
-        base_height = self._viewport_height()
-        viewport_height = max(1, base_height - int(self.spinner_active))
+        viewport_height = self._viewport_height()
         max_offset = max(0, len(self.transcript_lines) - viewport_height)
         self.scroll_offset = min(max(self.scroll_offset, 0), max_offset)
         end = len(self.transcript_lines) - self.scroll_offset
@@ -205,10 +208,6 @@ class WatcherTUI:
             line = self.transcript_lines[index] if index < end else ""
             sys.stdout.write(f"\033[{row};1H\033[2K{line}")
 
-        if self.spinner_active:
-            spinner_row = viewport_height + 1
-            frame = self.SPINNER_FRAMES[self.spinner_frame]
-            sys.stdout.write(f"\033[{spinner_row};1H\033[2K {frame} Agent is working...")
 
     def render(self, prompt_text: str = ""):
         """Render the transcript and fixed terminal chrome."""
