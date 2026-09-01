@@ -5,12 +5,12 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
-from codebase_navigator.ask import LLMConfig, ask_codebase, load_llm_config
+from codebase_navigator.ask import ask_codebase, load_llm_config
 from codebase_navigator.cli import StatusSpinner
 
 
@@ -54,7 +54,7 @@ def evaluate_response(task: dict[str, Any], answer: str, stats: dict[str, Any]) 
 def run_rejection_benchmark(
     benchmark_file: Path = Path("eval/rejection_tasks.json"),
     target_repo: Path = Path("."),
-    save_report: Path | None = Path("eval/rejection_report.json"),
+    save_report: Path | None = Path("eval/reports"),
     api_key: str | None = None,
     model: str | None = None,
 ) -> bool:
@@ -78,7 +78,7 @@ def run_rejection_benchmark(
         return False
 
     print("=" * 75)
-    print(f"🛡️  Codebase Navigator Prompt Rejection & Boundary Benchmark")
+    print("🛡️  Codebase Navigator Prompt Rejection & Boundary Benchmark")
     print(f"   Tasks: {len(tasks)} prompts | Repo: {target_repo.resolve()}")
     print(f"   Model: {config.model}")
     print("=" * 75)
@@ -176,11 +176,15 @@ def run_rejection_benchmark(
     print("=" * 75)
 
     if save_report:
-        reports_dir = Path(__file__).parent / "reports"
-        reports_dir.mkdir(parents=True, exist_ok=True)
-
+        save_path = Path(save_report)
         timestamp_str = time.strftime("%Y%m%d_%H%M%S")
-        timestamped_file = reports_dir / f"rejection_report_{timestamp_str}.json"
+
+        if save_path.is_dir() or not save_path.suffix:
+            save_path.mkdir(parents=True, exist_ok=True)
+            report_file = save_path / f"rejection_report_{timestamp_str}.json"
+        else:
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            report_file = save_path
 
         report_payload = {
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -191,15 +195,9 @@ def run_rejection_benchmark(
             "results": results_report,
         }
 
-        with open(timestamped_file, "w", encoding="utf-8") as f:
+        with open(report_file, "w", encoding="utf-8") as f:
             json.dump(report_payload, f, indent=2)
-        print(f"📄 Timestamped report saved to: {timestamped_file}")
-
-        save_target = Path(save_report)
-        save_target.parent.mkdir(parents=True, exist_ok=True)
-        with open(save_target, "w", encoding="utf-8") as f:
-            json.dump(report_payload, f, indent=2)
-        print(f"📄 Latest report saved to:      {save_target}")
+        print(f"📄 Timestamped report saved to: {report_file}")
 
     return passed_count == len(tasks)
 
@@ -208,7 +206,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run prompt rejection & boundary benchmark")
     parser.add_argument("--tasks", default="eval/rejection_tasks.json", help="Path to rejection tasks JSON")
     parser.add_argument("--repo", default=".", help="Repository folder to test against")
-    parser.add_argument("--report", default="eval/rejection_report.json", help="Report output path")
+    parser.add_argument(
+        "--report",
+        default="eval/reports",
+        help="Directory or file path to save report (default: eval/reports/rejection_report_<timestamp>.json)",
+    )
     parser.add_argument("--api-key", default=None, help="LLM API key (or set OPENROUTER_API_KEY / CN_API_KEY)")
     parser.add_argument("--model", default=None, help="LLM model name (default: deepseek/deepseek-v4-flash-0731)")
     args = parser.parse_args()
