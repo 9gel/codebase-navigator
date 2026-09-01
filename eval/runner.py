@@ -5,11 +5,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-from pathlib import Path
 import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 # Ensure codebase_navigator from src/ is importable
@@ -362,7 +361,7 @@ def run_baseline_agent(
 def run_benchmark(
     target_repo: str | None = None,
     use_llm_judge: bool = True,
-    save_report: Path | None = None,
+    save_report: Path | None = Path("eval/reports"),
     compare_baseline: bool = False,
 ):
     """Run full evaluation suite across configured repositories with optional baseline comparison."""
@@ -618,12 +617,15 @@ def run_benchmark(
     print("=" * 75)
 
     if save_report:
-        # If default or directory, generate timestamped file under eval/reports/
-        reports_dir = Path(__file__).parent / "reports"
-        reports_dir.mkdir(parents=True, exist_ok=True)
-
+        save_path = Path(save_report)
         timestamp_str = time.strftime("%Y%m%d_%H%M%S")
-        timestamped_file = reports_dir / f"report_{timestamp_str}.json"
+
+        if save_path.is_dir() or not save_path.suffix:
+            save_path.mkdir(parents=True, exist_ok=True)
+            report_file = save_path / f"report_{timestamp_str}.json"
+        else:
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            report_file = save_path
 
         report_payload = {
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -634,17 +636,9 @@ def run_benchmark(
             "results": results_report,
         }
 
-        # Save to timestamped file in eval/reports/
-        with open(timestamped_file, "w", encoding="utf-8") as f:
+        with open(report_file, "w", encoding="utf-8") as f:
             json.dump(report_payload, f, indent=2)
-        print(f"📄 Timestamped report saved to: {timestamped_file}")
-
-        # Also write/update the specified target report (e.g. eval/report.json)
-        save_target = Path(save_report)
-        save_target.parent.mkdir(parents=True, exist_ok=True)
-        with open(save_target, "w", encoding="utf-8") as f:
-            json.dump(report_payload, f, indent=2)
-        print(f"📄 Latest report updated at:     {save_target}")
+        print(f"📄 Timestamped report saved to: {report_file}")
 
     return passed_tasks == total_tasks
 
@@ -654,7 +648,11 @@ if __name__ == "__main__":
     parser.add_argument("--repo", help="Filter by repository name (e.g. flask, fastapi, httpx)")
     parser.add_argument("--no-judge", action="store_true", help="Disable LLM-as-a-judge (use keyword rules only)")
     parser.add_argument("--compare-baseline", action="store_true", help="Run A/B benchmark against generic baseline agent (cat/rg/find/ls)")
-    parser.add_argument("--report", default="eval/report.json", help="Path to save JSON evaluation report (default: eval/report.json; timestamped copy also saved in eval/reports/)")
+    parser.add_argument(
+        "--report",
+        default="eval/reports",
+        help="Directory or file path to save report (default: eval/reports/report_<timestamp>.json)",
+    )
     args = parser.parse_args()
 
     run_benchmark(

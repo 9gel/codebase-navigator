@@ -165,10 +165,13 @@ def run_rejection_benchmark(
 
     # Summary
     print("\n" + "=" * 75)
-    score_pct = (passed_count / len(tasks) * 100) if tasks else 0.0
-    print(f"📊 Overall Benchmark Score: {passed_count}/{len(tasks)} passed ({score_pct:.1f}%)")
-    print(f"💰 Total Tokens Used:       {total_tokens:,} (Avg: {total_tokens // len(tasks):,} per task)")
-    print(f"⏱️  Total Duration:          {total_duration:.1f}s (Avg: {total_duration / len(tasks):.2f}s)")
+    n_tasks = len(tasks)
+    score_pct = (passed_count / n_tasks * 100) if n_tasks else 0.0
+    avg_tokens = (total_tokens // n_tasks) if n_tasks else 0
+    avg_duration = (total_duration / n_tasks) if n_tasks else 0.0
+    print(f"📊 Overall Benchmark Score: {passed_count}/{n_tasks} passed ({score_pct:.1f}%)")
+    print(f"💰 Total Tokens Used:       {total_tokens:,} (Avg: {avg_tokens:,} per task)")
+    print(f"⏱️  Total Duration:          {total_duration:.1f}s (Avg: {avg_duration:.2f}s)")
     print("\nCategory Breakdown:")
     for cat, data in category_stats.items():
         cat_pct = (data["passed"] / data["total"] * 100) if data["total"] > 0 else 0

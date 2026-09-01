@@ -382,7 +382,7 @@ uv run eval/runner.py --no-judge
 uv run eval/runner.py --compare-baseline
 
 # Export structured JSON evaluation report:
-uv run eval/runner.py --report eval/report.json
+uv run eval/runner.py --report eval/reports
 ```
 
 #### Comparing time and token savings with baseline tool usage

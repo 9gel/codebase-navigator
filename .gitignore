@@ -32,6 +32,8 @@ ENV/
 htmlcov/
 /exercises/
 eval/rejection_report.json
+eval/report.json
+eval/reports.json
 eval/reports/
 
 # Ruff
