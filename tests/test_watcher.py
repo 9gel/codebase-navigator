@@ -77,7 +77,10 @@ def test_watcher_tui_transcript_does_not_deadlock(tmp_path: Path, capsys):
 
     tui.write_transcript("startup complete")
 
-    assert "startup complete" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "startup complete" in output
+    assert "Keep `cn watch` up to ensure `cn search` work efficiently elsewhere." in output
+    assert f"[{tmp_path.name}] ❯" not in output
 
 
 def test_watcher_tui_renders_startup_logs_after_screen_setup(tmp_path: Path, monkeypatch, capsys):

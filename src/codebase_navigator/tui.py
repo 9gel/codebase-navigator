@@ -66,9 +66,9 @@ class WatcherTUI:
         return size.columns, max(10, size.lines)
 
     def update_layout(self):
-        """Set terminal scroll region for rows 1 to H-3, reserving H-2 (border), H-1 (prompt), and H (status bar)."""
+        """Set the scroll region and reserve the fixed five-row bottom chrome."""
         cols, rows = self.get_dimensions()
-        scroll_bottom = max(1, rows - 3)
+        scroll_bottom = max(1, rows - 5)
         # Set scrolling region to lines 1..scroll_bottom: \033[<top>;<bottom>r
         sys.stdout.write(f"\033[1;{scroll_bottom}r")
         sys.stdout.flush()
@@ -78,19 +78,21 @@ class WatcherTUI:
         """Render fixed divider border, prompt line, and bottom status bar."""
         with self.lock:
             cols, rows = self.get_dimensions()
-            border_row = rows - 2
-            prompt_row = rows - 1
-            status_row = rows
+            border_row = rows - 4
+            prompt_row = rows - 3
+            blank_row = rows - 2
+            status_row = rows - 1
+            footer_row = rows
 
-            # 1. Divider Border (row H-2)
+            # 1. Divider Border (row H-4)
             sys.stdout.write(f"\033[{border_row};1H\033[2K\033[36m{'─' * cols}\033[0m")
 
-            # 2. Prompt Line (row H-1)
-            short_folder = self.folder.name or str(self.folder)
-            prompt_prefix = f"\033[36m[{short_folder}]\033[0m ❯ "
-            sys.stdout.write(f"\033[{prompt_row};1H\033[2K{prompt_prefix}{prompt_text}")
+            # 2. Prompt Line (row H-3), with a blank separator before status.
+            sys.stdout.write(f"\033[{prompt_row};1H\033[2K{prompt_text}")
+            sys.stdout.write(f"\033[{blank_row};1H\033[2K")
 
-            # 3. Status Bar (row H) - Inverse / highlighted banner
+            # 3. Status Bar (row H-1) - Inverse / highlighted banner
+            short_folder = self.folder.name or str(self.folder)
             short_model = self.model_name.split("/")[-1]
             token_info = (
                 f"📊 {self.tokens_total:,} tokens (turn {self.turn_count})"
@@ -109,8 +111,16 @@ class WatcherTUI:
             # Invert colors: \033[7m ... \033[0m
             sys.stdout.write(f"\033[{status_row};1H\033[2K\033[7m{status_text}\033[0m")
 
+            # 4. Static footer (row H)
+            footer_text = " Keep `cn watch` up to ensure `cn search` work efficiently elsewhere."
+            if len(footer_text) > cols:
+                footer_text = footer_text[:cols]
+            else:
+                footer_text = footer_text + " " * (cols - len(footer_text))
+            sys.stdout.write(f"\033[{footer_row};1H\033[2K{footer_text}")
+
             # Return cursor to active prompt position
-            cursor_col = len(f"[{short_folder}] ❯ ") + len(prompt_text) + 1
+            cursor_col = len(prompt_text) + 1
             sys.stdout.write(f"\033[{prompt_row};{cursor_col}H")
             sys.stdout.flush()
 
@@ -118,7 +128,7 @@ class WatcherTUI:
         """Append text into the scrollable output viewport above the prompt."""
         with self.lock:
             cols, rows = self.get_dimensions()
-            scroll_bottom = max(1, rows - 3)
+            scroll_bottom = max(1, rows - 5)
 
             # Move cursor to bottom of the scrolling viewport
             sys.stdout.write(f"\033[{scroll_bottom};1H")
@@ -161,9 +171,8 @@ class WatcherTUI:
                 self.render_bottom_chrome()
                 # Position cursor at prompt line
                 cols, rows = self.get_dimensions()
-                prompt_row = rows - 1
-                short_folder = self.folder.name or str(self.folder)
-                cursor_col = len(f"[{short_folder}] ❯ ") + 1
+                prompt_row = rows - 3
+                cursor_col = 1
                 sys.stdout.write(f"\033[{prompt_row};{cursor_col}H")
                 sys.stdout.flush()
 
