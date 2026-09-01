@@ -103,3 +103,23 @@ def test_watcher_tui_renders_startup_logs_after_screen_setup(tmp_path: Path, mon
     output = capsys.readouterr().out
     assert output.index(".tags: updated") > output.index("\033[?1049h")
     assert "LanceDB: ready" in output
+
+
+def test_watcher_tui_exit_keys_show_notice_then_exit(tmp_path: Path, capsys):
+    from codebase_navigator.tui import WatcherTUI
+
+    tui = WatcherTUI(
+        folder=tmp_path,
+        model_name="test-model",
+        on_submit=lambda _query: None,
+        on_reset=lambda: None,
+        on_status=lambda: "status ok",
+        on_exit=lambda: None,
+    )
+
+    assert tui._handle_exit_key("Ctrl-C") is False
+    assert tui.exit_notice == " Press Ctrl-C to exit"
+    assert tui._handle_exit_key("Ctrl-C") is True
+    assert tui._handle_exit_key("Ctrl-D") is False
+    assert tui._handle_exit_key("Ctrl-Q") is False
+    assert "Press Ctrl-C to exit" in capsys.readouterr().out

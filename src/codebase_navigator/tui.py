@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import select
 import shutil
 import sys
 import threading
@@ -42,6 +43,13 @@ class WatcherTUI:
         # allowing that nested call (the first startup transcript otherwise
         # deadlocks the TUI before the prompt is shown).
         self.lock = threading.RLock()
+        self.transcript_lines: list[str] = []
+        self.scroll_offset = 0
+        self.prompt_history: list[str] = []
+        self.history_index = 0
+        self.exit_notice = ""
+        self.exit_notice_until = 0.0
+        self.exit_notice_key = ""
 
     def enter_screen(self):
         """Switch to alternate screen buffer and configure scrolling margins."""
@@ -112,7 +120,10 @@ class WatcherTUI:
             sys.stdout.write(f"\033[{status_row};1H\033[2K\033[7m{status_text}\033[0m")
 
             # 4. Static footer (row H)
-            footer_text = " Keep `cn watch` up to ensure `cn search` work efficiently elsewhere."
+            if self.exit_notice and time.monotonic() >= self.exit_notice_until:
+                self.exit_notice = ""
+                self.exit_notice_key = ""
+            footer_text = self.exit_notice or " Keep `cn watch` up to ensure `cn search` work efficiently elsewhere."
             if len(footer_text) > cols:
                 footer_text = footer_text[:cols]
             else:
@@ -127,19 +138,119 @@ class WatcherTUI:
     def write_transcript(self, text: str, auto_scroll: bool = True):
         """Append text into the scrollable output viewport above the prompt."""
         with self.lock:
-            cols, rows = self.get_dimensions()
-            scroll_bottom = max(1, rows - 5)
-
-            # Move cursor to bottom of the scrolling viewport
-            sys.stdout.write(f"\033[{scroll_bottom};1H")
-            
             # Format markdown & links cleanly
             formatted = format_output_links(text, mode="auto", wrap=True, theme="auto")
-            for line in formatted.splitlines():
-                sys.stdout.write(f"\n\033[2K{line}")
-            
-            sys.stdout.flush()
-            self.render_bottom_chrome()
+            lines = formatted.splitlines()
+            self.transcript_lines.extend(lines or [""])
+            if auto_scroll:
+                self.scroll_offset = 0
+            self.render()
+
+    def _viewport_height(self) -> int:
+        return max(1, self.get_dimensions()[1] - 5)
+
+    def render_transcript(self):
+        """Render the retained transcript according to the current scroll offset."""
+        _, rows = self.get_dimensions()
+        viewport_height = self._viewport_height()
+        max_offset = max(0, len(self.transcript_lines) - viewport_height)
+        self.scroll_offset = min(max(self.scroll_offset, 0), max_offset)
+        end = len(self.transcript_lines) - self.scroll_offset
+        start = max(0, end - viewport_height)
+
+        for row in range(1, rows - 4):
+            index = start + row - 1
+            line = self.transcript_lines[index] if index < end else ""
+            sys.stdout.write(f"\033[{row};1H\033[2K{line}")
+
+    def render(self, prompt_text: str = ""):
+        """Render the transcript and fixed terminal chrome."""
+        with self.lock:
+            self.render_transcript()
+            self.render_bottom_chrome(prompt_text)
+
+    def scroll_transcript(self, pages: int):
+        """Scroll the transcript up (positive) or down (negative) by pages."""
+        with self.lock:
+            self.scroll_offset += pages * max(1, self._viewport_height() - 1)
+            self.render()
+
+    def _read_key(self) -> tuple[str, str]:
+        """Read one key or terminal escape sequence in cbreak mode."""
+        if not select.select([sys.stdin], [], [], 0.2)[0]:
+            return "timeout", ""
+        first = sys.stdin.read(1)
+        if not first:
+            return "eof", ""
+        if first != "\033":
+            return "char", first
+
+        sequence = first
+        # Escape sequences arrive as a short burst. Avoid blocking forever on
+        # a standalone Escape key while allowing mouse reports to complete.
+        while select.select([sys.stdin], [], [], 0.05)[0]:
+            sequence += sys.stdin.read(1)
+            if sequence[-1] in "~ABCDMm":
+                break
+
+        if sequence in ("\033[A", "\033[B"):
+            return ("up", "") if sequence.endswith("A") else ("down", "")
+        if sequence == "\033[5~":
+            return "page_up", ""
+        if sequence == "\033[6~":
+            return "page_down", ""
+        if sequence.startswith("\033[<") and sequence.endswith(("M", "m")):
+            try:
+                button, _, _ = sequence[3:-1].split(";")
+                if button in ("64", "65"):
+                    return ("mouse_up", "") if button == "64" else ("mouse_down", "")
+            except ValueError:
+                pass
+        return "ignored", sequence
+
+    def _handle_exit_key(self, key: str) -> bool:
+        """Show an exit hint once, then exit when the same control key repeats."""
+        if self.exit_notice_key == key and time.monotonic() < self.exit_notice_until:
+            return True
+        self.exit_notice_key = key
+        self.exit_notice = f" Press {key} to exit"
+        self.exit_notice_until = time.monotonic() + 3.0
+        self.render()
+        return False
+
+    def _submit_query(self, query: str):
+        """Handle a completed prompt consistently for line and key input."""
+        query = query.strip()
+        if not query:
+            return
+        if not self.prompt_history or self.prompt_history[-1] != query:
+            self.prompt_history.append(query)
+        self.history_index = len(self.prompt_history)
+
+        if query.lower() in ("/exit", "exit", "quit", ":q"):
+            self.running = False
+            return
+        if query.lower() in ("/help", "help", "?"):
+            self.write_transcript("\n📖 Commands:")
+            self.write_transcript("  /reset  - Clear multi-turn conversation memory and restart fresh")
+            self.write_transcript("  /status - Show file count, chunk statistics, and active model")
+            self.write_transcript("  /exit   - Quit cn watch and restore terminal\n")
+            return
+        if query.lower() in ("/reset", "reset", "/clear", "clear"):
+            self.on_reset()
+            self.tokens_total = 0
+            self.tokens_prompt = 0
+            self.tokens_completion = 0
+            self.turn_count = 0
+            self.last_tool_count = 0
+            self.write_transcript("\n🧹 Conversation context reset. Started fresh session.\n")
+            return
+        if query.lower() in ("/status", "status"):
+            self.write_transcript(f"\n{self.on_status()}\n")
+            return
+
+        self.write_transcript(f"\n\033[1;36m👤 You:\033[0m {query}\n")
+        self.on_submit(query)
 
     def update_stats(self, total: int, prompt: int, completion: int, tool_count: int = 0):
         """Update live token and session counters."""
@@ -166,59 +277,73 @@ class WatcherTUI:
         self.write_transcript("   Type your question to ask about this codebase.")
         self.write_transcript("   Commands: /reset (clear context), /status (index info), /exit (quit)\n")
 
-        while self.running:
-            try:
-                self.render_bottom_chrome()
-                # Position cursor at prompt line
-                cols, rows = self.get_dimensions()
-                prompt_row = rows - 3
-                cursor_col = 1
-                sys.stdout.write(f"\033[{prompt_row};{cursor_col}H")
+        input_tty = hasattr(sys.stdin, "fileno") and sys.stdin.isatty()
+        input_text = ""
+        self.history_index = len(self.prompt_history)
+        term_state = None
+        try:
+            if input_tty:
+                import termios
+                import tty
+
+                term_state = termios.tcgetattr(sys.stdin.fileno())
+                tty.setcbreak(sys.stdin.fileno())
+                sys.stdout.write("\033[?1000h\033[?1006h")
                 sys.stdout.flush()
 
-                # Read line
-                line = sys.stdin.readline()
-                if not line:  # EOF
-                    break
-                
-                query = line.strip()
-                if not query:
-                    continue
+            while self.running:
+                self.render(input_text)
+                if input_tty:
+                    kind, value = self._read_key()
+                    if kind == "eof":
+                        break
+                    if kind == "timeout":
+                        continue
+                    if kind == "char" and value in ("\003", "\004", "\021"):
+                        key = {"\003": "Ctrl-C", "\004": "Ctrl-D", "\021": "Ctrl-Q"}[value]
+                        if self._handle_exit_key(key):
+                            break
+                        continue
+                    if kind == "char" and value in ("\r", "\n"):
+                        self._submit_query(input_text)
+                        input_text = ""
+                    elif kind == "char" and value in ("\177", "\b"):
+                        input_text = input_text[:-1]
+                    elif kind == "char" and value.isprintable():
+                        input_text += value
+                    elif kind == "up":
+                        if self.prompt_history:
+                            self.history_index = max(0, self.history_index - 1)
+                            input_text = self.prompt_history[self.history_index]
+                    elif kind == "down":
+                        if self.history_index < len(self.prompt_history) - 1:
+                            self.history_index += 1
+                            input_text = self.prompt_history[self.history_index]
+                        else:
+                            self.history_index = len(self.prompt_history)
+                            input_text = ""
+                    elif kind == "page_up":
+                        self.scroll_transcript(1)
+                    elif kind == "page_down":
+                        self.scroll_transcript(-1)
+                    elif kind == "mouse_up":
+                        self.scroll_transcript(1)
+                    elif kind == "mouse_down":
+                        self.scroll_transcript(-1)
+                else:
+                    line = sys.stdin.readline()
+                    if not line:
+                        break
+                    self._submit_query(line)
+        except (KeyboardInterrupt, EOFError):
+            pass
+        except Exception as e:
+            self.write_transcript(f"\n❌ Error: {e}\n")
+        finally:
+            if term_state is not None:
+                import termios
 
-                if query.lower() in ("/exit", "exit", "quit", ":q"):
-                    break
-
-                if query.lower() in ("/help", "help", "?"):
-                    self.write_transcript("\n📖 Commands:")
-                    self.write_transcript("  /reset  - Clear multi-turn conversation memory and restart fresh")
-                    self.write_transcript("  /status - Show file count, chunk statistics, and active model")
-                    self.write_transcript("  /exit   - Quit cn watch and restore terminal\n")
-                    continue
-
-                if query.lower() in ("/reset", "reset", "/clear", "clear"):
-                    self.on_reset()
-                    self.tokens_total = 0
-                    self.tokens_prompt = 0
-                    self.tokens_completion = 0
-                    self.turn_count = 0
-                    self.last_tool_count = 0
-                    self.write_transcript("\n🧹 Conversation context reset. Started fresh session.\n")
-                    self.render_bottom_chrome()
-                    continue
-
-                if query.lower() in ("/status", "status"):
-                    status_text = self.on_status()
-                    self.write_transcript(f"\n{status_text}\n")
-                    continue
-
-                # Echo user question in transcript
-                self.write_transcript(f"\n\033[1;36m👤 You:\033[0m {query}\n")
-                self.on_submit(query)
-
-            except (KeyboardInterrupt, EOFError):
-                break
-            except Exception as e:
-                self.write_transcript(f"\n❌ Error: {e}\n")
-
-        self.exit_screen()
-        self.on_exit()
+                termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, term_state)
+                sys.stdout.write("\033[?1000l\033[?1006l")
+            self.exit_screen()
+            self.on_exit()
