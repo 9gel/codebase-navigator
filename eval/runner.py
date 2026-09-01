@@ -299,7 +299,15 @@ def run_baseline_agent(
         usage = response_data.get("usage", {})
         p_tok = usage.get("prompt_tokens", 0)
         c_tok = usage.get("completion_tokens", 0)
+        prompt_details = usage.get("prompt_tokens_details") or {}
+        cached_tok = (
+            prompt_details.get("cached_tokens", 0)
+            or usage.get("prompt_cache_hit_tokens", 0)
+            or usage.get("cache_read_input_tokens", 0)
+            or 0
+        )
         last_prompt_tokens = p_tok
+        last_cached_tokens = cached_tok
         turn_completion_tokens += c_tok
 
         choices = response_data.get("choices", [])
@@ -353,6 +361,7 @@ def run_baseline_agent(
             "turn_prompt_tokens": last_prompt_tokens,
             "turn_completion_tokens": turn_completion_tokens,
             "turn_total_tokens": last_prompt_tokens + turn_completion_tokens,
+            "turn_cached_tokens": last_cached_tokens,
             "tool_calls_count": tool_calls_count,
         }
         return content, stats
@@ -472,11 +481,14 @@ def run_benchmark(
                     passed_tasks += 1
 
                 cn_tokens = cn_stats.get("turn_total_tokens", 0)
+                cn_cached = cn_stats.get("turn_cached_tokens", 0)
                 total_cn_tokens += cn_tokens
-                print(f"    [CN]       Status: {'✅ PASS' if cn_passed else '❌ FAIL'} (took {cn_dt:.2f}s, tokens: {cn_tokens:,})")
+                cn_cached_str = f", cached: {cn_cached:,}" if cn_cached > 0 else ""
+                print(f"    [CN]       Status: {'✅ PASS' if cn_passed else '❌ FAIL'} (took {cn_dt:.2f}s, tokens: {cn_tokens:,}{cn_cached_str})")
 
                 # 2. Evaluate Baseline Agent (if --compare-baseline)
                 base_tokens = 0
+                base_cached = 0
                 base_dt = 0.0
                 base_passed = False
                 base_rationale = ""
@@ -529,6 +541,7 @@ def run_benchmark(
                             baseline_passed_tasks += 1
 
                         base_tokens = base_stats.get("turn_total_tokens", 0)
+                        base_cached = base_stats.get("turn_cached_tokens", 0)
                         total_base_tokens += base_tokens
 
                         if base_tokens > 0:
@@ -536,7 +549,8 @@ def run_benchmark(
 
                         time_savings_pct = round(((base_dt - cn_dt) / base_dt) * 100, 1) if base_dt > 0 else 0.0
 
-                        print(f"    [Baseline] Status: {'✅ PASS' if base_passed else '❌ FAIL'} (took {base_dt:.2f}s, tokens: {base_tokens:,})")
+                        base_cached_str = f", cached: {base_cached:,}" if base_cached > 0 else ""
+                        print(f"    [Baseline] Status: {'✅ PASS' if base_passed else '❌ FAIL'} (took {base_dt:.2f}s, tokens: {base_tokens:,}{base_cached_str})")
                         print(
                             f"    ⚡ Savings: Tokens {token_savings_pct:+.1f}% ({cn_tokens:,} vs {base_tokens:,}) | "
                             f"Time {time_savings_pct:+.1f}% ({cn_dt:.2f}s vs {base_dt:.2f}s)"
@@ -554,10 +568,12 @@ def run_benchmark(
                     "passed": cn_passed,
                     "duration_seconds": round(cn_dt, 2),
                     "tokens": cn_tokens,
+                    "cached_tokens": cn_cached,
                     "judge_rationale": cn_rationale,
                     "baseline_passed": base_passed if compare_baseline else None,
                     "baseline_duration_seconds": round(base_dt, 2) if compare_baseline else None,
                     "baseline_tokens": base_tokens if compare_baseline else None,
+                    "baseline_cached_tokens": base_cached if compare_baseline else None,
                     "token_savings_percentage": token_savings_pct if compare_baseline else None,
                     "time_savings_percentage": time_savings_pct if compare_baseline else None,
                     "answer_preview": cn_answer[:300] + ("..." if len(cn_answer) > 300 else ""),

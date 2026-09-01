@@ -11,7 +11,7 @@ from typing import Any
 
 from watchfiles import Change, DefaultFilter, watch
 
-from .ask import AgentSession, LLMConfig
+from .ask import DEFAULT_INITIAL_LIMIT, AgentSession, LLMConfig
 from .config import CODE_EXTENSIONS, DOC_EXTENSIONS, IGNORE_DIR_NAMES, get_socket_path
 from .index import VectorIndex
 from .ipc import IPCServer, ping_socket
@@ -89,7 +89,7 @@ class DirectoryWatcher:
                 api_key=cfg_data.get("api_key"),
                 model=cfg_data.get("model", "deepseek/deepseek-v4-flash-0731"),
                 max_searches=int(cfg_data.get("max_searches", 15)),
-                initial_limit=int(cfg_data.get("initial_limit", 5)),
+                initial_limit=int(cfg_data.get("initial_limit", DEFAULT_INITIAL_LIMIT)),
                 system_prompt=cfg_data.get("system_prompt"),
             )
             if self.session is None or new_session:

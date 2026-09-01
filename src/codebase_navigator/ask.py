@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
+import re
 import sys
 import tomllib
-from typing import Any
 import urllib.error
 import urllib.request
+from pathlib import Path
+from typing import Any
 
 from .config import get_socket_path
 from .index import VectorIndex
-from .ipc import ping_socket, query_socket, send_socket_command
+from .ipc import query_socket
 from .tags import TagsManager
 from .tools import (
     check_ripgrep_installed,
@@ -26,7 +27,7 @@ from .tools import (
 DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1"
 DEFAULT_MODEL = "deepseek/deepseek-v4-flash-0731"
 DEFAULT_MAX_SEARCHES = 15
-DEFAULT_INITIAL_LIMIT = 5
+DEFAULT_INITIAL_LIMIT = 10
 
 
 class LLMConfig:
@@ -213,12 +214,69 @@ def execute_search(
     return idx.search(query, limit=limit, doc_type=doc_type)
 
 
-def format_chunks_for_llm(results: list[dict[str, Any]]) -> str:
-    """Format search results cleanly for LLM consumption."""
+def extract_symbol_candidates(question: str) -> list[str]:
+    """Extract potential identifier tokens from a natural language question."""
+    stopwords = {
+        "the", "and", "for", "with", "where", "what", "when", "which", "how", "why",
+        "does", "is", "are", "was", "were", "can", "could", "should", "would", "this",
+        "that", "from", "into", "onto", "about", "code", "repo", "file", "work", "hook",
+        "hooks", "call", "calls", "called", "pass", "passed", "run", "runs", "running",
+        "test", "tests", "testing", "app", "apps", "main", "default", "works", "workings",
+        "create", "creates", "creation", "build", "builds", "building", "handling", "handles",
+        "class", "function", "method", "module", "package", "internals", "internally",
+        "flow", "stack", "server", "proxy", "cookie", "cookies", "signing", "signed",
+    }
+    raw = re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", question)
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for tok in raw:
+        t_low = tok.lower()
+        if len(tok) >= 3 and t_low not in stopwords and t_low not in seen:
+            seen.add(t_low)
+            candidates.append(tok)
+    return candidates
+
+
+def find_preflight_symbols(folder: Path, question: str, max_symbols: int = 5) -> list[dict[str, Any]]:
+    """Look up exact/fuzzy symbol definitions in .tags for question identifiers."""
+    tags_mgr = TagsManager(folder)
+    tag_file = tags_mgr.find_tag_file()
+    if not tag_file:
+        return []
+
+    candidates = extract_symbol_candidates(question)
+    if not candidates:
+        return []
+
+    exact_matches: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, str, int]] = set()
+
+    for cand in candidates:
+        matches = tags_mgr.lookup_symbol(cand, exact=True, limit=3)
+        if not matches:
+            # Try case-insensitive exact symbol regex
+            matches = tags_mgr.lookup_symbol(f"^{cand}$", exact=False, limit=3)
+        for m in matches:
+            key = (m["symbol"], m["path"], m["line"])
+            if key not in seen_keys:
+                seen_keys.add(key)
+                exact_matches.append(m)
+                if len(exact_matches) >= max_symbols:
+                    return exact_matches
+    return exact_matches
+
+
+def format_chunks_for_llm(
+    results: list[dict[str, Any]],
+    full_limit: int | None = None,
+) -> str:
+    """Format search results cleanly for LLM consumption with optional tiered summary for lower ranks."""
     if not results:
         return "No relevant code or documentation chunks found."
 
     chunks_text = []
+    candidate_lines = []
+
     for idx, r in enumerate(results, start=1):
         rel_p = r.get("path", "")
         abs_p = r.get("abs_path", "")
@@ -227,13 +285,33 @@ def format_chunks_for_llm(results: list[dict[str, Any]]) -> str:
         title = r.get("title", "")
         doc_type = r.get("doc_type", "")
         score_pct = int(r.get("score", 0.0) * 100)
-        content = r.get("content", "")
+        content = r.get("content", "").strip()
 
-        header = f"[{idx}] File: {rel_p}:{s_line}-{e_line} ({doc_type}) — {title} (Relevance: {score_pct}%)\nAbsURI: file://{abs_p}#L{s_line}-L{e_line}"
-        body = f"```\n{content}\n```"
-        chunks_text.append(f"{header}\n{body}")
+        if full_limit is None or idx <= full_limit:
+            header = f"[{idx}] File: {rel_p}:{s_line}-{e_line} ({doc_type}) — {title} (Relevance: {score_pct}%)\nAbsURI: file://{abs_p}#L{s_line}-L{e_line}"
+            body = f"```\n{content}\n```"
+            chunks_text.append(f"{header}\n{body}")
+        else:
+            # Compact 1-line candidate summary for lower-tier matches
+            preview = ""
+            for line in content.splitlines():
+                line_s = line.strip()
+                if line_s and not line_s.startswith("#") and not line_s.startswith('"""') and not line_s.startswith("'''"):
+                    preview = line_s
+                    break
+            if not preview and content:
+                preview = content.splitlines()[0].strip()
+            if len(preview) > 100:
+                preview = preview[:97] + "..."
+            preview_str = f" — `{preview}`" if preview else ""
+            candidate_lines.append(
+                f"- [{idx}] [{rel_p}:{s_line}-{e_line}](file://{abs_p}#L{s_line}-L{e_line}) ({doc_type}, {score_pct}%): {title}{preview_str}"
+            )
 
-    return "\n\n".join(chunks_text)
+    out = "\n\n".join(chunks_text)
+    if candidate_lines:
+        out += "\n\nAdditional Candidate Locations (use `read_code` if needed):\n" + "\n".join(candidate_lines)
+    return out
 
 
 AGENT_TOOLS_SPEC = [
@@ -589,6 +667,7 @@ class AgentSession:
         self.turn_count = 0
         self.lifetime_prompt_tokens = 0
         self.lifetime_completion_tokens = 0
+        self.lifetime_cached_tokens = 0
 
     def reset(self):
         """Reset conversation messages back to system prompt."""
@@ -635,12 +714,38 @@ class AgentSession:
             custom_index_dir=self.custom_index_dir,
         )
 
+        # Dynamic confidence filtering: discard noisy chunks
+        if initial_chunks:
+            top_score = initial_chunks[0].get("score", 0.0)
+            filtered_chunks = []
+            for ch in initial_chunks:
+                sc = ch.get("score", 0.0)
+                if sc < 0.40:
+                    continue
+                if top_score >= 0.88 and sc < (top_score - 0.35):
+                    continue
+                filtered_chunks.append(ch)
+            if filtered_chunks:
+                initial_chunks = filtered_chunks
+
         emit(f"🤖 Retrieved {len(initial_chunks)} code/doc chunks. Reasoning with agent...")
 
-        initial_context_text = format_chunks_for_llm(initial_chunks)
+        # Exact symbol tag discovery
+        preflight_symbols = find_preflight_symbols(self.folder, question)
+        symbols_text = ""
+        if preflight_symbols:
+            sym_lines = []
+            for s in preflight_symbols:
+                sym_lines.append(
+                    f"- `{s['symbol']}` ({s.get('kind', 'symbol')}) at [{s['path']}:{s['line']}](file://{s['abs_path']}#L{s['line']})\n  Preview: `{s.get('preview', '')}`"
+                )
+            symbols_text = "📌 Exact Symbol Definitions (.tags):\n" + "\n".join(sym_lines) + "\n\n"
+
+        initial_context_text = format_chunks_for_llm(initial_chunks, full_limit=3)
 
         user_content = (
             f"Question:\n{question}\n\n"
+            f"{symbols_text}"
             f"Pre-flight Codebase Retrieval:\n{initial_context_text}"
         )
         self.messages.append({"role": "user", "content": user_content})
@@ -649,6 +754,7 @@ class AgentSession:
         seen_tool_calls: set[str] = set()
         turn_completion_tokens = 0
         last_prompt_tokens = 0
+        last_cached_tokens = 0
         tool_calls_count = 0
 
         while True:
@@ -665,10 +771,20 @@ class AgentSession:
             usage = response_data.get("usage", {})
             p_tok = usage.get("prompt_tokens", 0)
             c_tok = usage.get("completion_tokens", 0)
+            prompt_details = usage.get("prompt_tokens_details") or {}
+            cached_tok = (
+                prompt_details.get("cached_tokens", 0)
+                or usage.get("prompt_cache_hit_tokens", 0)
+                or usage.get("cache_read_input_tokens", 0)
+                or 0
+            )
+
             last_prompt_tokens = p_tok
+            last_cached_tokens = cached_tok
             turn_completion_tokens += c_tok
             self.lifetime_prompt_tokens = max(self.lifetime_prompt_tokens, p_tok)
             self.lifetime_completion_tokens += c_tok
+            self.lifetime_cached_tokens = max(self.lifetime_cached_tokens, cached_tok)
 
             choices = response_data.get("choices", [])
             if not choices:
@@ -694,7 +810,6 @@ class AgentSession:
                     except (json.JSONDecodeError, TypeError, ValueError):
                         fn_args = {}
 
-                    search_num = (self.config.max_searches - searches_remaining) + 1
                     tool_calls_count += 1
                     call_sig = f"{fn_name}:{json.dumps(fn_args, sort_keys=True)}"
 
@@ -730,9 +845,11 @@ class AgentSession:
                         "turn_prompt_tokens": last_prompt_tokens,
                         "turn_completion_tokens": turn_completion_tokens,
                         "turn_total_tokens": last_prompt_tokens + turn_completion_tokens,
+                        "turn_cached_tokens": last_cached_tokens,
                         "tool_calls_count": tool_calls_count,
                         "lifetime_prompt_tokens": self.lifetime_prompt_tokens,
                         "lifetime_completion_tokens": self.lifetime_completion_tokens,
+                        "lifetime_cached_tokens": self.lifetime_cached_tokens,
                         "lifetime_total_tokens": self.lifetime_prompt_tokens + self.lifetime_completion_tokens,
                         "status": "declined",
                         "decline_category": decline_category,
@@ -766,9 +883,11 @@ class AgentSession:
                 "turn_prompt_tokens": last_prompt_tokens,
                 "turn_completion_tokens": turn_completion_tokens,
                 "turn_total_tokens": last_prompt_tokens + turn_completion_tokens,
+                "turn_cached_tokens": last_cached_tokens,
                 "tool_calls_count": tool_calls_count,
                 "lifetime_prompt_tokens": self.lifetime_prompt_tokens,
                 "lifetime_completion_tokens": self.lifetime_completion_tokens,
+                "lifetime_cached_tokens": self.lifetime_cached_tokens,
                 "lifetime_total_tokens": self.lifetime_prompt_tokens + self.lifetime_completion_tokens,
                 "status": "refusal" if is_refusal else "answered",
             }

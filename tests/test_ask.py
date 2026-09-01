@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -11,6 +13,8 @@ from codebase_navigator.ask import (
     DEFAULT_MODEL,
     LLMConfig,
     ask_codebase,
+    extract_symbol_candidates,
+    find_preflight_symbols,
     format_chunks_for_llm,
     load_llm_config,
 )
@@ -112,6 +116,62 @@ def test_format_chunks_for_llm_populated():
     assert "class IPCServer:" in formatted
 
 
+def test_format_chunks_for_llm_tiered():
+    results = [
+        {
+            "path": "src/app.py",
+            "abs_path": "/repo/src/app.py",
+            "start_line": 1,
+            "end_line": 20,
+            "title": "App Main",
+            "doc_type": "code_doc",
+            "score": 0.95,
+            "content": "def create_app(): return None",
+        },
+        {
+            "path": "src/sessions.py",
+            "abs_path": "/repo/src/sessions.py",
+            "start_line": 50,
+            "end_line": 70,
+            "title": "Session Handler",
+            "doc_type": "code_doc",
+            "score": 0.82,
+            "content": "class SecureSession:\n    # session internals\n    pass",
+        },
+    ]
+    # full_limit=1 means index 1 is full, index 2 is compact candidate
+    formatted = format_chunks_for_llm(results, full_limit=1)
+    assert "[1] File: src/app.py:1-20" in formatted
+    assert "def create_app(): return None" in formatted
+    assert "Additional Candidate Locations" in formatted
+    assert "[2] [src/sessions.py:50-70]" in formatted
+    assert "SecureSession" in formatted
+
+
+def test_extract_symbol_candidates():
+    q = "how does FlaskGroup work and where is preprocess_request called?"
+    cands = extract_symbol_candidates(q)
+    assert "FlaskGroup" in cands
+    assert "preprocess_request" in cands
+    assert "where" not in [c.lower() for c in cands]
+
+
+def test_find_preflight_symbols(tmp_path: Path):
+    # Create a mock .tags file
+    tag_content = (
+        "!_TAG_FILE_FORMAT\t2\t/extended format/\n"
+        "FlaskGroup\tsrc/cli.py\t/^class FlaskGroup:$/;\"\tc\tline:50\n"
+        "SecureCookie\tsrc/sessions.py\t/^class SecureCookie:$/;\"\tc\tline:100\n"
+    )
+    (tmp_path / ".tags").write_text(tag_content, encoding="utf-8")
+
+    matches = find_preflight_symbols(tmp_path, "where is flaskgroup and what is SecureCookie?")
+    assert len(matches) == 2
+    symbols = [m["symbol"] for m in matches]
+    assert "FlaskGroup" in symbols
+    assert "SecureCookie" in symbols
+
+
 def test_ask_codebase_missing_api_key(tmp_path: Path):
     cfg = LLMConfig(api_key=None)
     with pytest.raises(RuntimeError, match="No LLM API key found"):
@@ -153,7 +213,7 @@ def test_ask_codebase_direct_answer(tmp_path: Path):
         patch("codebase_navigator.ask.execute_search", mock_search),
         patch("codebase_navigator.ask.call_chat_completions", mock_chat),
     ):
-        answer, stats = ask_codebase(tmp_path, "What is this project?", cfg, verbose=False)
+        answer, _stats = ask_codebase(tmp_path, "What is this project?", cfg, verbose=False)
         assert answer == "This project is a code navigation tool."
         assert mock_search.call_count == 1
         assert mock_chat.call_count == 1
@@ -236,7 +296,7 @@ def test_ask_codebase_with_tool_calling_loop(tmp_path: Path):
         patch("codebase_navigator.ask.execute_search", mock_search),
         patch("codebase_navigator.ask.call_chat_completions", mock_chat),
     ):
-        answer, stats = ask_codebase(tmp_path, "Where is the IPCServer defined?", cfg, verbose=False)
+        answer, _stats = ask_codebase(tmp_path, "Where is the IPCServer defined?", cfg, verbose=False)
         assert answer == "IPCServer is implemented in `src/ipc.py`."
         assert mock_search.call_count == 2
         assert mock_chat.call_count == 2
@@ -257,7 +317,7 @@ system_prompt = "You are a specialized security auditor."
     cfg = load_llm_config(folder=tmp_path)
     assert cfg.system_prompt == "You are a specialized security auditor."
 
-    from codebase_navigator.ask import build_effective_system_prompt, AgentSession
+    from codebase_navigator.ask import AgentSession, build_effective_system_prompt
     eff_prompt = build_effective_system_prompt(cfg.system_prompt)
     assert "Additional User Instructions:" in eff_prompt
     assert "You are a specialized security auditor." in eff_prompt
