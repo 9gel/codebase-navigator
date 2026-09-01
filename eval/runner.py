@@ -601,19 +601,33 @@ def run_benchmark(
     print("=" * 75)
 
     if save_report:
-        with open(save_report, "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "total_tasks": total_tasks,
-                    "passed_tasks": passed_tasks,
-                    "score_percentage": score_pct,
-                    "compare_baseline": compare_baseline,
-                    "results": results_report,
-                },
-                f,
-                indent=2,
-            )
-        print(f"📄 Full benchmark report saved to: {save_report}")
+        # If default or directory, generate timestamped file under eval/reports/
+        reports_dir = Path(__file__).parent / "reports"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+
+        timestamp_str = time.strftime("%Y%m%d_%H%M%S")
+        timestamped_file = reports_dir / f"report_{timestamp_str}.json"
+
+        report_payload = {
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "total_tasks": total_tasks,
+            "passed_tasks": passed_tasks,
+            "score_percentage": score_pct,
+            "compare_baseline": compare_baseline,
+            "results": results_report,
+        }
+
+        # Save to timestamped file in eval/reports/
+        with open(timestamped_file, "w", encoding="utf-8") as f:
+            json.dump(report_payload, f, indent=2)
+        print(f"📄 Timestamped report saved to: {timestamped_file}")
+
+        # Also write/update the specified target report (e.g. eval/report.json)
+        save_target = Path(save_report)
+        save_target.parent.mkdir(parents=True, exist_ok=True)
+        with open(save_target, "w", encoding="utf-8") as f:
+            json.dump(report_payload, f, indent=2)
+        print(f"📄 Latest report updated at:     {save_target}")
 
     return passed_tasks == total_tasks
 
@@ -623,7 +637,7 @@ if __name__ == "__main__":
     parser.add_argument("--repo", help="Filter by repository name (e.g. flask, fastapi, httpx)")
     parser.add_argument("--no-judge", action="store_true", help="Disable LLM-as-a-judge (use keyword rules only)")
     parser.add_argument("--compare-baseline", action="store_true", help="Run A/B benchmark against generic baseline agent (cat/rg/find/ls)")
-    parser.add_argument("--report", default="eval/report.json", help="Path to save JSON evaluation report")
+    parser.add_argument("--report", default="eval/report.json", help="Path to save JSON evaluation report (default: eval/report.json; timestamped copy also saved in eval/reports/)")
     args = parser.parse_args()
 
     run_benchmark(
