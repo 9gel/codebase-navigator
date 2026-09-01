@@ -123,3 +123,27 @@ def test_watcher_tui_exit_keys_show_notice_then_exit(tmp_path: Path, capsys):
     assert tui._handle_exit_key("Ctrl-D") is False
     assert tui._handle_exit_key("Ctrl-Q") is False
     assert "Press Ctrl-C to exit" in capsys.readouterr().out
+
+
+def test_watcher_tui_spinner_is_transient(tmp_path: Path, capsys):
+    import time
+
+    from codebase_navigator.tui import WatcherTUI
+
+    tui = WatcherTUI(
+        folder=tmp_path,
+        model_name="test-model",
+        on_submit=lambda _query: None,
+        on_reset=lambda: None,
+        on_status=lambda: "status ok",
+        on_exit=lambda: None,
+    )
+
+    tui.write_transcript("latest output")
+    tui.start_spinner()
+    time.sleep(0.15)
+    tui.stop_spinner()
+
+    assert tui.spinner_active is False
+    assert tui._spinner_thread is None
+    assert "Agent is working..." in capsys.readouterr().out

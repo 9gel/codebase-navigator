@@ -16,6 +16,8 @@ from .cli import format_output_links
 class WatcherTUI:
     """Full-pane terminal application managing output viewport, prompt input, and bottom status bar."""
 
+    SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+
     def __init__(
         self,
         folder: Path,
@@ -50,6 +52,10 @@ class WatcherTUI:
         self.exit_notice = ""
         self.exit_notice_until = 0.0
         self.exit_notice_key = ""
+        self.spinner_active = False
+        self.spinner_frame = 0
+        self._spinner_stop = threading.Event()
+        self._spinner_thread: threading.Thread | None = None
 
     def enter_screen(self):
         """Switch to alternate screen buffer and configure scrolling margins."""
@@ -147,13 +153,48 @@ class WatcherTUI:
                 self.scroll_offset = 0
             self.render()
 
+    def start_spinner(self):
+        """Show an animated transient line below the latest transcript output."""
+        with self.lock:
+            if self.spinner_active:
+                return
+            self.spinner_active = True
+            self.spinner_frame = 0
+            self._spinner_stop.clear()
+            self.render()
+
+        def animate():
+            while not self._spinner_stop.wait(0.12):
+                with self.lock:
+                    if not self.spinner_active:
+                        return
+                    self.spinner_frame = (self.spinner_frame + 1) % len(self.SPINNER_FRAMES)
+                    self.render()
+
+        self._spinner_thread = threading.Thread(target=animate, daemon=True)
+        self._spinner_thread.start()
+
+    def stop_spinner(self):
+        """Remove the transient spinner line and restore the full transcript viewport."""
+        with self.lock:
+            if not self.spinner_active:
+                return
+            self.spinner_active = False
+            self._spinner_stop.set()
+            thread = self._spinner_thread
+            self._spinner_thread = None
+            self.render()
+        if thread and thread is not threading.current_thread():
+            thread.join(timeout=1.0)
+
     def _viewport_height(self) -> int:
         return max(1, self.get_dimensions()[1] - 5)
 
     def render_transcript(self):
         """Render the retained transcript according to the current scroll offset."""
         _, rows = self.get_dimensions()
-        viewport_height = self._viewport_height()
+        base_height = self._viewport_height()
+        viewport_height = max(1, base_height - int(self.spinner_active))
         max_offset = max(0, len(self.transcript_lines) - viewport_height)
         self.scroll_offset = min(max(self.scroll_offset, 0), max_offset)
         end = len(self.transcript_lines) - self.scroll_offset
@@ -163,6 +204,11 @@ class WatcherTUI:
             index = start + row - 1
             line = self.transcript_lines[index] if index < end else ""
             sys.stdout.write(f"\033[{row};1H\033[2K{line}")
+
+        if self.spinner_active:
+            spinner_row = viewport_height + 1
+            frame = self.SPINNER_FRAMES[self.spinner_frame]
+            sys.stdout.write(f"\033[{spinner_row};1H\033[2K {frame} Agent is working...")
 
     def render(self, prompt_text: str = ""):
         """Render the transcript and fixed terminal chrome."""

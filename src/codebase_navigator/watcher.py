@@ -248,6 +248,7 @@ class DirectoryWatcher:
 
             try:
                 self.tui.write_transcript("  \033[36m🔍 Reasoning with agent...\033[0m")
+                self.tui.start_spinner()
                 answer, stats = self.handle_ask(
                     query,
                     cfg_data=config.to_dict(),
@@ -255,6 +256,7 @@ class DirectoryWatcher:
                     verbose=False,
                     progress_callback=handle_progress,
                 )
+                self.tui.stop_spinner()
 
                 # Format answer in transcript
                 self.tui.write_transcript(f"\n\033[1;32m🤖 Assistant:\033[0m\n{answer}\n")
@@ -271,6 +273,7 @@ class DirectoryWatcher:
                     tool_count=t_calls,
                 )
             except Exception as e:
+                self.tui.stop_spinner()
                 self.tui.write_transcript(f"\n❌ Error: {e}\n")
 
         def handle_reset():
