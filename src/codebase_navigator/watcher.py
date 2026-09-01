@@ -62,7 +62,9 @@ class DirectoryWatcher:
         self.index_lock = threading.Lock()
         self.session: AgentSession | None = None
         self.session_lock = threading.Lock()
-        self.ipc_server = IPCServer(self.socket_path, self.index, lock=self.index_lock, watcher=self)
+        self.ipc_server = IPCServer(
+            self.socket_path, self.index, lock=self.index_lock, watcher=self
+        )
 
         self.lifetime_turn_tokens = 0
         self.lifetime_prompt_tokens = 0
@@ -80,7 +82,7 @@ class DirectoryWatcher:
         cfg_data: dict[str, Any],
         new_session: bool = False,
         verbose: bool = False,
-        progress_callback = None,
+        progress_callback=None,
     ) -> tuple[str, dict[str, Any]]:
         """Execute or continue an LLM agent reasoning session within the daemon."""
         with self.session_lock:
@@ -93,7 +95,9 @@ class DirectoryWatcher:
                 system_prompt=cfg_data.get("system_prompt"),
             )
             if self.session is None or new_session:
-                self.session = AgentSession(self.folder, config, custom_index_dir=self.custom_index_dir)
+                self.session = AgentSession(
+                    self.folder, config, custom_index_dir=self.custom_index_dir
+                )
             else:
                 self.session.config = config
 
@@ -105,9 +109,11 @@ class DirectoryWatcher:
                 progress_callback=progress_callback,
             )
             if stats:
-                self.lifetime_prompt_tokens = stats.get("turn_prompt_tokens", 0)
+                self.lifetime_prompt_tokens = stats.get("context_tokens", 0)
                 self.lifetime_completion_tokens = stats.get("lifetime_completion_tokens", 0)
-                self.lifetime_turn_tokens = self.lifetime_prompt_tokens + self.lifetime_completion_tokens
+                self.lifetime_turn_tokens = (
+                    self.lifetime_prompt_tokens + self.lifetime_completion_tokens
+                )
                 self.turn_count += 1
             return answer, stats
 
@@ -157,10 +163,14 @@ class DirectoryWatcher:
                             n_chunks = self.index.update_single_file(fpath)
                         total_chunks += n_chunks
                     except Exception as e:
-                        self._log_event(f"[{ts_str}] ⚠️ Error updating embeddings for {fpath.name}: {e}")
+                        self._log_event(
+                            f"[{ts_str}] ⚠️ Error updating embeddings for {fpath.name}: {e}"
+                        )
 
                 dt = (time.time() - t0) * 1000
-                self._log_event(f"[{ts_str}] ⚡ Synced {len(affected_files)} file(s) ({total_chunks} chunks) in {dt:.0f}ms")
+                self._log_event(
+                    f"[{ts_str}] ⚡ Synced {len(affected_files)} file(s) ({total_chunks} chunks) in {dt:.0f}ms"
+                )
 
         except Exception as e:
             if not self._stop_event.is_set():
@@ -184,7 +194,9 @@ class DirectoryWatcher:
             print(f"   Active target: {existing_target}")
             return
 
-        is_tty = sys.stdin.isatty() and sys.stdout.isatty() if hasattr(sys.stdin, "isatty") else False
+        is_tty = (
+            sys.stdin.isatty() and sys.stdout.isatty() if hasattr(sys.stdin, "isatty") else False
+        )
         use_interactive = interactive and is_tty
 
         startup_logs = [
@@ -197,14 +209,18 @@ class DirectoryWatcher:
 
         with self.index_lock:
             u_files, u_chunks, p_files = self.index.sync()
-        startup_logs.append(f"  LanceDB: {u_files} files updated ({u_chunks} chunks), {p_files} pruned.")
+        startup_logs.append(
+            f"  LanceDB: {u_files} files updated ({u_chunks} chunks), {p_files} pruned."
+        )
         startup_logs.append(f"  Index location: {self.index.cache_dir}")
 
         self.ipc_server.start()
         if self.ipc_server._unix_server:
             startup_logs.append(f"  🔌 IPC Socket: {self.socket_path}")
         if self.ipc_server.tcp_port:
-            startup_logs.append(f"  🌐 IPC Loopback TCP: 127.0.0.1:{self.ipc_server.tcp_port} (port file: {self.ipc_server.port_path})")
+            startup_logs.append(
+                f"  🌐 IPC Loopback TCP: 127.0.0.1:{self.ipc_server.tcp_port} (port file: {self.ipc_server.port_path})"
+            )
         startup_logs.append("  🧠 Agent Session Daemon: Ready (KV prompt caching enabled)")
 
         if not use_interactive:
@@ -262,9 +278,9 @@ class DirectoryWatcher:
                 self.tui.write_transcript(f"\n\033[1;32m🤖 Assistant:\033[0m\n{answer}\n")
 
                 # Update status bar counters
-                t_total = stats.get("turn_total_tokens", 0)
-                t_in = stats.get("turn_prompt_tokens", 0)
-                t_out = stats.get("turn_completion_tokens", 0)
+                t_total = stats.get("context_output_tokens", 0)
+                t_in = stats.get("context_tokens", 0)
+                t_out = stats.get("output_tokens", 0)
                 t_calls = stats.get("tool_calls_count", 0)
                 self.tui.update_stats(
                     total=self.lifetime_turn_tokens,

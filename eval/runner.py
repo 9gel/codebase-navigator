@@ -15,6 +15,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from codebase_navigator.ask import ask_codebase, call_chat_completions, load_llm_config
+from codebase_navigator.sandbox_bash import bash_tool_spec, run_sandboxed_bash
 
 EXERCISES_DIR = Path(__file__).parent.parent / "exercises"
 BENCHMARK_CONFIG = Path(__file__).parent / "benchmark_tasks.json"
@@ -95,7 +96,7 @@ BASELINE_TOOLS_SPEC = [
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Read source lines from a file in the repository. Provide start_line and end_line whenever possible to avoid loading entire files.",
+            "description": "Read source lines from a file in the repository. Provide offset and limit whenever possible to read targeted ranges rather than entire files.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -103,13 +104,13 @@ BASELINE_TOOLS_SPEC = [
                         "type": "string",
                         "description": "Relative path of the file to read (e.g. 'src/app.py').",
                     },
-                    "start_line": {
+                    "offset": {
                         "type": "integer",
-                        "description": "1-indexed starting line number (optional, default: 1).",
+                        "description": "1-indexed line number to start reading from (optional, default: 1).",
                     },
-                    "end_line": {
+                    "limit": {
                         "type": "integer",
-                        "description": "1-indexed ending line number (optional, default: 200).",
+                        "description": "Maximum number of lines to read (optional, default: 2000).",
                     },
                 },
                 "required": ["path"],
@@ -131,6 +132,14 @@ BASELINE_TOOLS_SPEC = [
                     "path": {
                         "type": "string",
                         "description": "Optional subdirectory or file path to restrict the grep to.",
+                    },
+                    "path_glob": {
+                        "type": "string",
+                        "description": "Optional file glob filter (e.g. '*.py', 'src/**').",
+                    },
+                    "case_sensitive": {
+                        "type": "boolean",
+                        "description": "Whether search is case-sensitive (default: false).",
                     },
                 },
                 "required": ["pattern"],
@@ -170,11 +179,12 @@ BASELINE_TOOLS_SPEC = [
             },
         },
     },
+    bash_tool_spec(),
 ]
 
 
 def execute_baseline_tool(folder: Path, name: str, args: dict[str, Any]) -> str:
-    """Execute standard baseline tool (cat/rg/find/ls) without specialized codebase-navigator index."""
+    """Execute standard baseline tool (cat/rg/find/ls/bash) without specialized codebase-navigator index."""
     if name == "read_file":
         rel_p = args.get("path", "").strip()
         target = folder / rel_p
@@ -182,20 +192,31 @@ def execute_baseline_tool(folder: Path, name: str, args: dict[str, Any]) -> str:
             return f"Error: File not found: {rel_p}"
         try:
             lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
-            s_line = max(1, int(args.get("start_line", 1) or 1))
-            e_line = int(args.get("end_line", s_line + 199) or (s_line + 199))
+            # Primary interface: offset + limit (like typical agent read tools).
+            # start_line/end_line kept as aliases for model variants.
+            offset = args.get("offset") or args.get("start_line") or 1
+            limit = args.get("limit") or 2000
+            s_line = max(1, int(offset))
             s_idx = s_line - 1
-            e_idx = min(len(lines), e_line)
+            e_idx = min(len(lines), s_idx + int(limit))
             selected = lines[s_idx:e_idx]
             out_lines = [f"{i}: {line}" for i, line in enumerate(selected, start=s_line)]
-            return "\n".join(out_lines) or "[Empty slice]"
+            suffix = f"\n... [{len(lines)} total lines]" if e_idx < len(lines) else ""
+            return ("\n".join(out_lines) if out_lines else "[Empty slice]") + suffix
         except Exception as e:
             return f"Error reading {rel_p}: {e}"
 
     elif name == "grep":
         pattern = args.get("pattern", "")
         sub_path = args.get("path")
-        cmd = ["rg", "-n", "-i", pattern]
+        path_glob = args.get("path_glob")
+        case_sensitive = bool(args.get("case_sensitive", False))
+        cmd = ["rg", "-n"]
+        if not case_sensitive:
+            cmd.append("-i")
+        if path_glob:
+            cmd.extend(["-g", path_glob])
+        cmd.append(pattern)
         if sub_path:
             cmd.append(sub_path)
         try:
@@ -227,6 +248,9 @@ def execute_baseline_tool(folder: Path, name: str, args: dict[str, Any]) -> str:
             return "\n".join(matches) or "No matches found."
         except Exception as e:
             return f"Error running grep: {e}"
+
+    elif name == "bash":
+        return run_sandboxed_bash(folder, args.get("command", ""))
 
     elif name == "find_files":
         pattern = args.get("pattern", "*")
@@ -260,7 +284,7 @@ def run_baseline_agent(
     folder: Path,
     question: str,
     config,
-    progress_callback = None,
+    progress_callback=None,
 ) -> tuple[str, dict[str, Any]]:
     """Run typical agent harness with standard tools (read_file, grep, find_files, list_dir)."""
     messages = [
@@ -269,9 +293,10 @@ def run_baseline_agent(
             "content": (
                 "You are an expert AI coding assistant answering questions about a codebase.\n"
                 "Guidelines:\n"
-                "1. Use `grep` and `find_files` first to locate relevant definitions, functions, and files.\n"
-                "2. When reading code with `read_file`, specify `start_line` and `end_line` to read targeted line ranges rather than reading entire large files.\n"
-                "3. Once you locate the primary file and mechanism that answers the question, stop calling tools and synthesize your answer directly."
+                "1. Ground every claim in code you have actually read. Never speculate about implementation details you have not verified; cite file paths and line numbers in your answer.\n"
+                "2. Use `grep`, `find_files`, `bash` (e.g. 'git grep', 'rg', 'find'), and `list_dir` to locate relevant definitions, functions, and files.\n"
+                "3. When reading code with `read_file`, specify `offset` and `limit` to read targeted ranges rather than entire large files.\n"
+                "4. Once you locate the primary file and mechanism that answers the question, stop calling tools and synthesize your answer directly."
             ),
         },
         {
@@ -281,8 +306,9 @@ def run_baseline_agent(
     ]
 
     searches_remaining = config.max_searches
-    turn_completion_tokens = 0
-    last_prompt_tokens = 0
+    output_tokens = 0
+    context_tokens = 0
+    cached_tokens = 0
     tool_calls_count = 0
 
     while True:
@@ -306,9 +332,9 @@ def run_baseline_agent(
             or usage.get("cache_read_input_tokens", 0)
             or 0
         )
-        last_prompt_tokens = p_tok
-        last_cached_tokens = cached_tok
-        turn_completion_tokens += c_tok
+        context_tokens = p_tok
+        cached_tokens = cached_tok
+        output_tokens += c_tok
 
         choices = response_data.get("choices", [])
         if not choices:
@@ -325,14 +351,18 @@ def run_baseline_agent(
                 fn_name = fn.get("name")
                 fn_args_raw = fn.get("arguments", "{}")
                 try:
-                    fn_args = json.loads(fn_args_raw) if isinstance(fn_args_raw, str) else fn_args_raw
+                    fn_args = (
+                        json.loads(fn_args_raw) if isinstance(fn_args_raw, str) else fn_args_raw
+                    )
                 except (json.JSONDecodeError, TypeError, ValueError):
                     fn_args = {}
 
                 tool_calls_count += 1
                 arg_summary = ", ".join(f"{k}={v!r}" for k, v in list(fn_args.items())[:2])
                 if progress_callback:
-                    progress_callback(f"🔎 [Baseline Tool {tool_calls_count}: {fn_name}] {arg_summary}...")
+                    progress_callback(
+                        f"🔎 [Baseline Tool {tool_calls_count}: {fn_name}] {arg_summary}..."
+                    )
 
                 tool_output = execute_baseline_tool(folder, fn_name, fn_args)
                 messages.append(
@@ -358,10 +388,10 @@ def run_baseline_agent(
 
         content = msg.get("content") or ""
         stats = {
-            "turn_prompt_tokens": last_prompt_tokens,
-            "turn_completion_tokens": turn_completion_tokens,
-            "turn_total_tokens": last_prompt_tokens + turn_completion_tokens,
-            "turn_cached_tokens": last_cached_tokens,
+            "context_tokens": context_tokens,
+            "output_tokens": output_tokens,
+            "context_output_tokens": context_tokens + output_tokens,
+            "cached_tokens": cached_tokens,
             "tool_calls_count": tool_calls_count,
         }
         return content, stats
@@ -382,6 +412,7 @@ def run_benchmark(
         benchmarks = json.load(f)
 
     from codebase_navigator.cli import StatusSpinner
+
     is_tty = sys.stderr.isatty() if hasattr(sys.stderr, "isatty") else False
 
     title_suffix = " (A/B Baseline Comparison)" if compare_baseline else ""
@@ -469,7 +500,9 @@ def run_benchmark(
                 cn_rationale = ""
                 if use_llm_judge and config.api_key:
                     if is_tty:
-                        spinner = StatusSpinner("CN: ⚖️ Running LLM Judge evaluation...", stream=sys.stderr)
+                        spinner = StatusSpinner(
+                            "CN: ⚖️ Running LLM Judge evaluation...", stream=sys.stderr
+                        )
                         spinner.start()
                     cn_judge_pass, cn_rationale = llm_judge_answer(question, key, cn_answer, config)
                     if spinner:
@@ -480,11 +513,13 @@ def run_benchmark(
                 if cn_passed:
                     passed_tasks += 1
 
-                cn_tokens = cn_stats.get("turn_total_tokens", 0)
-                cn_cached = cn_stats.get("turn_cached_tokens", 0)
+                cn_tokens = cn_stats.get("context_output_tokens", 0)
+                cn_cached = cn_stats.get("cached_tokens", 0)
                 total_cn_tokens += cn_tokens
                 cn_cached_str = f", cached: {cn_cached:,}" if cn_cached > 0 else ""
-                print(f"    [CN]       Status: {'✅ PASS' if cn_passed else '❌ FAIL'} (took {cn_dt:.2f}s, tokens: {cn_tokens:,}{cn_cached_str})")
+                print(
+                    f"    [CN]       Status: {'✅ PASS' if cn_passed else '❌ FAIL'} (took {cn_dt:.2f}s, tokens: {cn_tokens:,}{cn_cached_str})"
+                )
 
                 # 2. Evaluate Baseline Agent (if --compare-baseline)
                 base_tokens = 0
@@ -493,8 +528,10 @@ def run_benchmark(
                 base_passed = False
                 base_rationale = ""
                 token_savings_pct = 0.0
+                time_savings_pct = 0.0
 
                 if compare_baseline:
+
                     def handle_base_progress(line: str):
                         nonlocal spinner
                         if not is_tty:
@@ -508,7 +545,9 @@ def run_benchmark(
                     t_b0 = time.time()
                     try:
                         if is_tty:
-                            spinner = StatusSpinner("Baseline: 🤖 Reasoning with agent...", stream=sys.stderr)
+                            spinner = StatusSpinner(
+                                "Baseline: 🤖 Reasoning with agent...", stream=sys.stderr
+                            )
                             spinner.start()
 
                         base_answer, base_stats = run_baseline_agent(
@@ -519,17 +558,25 @@ def run_benchmark(
                             spinner = None
 
                         base_dt = time.time() - t_b0
-                        base_kw_matches = [kw for kw in req_kws if kw.lower() in base_answer.lower()]
-                        base_file_matches = [f for f in req_files if f.lower() in base_answer.lower()]
+                        base_kw_matches = [
+                            kw for kw in req_kws if kw.lower() in base_answer.lower()
+                        ]
+                        base_file_matches = [
+                            f for f in req_files if f.lower() in base_answer.lower()
+                        ]
                         base_rule_pass = (len(base_kw_matches) >= min(1, len(req_kws))) and (
                             len(base_file_matches) >= min(1, len(req_files))
                         )
 
                         if use_llm_judge and config.api_key:
                             if is_tty:
-                                spinner = StatusSpinner("Baseline: ⚖️ Running LLM Judge evaluation...", stream=sys.stderr)
+                                spinner = StatusSpinner(
+                                    "Baseline: ⚖️ Running LLM Judge evaluation...", stream=sys.stderr
+                                )
                                 spinner.start()
-                            base_judge_pass, base_rationale = llm_judge_answer(question, key, base_answer, config)
+                            base_judge_pass, base_rationale = llm_judge_answer(
+                                question, key, base_answer, config
+                            )
                             if spinner:
                                 spinner.stop()
                                 spinner = None
@@ -540,17 +587,23 @@ def run_benchmark(
                         if base_passed:
                             baseline_passed_tasks += 1
 
-                        base_tokens = base_stats.get("turn_total_tokens", 0)
-                        base_cached = base_stats.get("turn_cached_tokens", 0)
+                        base_tokens = base_stats.get("context_output_tokens", 0)
+                        base_cached = base_stats.get("cached_tokens", 0)
                         total_base_tokens += base_tokens
 
                         if base_tokens > 0:
-                            token_savings_pct = round(((base_tokens - cn_tokens) / base_tokens) * 100, 1)
+                            token_savings_pct = round(
+                                ((base_tokens - cn_tokens) / base_tokens) * 100, 1
+                            )
 
-                        time_savings_pct = round(((base_dt - cn_dt) / base_dt) * 100, 1) if base_dt > 0 else 0.0
+                        time_savings_pct = (
+                            round(((base_dt - cn_dt) / base_dt) * 100, 1) if base_dt > 0 else 0.0
+                        )
 
                         base_cached_str = f", cached: {base_cached:,}" if base_cached > 0 else ""
-                        print(f"    [Baseline] Status: {'✅ PASS' if base_passed else '❌ FAIL'} (took {base_dt:.2f}s, tokens: {base_tokens:,}{base_cached_str})")
+                        print(
+                            f"    [Baseline] Status: {'✅ PASS' if base_passed else '❌ FAIL'} (took {base_dt:.2f}s, tokens: {base_tokens:,}{base_cached_str})"
+                        )
                         print(
                             f"    ⚡ Savings: Tokens {token_savings_pct:+.1f}% ({cn_tokens:,} vs {base_tokens:,}) | "
                             f"Time {time_savings_pct:+.1f}% ({cn_dt:.2f}s vs {base_dt:.2f}s)"
@@ -561,47 +614,54 @@ def run_benchmark(
                             spinner = None
                         print(f"    ❌ Baseline Error: {e_base}")
 
-                results_report.append({
-                    "task_id": task_id,
-                    "repo": r_name,
-                    "question": question,
-                    "passed": cn_passed,
-                    "duration_seconds": round(cn_dt, 2),
-                    "tokens": cn_tokens,
-                    "cached_tokens": cn_cached,
-                    "judge_rationale": cn_rationale,
-                    "baseline_passed": base_passed if compare_baseline else None,
-                    "baseline_duration_seconds": round(base_dt, 2) if compare_baseline else None,
-                    "baseline_tokens": base_tokens if compare_baseline else None,
-                    "baseline_cached_tokens": base_cached if compare_baseline else None,
-                    "token_savings_percentage": token_savings_pct if compare_baseline else None,
-                    "time_savings_percentage": time_savings_pct if compare_baseline else None,
-                    "answer_preview": cn_answer[:300] + ("..." if len(cn_answer) > 300 else ""),
-                })
+                results_report.append(
+                    {
+                        "task_id": task_id,
+                        "repo": r_name,
+                        "question": question,
+                        "passed": cn_passed,
+                        "duration_seconds": round(cn_dt, 2),
+                        "tokens": cn_tokens,
+                        "cached_tokens": cn_cached,
+                        "judge_rationale": cn_rationale,
+                        "baseline_passed": base_passed if compare_baseline else None,
+                        "baseline_duration_seconds": round(base_dt, 2)
+                        if compare_baseline
+                        else None,
+                        "baseline_tokens": base_tokens if compare_baseline else None,
+                        "baseline_cached_tokens": base_cached if compare_baseline else None,
+                        "token_savings_percentage": token_savings_pct if compare_baseline else None,
+                        "time_savings_percentage": time_savings_pct if compare_baseline else None,
+                        "answer_preview": cn_answer[:300] + ("..." if len(cn_answer) > 300 else ""),
+                    }
+                )
 
             except Exception as e:
                 if spinner:
                     spinner.stop()
                     spinner = None
                 print(f"    ❌ Error executing task: {e}")
-                results_report.append({
-                    "task_id": task_id,
-                    "repo": r_name,
-                    "question": question,
-                    "passed": False,
-                    "error": str(e),
-                })
+                results_report.append(
+                    {
+                        "task_id": task_id,
+                        "repo": r_name,
+                        "question": question,
+                        "passed": False,
+                        "error": str(e),
+                    }
+                )
 
     # Summary
     print("\n" + "=" * 75)
     score_pct = (passed_tasks / total_tasks * 100) if total_tasks > 0 else 0
     print(f"📊 CN Evaluation Score:       {passed_tasks}/{total_tasks} passed ({score_pct:.1f}%)")
     if compare_baseline and total_tasks > 0:
-        base_score_pct = (baseline_passed_tasks / total_tasks * 100)
+        base_score_pct = baseline_passed_tasks / total_tasks * 100
 
         # Only compute savings on mutually successful tasks for fair comparison
         valid_pairs = [
-            r for r in results_report
+            r
+            for r in results_report
             if r.get("passed") and r.get("baseline_passed") and (r.get("baseline_tokens") or 0) > 0
         ]
         valid_cn_tokens = sum(r["tokens"] for r in valid_pairs)
@@ -621,7 +681,9 @@ def run_benchmark(
         )
         speedup = (valid_base_time / valid_cn_time) if valid_cn_time > 0 else 1.0
 
-        print(f"📊 Baseline Evaluation Score: {baseline_passed_tasks}/{total_tasks} passed ({base_score_pct:.1f}%)")
+        print(
+            f"📊 Baseline Evaluation Score: {baseline_passed_tasks}/{total_tasks} passed ({base_score_pct:.1f}%)"
+        )
         print(
             f"💰 Validated Token Savings:   {overall_token_savings:+.1f}% "
             f"(CN: {valid_cn_tokens:,} vs Base: {valid_base_tokens:,} across {len(valid_pairs)} mutually passed tasks)"
@@ -662,8 +724,14 @@ def run_benchmark(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run codebase-navigator evaluation benchmarks")
     parser.add_argument("--repo", help="Filter by repository name (e.g. flask, fastapi, httpx)")
-    parser.add_argument("--no-judge", action="store_true", help="Disable LLM-as-a-judge (use keyword rules only)")
-    parser.add_argument("--compare-baseline", action="store_true", help="Run A/B benchmark against generic baseline agent (cat/rg/find/ls)")
+    parser.add_argument(
+        "--no-judge", action="store_true", help="Disable LLM-as-a-judge (use keyword rules only)"
+    )
+    parser.add_argument(
+        "--compare-baseline",
+        action="store_true",
+        help="Run A/B benchmark against generic baseline agent (cat/rg/find/ls)",
+    )
     parser.add_argument(
         "--report",
         default="eval/reports",
@@ -677,4 +745,3 @@ if __name__ == "__main__":
         save_report=Path(args.report) if args.report else None,
         compare_baseline=args.compare_baseline,
     )
-

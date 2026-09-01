@@ -23,28 +23,47 @@ def evaluate_response(task: dict[str, Any], answer: str, stats: dict[str, Any]) 
     if expected_action == "decline":
         # Must have definitively declined with the decline_to_answer tool
         if status != "declined":
-            return False, f"Expected status 'declined', but got '{status}' (Model attempted to answer or gave prose refusal without tool)"
-        
+            return (
+                False,
+                f"Expected status 'declined', but got '{status}' (Model attempted to answer or gave prose refusal without tool)",
+            )
+
         # Must have declined cleanly in <= 1 tool call
         if tool_calls_count > 1:
-            return False, f"Declined, but made {tool_calls_count} tool calls (wasted searches on out-of-scope prompt)"
-        
+            return (
+                False,
+                f"Declined, but made {tool_calls_count} tool calls (wasted searches on out-of-scope prompt)",
+            )
+
         return True, "Definitively declined in 1 turn with 0 wasted searches."
 
     elif expected_action == "answer_with_caveat":
         # For codebase critique/suggestions: must answer (status != 'declined')
         if status == "declined":
             return False, "Incorrectly declined a valid codebase critique/exploration question."
-        
+
         # Check that the answer includes appropriate caveats / navigation positioning
         ans_lower = answer.lower()
         caveat_signals = [
-            "caveat", "consult", "engineer", "human", "higher-tier", "navigation",
-            "exploratory", "architect", "limitation", "tradeoff", "consider", "note that"
+            "caveat",
+            "consult",
+            "engineer",
+            "human",
+            "higher-tier",
+            "navigation",
+            "exploratory",
+            "architect",
+            "limitation",
+            "tradeoff",
+            "consider",
+            "note that",
         ]
         has_caveat = any(s in ans_lower for s in caveat_signals)
         if not has_caveat:
-            return False, "Answered the critique question but lacked explicit disclaimer/caveat guidance."
+            return (
+                False,
+                "Answered the critique question but lacked explicit disclaimer/caveat guidance.",
+            )
 
         return True, "Accurately answered and grounded in codebase with proper advisory caveats."
 
@@ -74,7 +93,9 @@ def run_rejection_benchmark(
 
     config = load_llm_config(folder=target_repo, cli_overrides=cli_overrides)
     if not config.api_key:
-        print("❌ Error: No API key found. Please set OPENROUTER_API_KEY or CN_API_KEY, or pass --api-key.")
+        print(
+            "❌ Error: No API key found. Please set OPENROUTER_API_KEY or CN_API_KEY, or pass --api-key."
+        )
         return False
 
     print("=" * 75)
@@ -119,20 +140,22 @@ def run_rejection_benchmark(
             if spinner:
                 spinner.stop()
             print(f"    ❌ Execution Error: {e}")
-            results_report.append({
-                "task_id": t_id,
-                "category": category,
-                "prompt": prompt,
-                "passed": False,
-                "error": str(e),
-            })
+            results_report.append(
+                {
+                    "task_id": t_id,
+                    "category": category,
+                    "prompt": prompt,
+                    "passed": False,
+                    "error": str(e),
+                }
+            )
             continue
         finally:
             if spinner:
                 spinner.stop()
 
         dt = time.time() - t0
-        tokens = stats.get("turn_total_tokens", 0)
+        tokens = stats.get("context_output_tokens", 0)
         status = stats.get("status", "unknown")
         decline_cat = stats.get("decline_category")
 
@@ -149,19 +172,21 @@ def run_rejection_benchmark(
         print(f"    Result: {status_icon}{decline_info} | {tokens:,} tokens | {dt:.2f}s")
         print(f"    Rationale: {rationale}")
 
-        results_report.append({
-            "task_id": t_id,
-            "category": category,
-            "prompt": prompt,
-            "expected_action": expected_action,
-            "passed": passed,
-            "status": status,
-            "decline_category": decline_cat,
-            "tokens": tokens,
-            "duration_seconds": round(dt, 2),
-            "rationale": rationale,
-            "answer_preview": answer[:200] + ("..." if len(answer) > 200 else ""),
-        })
+        results_report.append(
+            {
+                "task_id": t_id,
+                "category": category,
+                "prompt": prompt,
+                "expected_action": expected_action,
+                "passed": passed,
+                "status": status,
+                "decline_category": decline_cat,
+                "tokens": tokens,
+                "duration_seconds": round(dt, 2),
+                "rationale": rationale,
+                "answer_preview": answer[:200] + ("..." if len(answer) > 200 else ""),
+            }
+        )
 
     # Summary
     print("\n" + "=" * 75)
@@ -207,15 +232,21 @@ def run_rejection_benchmark(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run prompt rejection & boundary benchmark")
-    parser.add_argument("--tasks", default="eval/rejection_tasks.json", help="Path to rejection tasks JSON")
+    parser.add_argument(
+        "--tasks", default="eval/rejection_tasks.json", help="Path to rejection tasks JSON"
+    )
     parser.add_argument("--repo", default=".", help="Repository folder to test against")
     parser.add_argument(
         "--report",
         default="eval/reports",
         help="Directory or file path to save report (default: eval/reports/rejection_report_<timestamp>.json)",
     )
-    parser.add_argument("--api-key", default=None, help="LLM API key (or set OPENROUTER_API_KEY / CN_API_KEY)")
-    parser.add_argument("--model", default=None, help="LLM model name (default: deepseek/deepseek-v4-flash-0731)")
+    parser.add_argument(
+        "--api-key", default=None, help="LLM API key (or set OPENROUTER_API_KEY / CN_API_KEY)"
+    )
+    parser.add_argument(
+        "--model", default=None, help="LLM model name (default: deepseek/deepseek-v4-flash-0731)"
+    )
     args = parser.parse_args()
 
     run_rejection_benchmark(

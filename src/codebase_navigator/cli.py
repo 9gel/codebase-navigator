@@ -181,12 +181,12 @@ def wrap_terminal_text(text: str, width: int | None = None) -> str:
 def colorize_terminal_text(text: str, theme: str = "dark") -> str:
     """Colorize inline markdown for terminal display based on theme."""
     if theme == "light":
-        color_fence = "\033[31m"        # Red
-        color_code = "\033[38;5;30m"    # Dark Cyan
+        color_fence = "\033[31m"  # Red
+        color_code = "\033[38;5;30m"  # Dark Cyan
         color_inline = "\033[38;5;26m"  # Dark Blue
     else:  # dark
-        color_fence = "\033[91m"        # Bright Red
-        color_code = "\033[36m"         # Cyan
+        color_fence = "\033[91m"  # Bright Red
+        color_code = "\033[36m"  # Cyan
         color_inline = "\033[38;5;75m"  # Light Blue
 
     reset = "\033[0m"
@@ -328,9 +328,7 @@ def format_tag_results(results: list[dict]) -> str:
         line_no = r["line"]
         preview = r["preview"]
 
-        lines.append(
-            f"{idx}. `{sym}` ({kind}) -> [{rel_p}:L{line_no}](file://{abs_p}#L{line_no})"
-        )
+        lines.append(f"{idx}. `{sym}` ({kind}) -> [{rel_p}:L{line_no}](file://{abs_p}#L{line_no})")
         if preview:
             lines.append(f"   `{preview}`")
 
@@ -340,6 +338,7 @@ def format_tag_results(results: list[dict]) -> str:
 def build_parser() -> argparse.ArgumentParser:
     """Build the unified cn CLI argument parser."""
     from . import __version__
+
     parser = argparse.ArgumentParser(
         prog="cn",
         description="Generic Code & Documentation Navigation Engine",
@@ -355,26 +354,44 @@ def build_parser() -> argparse.ArgumentParser:
 
     # status
     p_status = subparsers.add_parser("status", help="Check indexing status")
-    p_status.add_argument("folder", nargs="?", default=".", help="Target folder (default: current directory)")
+    p_status.add_argument(
+        "folder", nargs="?", default=".", help="Target folder (default: current directory)"
+    )
     p_status.add_argument("--index-dir", default=None, help="Custom LanceDB directory")
 
     # sync
     p_sync = subparsers.add_parser("sync", help="Synchronize .tags and LanceDB index")
-    p_sync.add_argument("folder", nargs="?", default=".", help="Target folder (default: current directory)")
+    p_sync.add_argument(
+        "folder", nargs="?", default=".", help="Target folder (default: current directory)"
+    )
     p_sync.add_argument("--force", action="store_true", help="Force complete re-indexing")
     p_sync.add_argument("--index-dir", default=None, help="Custom LanceDB directory")
 
     # watch
-    p_watch = subparsers.add_parser("watch", help="Watch folder and continuously update indexes (and host interactive console)")
-    p_watch.add_argument("folder", nargs="?", default=".", help="Target folder (default: current directory)")
-    p_watch.add_argument("--debounce", type=int, default=1000, help="Debounce milliseconds (default: 1000)")
+    p_watch = subparsers.add_parser(
+        "watch", help="Watch folder and continuously update indexes (and host interactive console)"
+    )
+    p_watch.add_argument(
+        "folder", nargs="?", default=".", help="Target folder (default: current directory)"
+    )
+    p_watch.add_argument(
+        "--debounce", type=int, default=1000, help="Debounce milliseconds (default: 1000)"
+    )
     p_watch.add_argument("--index-dir", default=None, help="Custom LanceDB directory")
-    p_watch.add_argument("--no-interactive", "--headless", dest="no_interactive", action="store_true", help="Run strictly as a background daemon without interactive console")
+    p_watch.add_argument(
+        "--no-interactive",
+        "--headless",
+        dest="no_interactive",
+        action="store_true",
+        help="Run strictly as a background daemon without interactive console",
+    )
 
     # search
     p_search = subparsers.add_parser("search", help="Semantic search in docs and code")
     p_search.add_argument("query", help="Semantic query string")
-    p_search.add_argument("folder", nargs="?", default=".", help="Target folder (default: current directory)")
+    p_search.add_argument(
+        "folder", nargs="?", default=".", help="Target folder (default: current directory)"
+    )
     p_search.add_argument("--limit", type=int, default=5, help="Maximum results (default: 5)")
     p_search.add_argument(
         "--type",
@@ -394,27 +411,59 @@ def build_parser() -> argparse.ArgumentParser:
         default="auto",
         help="Terminal color theme: auto (detect background), dark, light (default: auto)",
     )
-    p_search.add_argument("--wrap", action=argparse.BooleanOptionalAction, default=None, help="Wrap terminal lines (default: enabled on TTY)")
-    p_search.add_argument("--width", type=int, default=None, help="Wrap line width (default: terminal width)")
+    p_search.add_argument(
+        "--wrap",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Wrap terminal lines (default: enabled on TTY)",
+    )
+    p_search.add_argument(
+        "--width", type=int, default=None, help="Wrap line width (default: terminal width)"
+    )
     p_search.add_argument("--index-dir", default=None, help="Custom LanceDB directory")
 
     # tags
     p_tags = subparsers.add_parser("tags", help="Lookup symbol definition in .tags")
     p_tags.add_argument("symbol", help="Symbol name or regex pattern")
-    p_tags.add_argument("folder", nargs="?", default=".", help="Target folder (default: current directory)")
+    p_tags.add_argument(
+        "folder", nargs="?", default=".", help="Target folder (default: current directory)"
+    )
     p_tags.add_argument("--exact", action="store_true", help="Match exact symbol name")
     p_tags.add_argument("--limit", type=int, default=20, help="Maximum results (default: 20)")
 
     # ask
-    p_ask = subparsers.add_parser("ask", help="Ask an LLM questions about the codebase using iterative semantic search")
+    p_ask = subparsers.add_parser(
+        "ask", help="Ask an LLM questions about the codebase using iterative semantic search"
+    )
     p_ask.add_argument("question", help="Question about the codebase")
-    p_ask.add_argument("folder", nargs="?", default=".", help="Target folder (default: current directory)")
-    p_ask.add_argument("--model", default=None, help="LLM model name (default: deepseek/deepseek-v4-flash-0731)")
-    p_ask.add_argument("--endpoint", "--base-url", dest="endpoint", default=None, help="OpenAI-compatible LLM endpoint (default: https://openrouter.ai/api/v1)")
+    p_ask.add_argument(
+        "folder", nargs="?", default=".", help="Target folder (default: current directory)"
+    )
+    p_ask.add_argument(
+        "--model", default=None, help="LLM model name (default: deepseek/deepseek-v4-flash-0731)"
+    )
+    p_ask.add_argument(
+        "--endpoint",
+        "--base-url",
+        dest="endpoint",
+        default=None,
+        help="OpenAI-compatible LLM endpoint (default: https://openrouter.ai/api/v1)",
+    )
     p_ask.add_argument("--api-key", default=None, help="LLM API key")
-    p_ask.add_argument("--system-prompt", default=None, help="Additional custom system prompt / persona instructions")
-    p_ask.add_argument("--limit", type=int, default=None, help="Initial search results count (default: 5)")
-    p_ask.add_argument("--max-searches", type=int, default=None, help="Max additional LLM-driven searches (default: 15)")
+    p_ask.add_argument(
+        "--system-prompt",
+        default=None,
+        help="Additional custom system prompt / persona instructions",
+    )
+    p_ask.add_argument(
+        "--limit", type=int, default=None, help="Initial search results count (default: 5)"
+    )
+    p_ask.add_argument(
+        "--max-searches",
+        type=int,
+        default=None,
+        help="Max additional LLM-driven searches (default: 15)",
+    )
     p_ask.add_argument(
         "--links",
         choices=["auto", "markdown", "terminal", "osc8"],
@@ -427,16 +476,35 @@ def build_parser() -> argparse.ArgumentParser:
         default="auto",
         help="Terminal color theme: auto (detect background), dark, light (default: auto)",
     )
-    p_ask.add_argument("--wrap", action=argparse.BooleanOptionalAction, default=None, help="Wrap terminal lines (default: enabled on TTY)")
-    p_ask.add_argument("--width", type=int, default=None, help="Wrap line width (default: terminal width)")
+    p_ask.add_argument(
+        "--wrap",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Wrap terminal lines (default: enabled on TTY)",
+    )
+    p_ask.add_argument(
+        "--width", type=int, default=None, help="Wrap line width (default: terminal width)"
+    )
     p_ask.add_argument("--index-dir", default=None, help="Custom LanceDB directory")
-    p_ask.add_argument("-n", "--new-session", action="store_true", help="Start a fresh conversation session with the daemon")
+    p_ask.add_argument(
+        "-n",
+        "--new-session",
+        action="store_true",
+        help="Start a fresh conversation session with the daemon",
+    )
     p_ask.add_argument("-q", "--quiet", action="store_true", help="Suppress progress output")
 
     # mcp
     p_mcp = subparsers.add_parser("mcp", help="Run Model Context Protocol (MCP) server over stdio")
-    p_mcp.add_argument("folder", nargs="?", default=None, help="Initial default workspace repository root")
-    p_mcp.add_argument("--transport", choices=["stdio", "sse"], default="stdio", help="MCP transport (default: stdio)")
+    p_mcp.add_argument(
+        "folder", nargs="?", default=None, help="Initial default workspace repository root"
+    )
+    p_mcp.add_argument(
+        "--transport",
+        choices=["stdio", "sse"],
+        default="stdio",
+        help="MCP transport (default: stdio)",
+    )
 
     return parser
 
@@ -520,6 +588,7 @@ def _run_status(folder: Path, custom_index_dir: str | None = None):
         print(f"  ⚪ cn watch daemon: NOT RUNNING (socket: {socket_path})")
 
     from .index import VectorIndex
+
     idx = VectorIndex(folder, custom_index_dir)
     meta = idx.load_meta()
     chunk_count = sum(m.get("chunks", 0) for m in meta.values())
@@ -539,9 +608,12 @@ def _run_sync(folder: Path, force: bool = False, custom_index_dir: str | None = 
 
     print("Syncing LanceDB embeddings...")
     from .index import VectorIndex
+
     idx = VectorIndex(folder, custom_index_dir)
     u_files, u_chunks, p_files = idx.sync(force=force)
-    print(f"✓ Complete: {u_files} files updated ({u_chunks} chunks indexed), {p_files} deleted files pruned.")
+    print(
+        f"✓ Complete: {u_files} files updated ({u_chunks} chunks indexed), {p_files} deleted files pruned."
+    )
     print(f"📦 Embedding index location: {idx.cache_dir}")
 
 
@@ -552,6 +624,7 @@ def _run_watch(
     interactive: bool = True,
 ):
     from .watcher import DirectoryWatcher
+
     watcher = DirectoryWatcher(folder, debounce_ms=debounce_ms, custom_index_dir=custom_index_dir)
     watcher.start(interactive=interactive)
 
@@ -582,6 +655,7 @@ def _run_search(
     resolved_wrap = display_cfg.get("wrap")
 
     from .ipc import discover_daemon_target, query_target
+
     target = discover_daemon_target(folder, custom_index_dir)
     results = query_target(target, query, limit=limit, doc_type=doc_type) if target else None
     if results is not None:
@@ -604,6 +678,7 @@ def _run_search(
         file=sys.stderr,
     )
     from .index import VectorIndex
+
     idx = VectorIndex(folder, custom_index_dir)
     results = idx.search(query, limit=limit, doc_type=doc_type)
     raw_out = format_search_results(results, folder)
@@ -772,7 +847,10 @@ def _run_ask(
             ans_status = stats.get("status", "answered") if stats else "answered"
             if ans_status in ("declined", "refusal"):
                 category = stats.get("decline_category", "out_of_scope")
-                print(f"⚠️ Request declined ({category}) — outside codebase navigation scope", file=sys.stderr)
+                print(
+                    f"⚠️ Request declined ({category}) — outside codebase navigation scope",
+                    file=sys.stderr,
+                )
             else:
                 print("✅ Answer found by agent", file=sys.stderr)
         if not quiet:
@@ -796,15 +874,19 @@ def _run_ask(
             )
         )
 
-        if not quiet and stats and (stats.get("turn_total_tokens") or 0) > 0:
-            turn_in = stats.get("turn_prompt_tokens", 0)
-            turn_out = stats.get("turn_completion_tokens", 0)
-            turn_total = stats.get("turn_total_tokens", 0)
+        if not quiet and stats and (stats.get("context_output_tokens") or 0) > 0:
+            turn_in = stats.get("context_tokens", 0)
+            turn_out = stats.get("output_tokens", 0)
+            turn_total = stats.get("context_output_tokens", 0)
             tool_count = stats.get("tool_calls_count", 0)
 
-            tool_suffix = f" | {tool_count} tool call{'s' if tool_count != 1 else ''}" if tool_count > 0 else ""
+            tool_suffix = (
+                f" | {tool_count} tool call{'s' if tool_count != 1 else ''}"
+                if tool_count > 0
+                else ""
+            )
             print(
-                f"\n\033[2mTokens: {turn_total:,} (prompt: {turn_in:,}, completion: {turn_out:,}){tool_suffix}\033[0m",
+                f"\n\033[2mTokens: {turn_total:,} (context: {turn_in:,}, output: {turn_out:,}){tool_suffix}\033[0m",
                 file=sys.stderr,
             )
     except Exception as e:  # noqa: BLE001
@@ -814,6 +896,7 @@ def _run_ask(
 
 def _run_mcp(folder: Path | None = None, transport: str = "stdio"):
     from .mcp_server import run_mcp_server, resolve_repository_root
+
     if folder:
         resolve_repository_root(str(folder))
     run_mcp_server(transport=transport)

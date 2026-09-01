@@ -41,10 +41,10 @@ def read_code(
     path: str,
     start_line: int | None = None,
     end_line: int | None = None,
-    max_lines: int = 500,
+    max_lines: int = 2000,
 ) -> dict[str, Any]:
     """Read contents of a file with optional line bounds.
-    
+
     Returns formatted code with line numbers and absolute file URI.
     """
     fpath = (folder / path).resolve()
@@ -138,13 +138,15 @@ def grep_search(
                         line_text = match_data.get("lines", {}).get("text", "").rstrip("\r\n")
                         abs_p = (folder / rel_path).resolve()
 
-                        matches.append({
-                            "path": rel_path,
-                            "abs_path": str(abs_p),
-                            "line": line_no,
-                            "content": line_text.strip(),
-                            "uri": f"file://{abs_p}#L{line_no}",
-                        })
+                        matches.append(
+                            {
+                                "path": rel_path,
+                                "abs_path": str(abs_p),
+                                "line": line_no,
+                                "content": line_text.strip(),
+                                "uri": f"file://{abs_p}#L{line_no}",
+                            }
+                        )
                         if len(matches) >= limit:
                             break
                 except Exception:
@@ -164,6 +166,7 @@ def grep_search(
     glob_regex = None
     if path_glob:
         import fnmatch
+
         glob_regex = re.compile(fnmatch.translate(path_glob))
 
     for root, dirs, files in os.walk(folder):
@@ -186,13 +189,15 @@ def grep_search(
                     for idx, line in enumerate(f, start=1):
                         if regex.search(line):
                             abs_p = fpath.resolve()
-                            matches.append({
-                                "path": rel_p,
-                                "abs_path": str(abs_p),
-                                "line": idx,
-                                "content": line.strip(),
-                                "uri": f"file://{abs_p}#L{idx}",
-                            })
+                            matches.append(
+                                {
+                                    "path": rel_p,
+                                    "abs_path": str(abs_p),
+                                    "line": idx,
+                                    "content": line.strip(),
+                                    "uri": f"file://{abs_p}#L{idx}",
+                                }
+                            )
                             if len(matches) >= limit:
                                 return matches
             except Exception:
@@ -208,7 +213,7 @@ def find_references(
     limit: int = 20,
 ) -> list[dict[str, Any]]:
     """1-shot hybrid tool to find definitions and all call/usage sites of a symbol.
-    
+
     Returns structured definitions from .tags / AST along with caller lines across the repo.
     """
     sym = symbol.strip()
@@ -234,30 +239,34 @@ def find_references(
 
     # Add definitions first
     for d in defs:
-        results.append({
-            "type": "definition",
-            "symbol": sym,
-            "path": d["path"],
-            "abs_path": d["abs_path"],
-            "line": d["line"],
-            "kind": d.get("kind", "symbol"),
-            "preview": d.get("preview", ""),
-            "uri": f"file://{d['abs_path']}#L{d['line']}",
-        })
+        results.append(
+            {
+                "type": "definition",
+                "symbol": sym,
+                "path": d["path"],
+                "abs_path": d["abs_path"],
+                "line": d["line"],
+                "kind": d.get("kind", "symbol"),
+                "preview": d.get("preview", ""),
+                "uri": f"file://{d['abs_path']}#L{d['line']}",
+            }
+        )
 
     # Add usage / call sites (excluding the definition lines)
     for m in raw_matches:
         if (m["path"], m["line"]) in def_locations:
             continue
-        results.append({
-            "type": "reference",
-            "symbol": sym,
-            "path": m["path"],
-            "abs_path": m["abs_path"],
-            "line": m["line"],
-            "context": m["content"],
-            "uri": m["uri"],
-        })
+        results.append(
+            {
+                "type": "reference",
+                "symbol": sym,
+                "path": m["path"],
+                "abs_path": m["abs_path"],
+                "line": m["line"],
+                "context": m["content"],
+                "uri": m["uri"],
+            }
+        )
         if len(results) >= limit:
             break
 
@@ -290,12 +299,16 @@ def analyze_python_calls(fpath: Path, target_symbol: str) -> dict[str, Any]:
                             fn_name = sub.func.attr
                         if fn_name and fn_name != target_symbol:
                             line_no = getattr(sub, "lineno", node.lineno)
-                            line_preview = lines[line_no - 1].strip() if line_no <= len(lines) else ""
-                            callees.append({
-                                "symbol": fn_name,
-                                "line": line_no,
-                                "preview": line_preview,
-                            })
+                            line_preview = (
+                                lines[line_no - 1].strip() if line_no <= len(lines) else ""
+                            )
+                            callees.append(
+                                {
+                                    "symbol": fn_name,
+                                    "line": line_no,
+                                    "preview": line_preview,
+                                }
+                            )
             else:
                 # Check if this function calls target_symbol (callers)
                 for sub in ast.walk(node):
@@ -307,13 +320,17 @@ def analyze_python_calls(fpath: Path, target_symbol: str) -> dict[str, Any]:
                             fn_name = sub.func.attr
                         if fn_name == target_symbol:
                             line_no = getattr(sub, "lineno", node.lineno)
-                            line_preview = lines[line_no - 1].strip() if line_no <= len(lines) else ""
-                            callers.append({
-                                "caller_function": node.name,
-                                "caller_line": node.lineno,
-                                "call_line": line_no,
-                                "preview": line_preview,
-                            })
+                            line_preview = (
+                                lines[line_no - 1].strip() if line_no <= len(lines) else ""
+                            )
+                            callers.append(
+                                {
+                                    "caller_function": node.name,
+                                    "caller_line": node.lineno,
+                                    "call_line": line_no,
+                                    "preview": line_preview,
+                                }
+                            )
 
     return {"callees": callees, "callers": callers}
 
@@ -365,13 +382,15 @@ def get_call_tree(
             # Add to callers if not already present
             loc = (ref["path"], ref["line"])
             if not any((c["path"], c.get("call_line")) == loc for c in result["callers"]):
-                result["callers"].append({
-                    "path": ref["path"],
-                    "abs_path": ref["abs_path"],
-                    "call_line": ref["line"],
-                    "preview": ref.get("context", ""),
-                    "uri": ref["uri"],
-                })
+                result["callers"].append(
+                    {
+                        "path": ref["path"],
+                        "abs_path": ref["abs_path"],
+                        "call_line": ref["line"],
+                        "preview": ref.get("context", ""),
+                        "uri": ref["uri"],
+                    }
+                )
 
     result["callees"] = result["callees"][:limit]
     result["callers"] = result["callers"][:limit]
