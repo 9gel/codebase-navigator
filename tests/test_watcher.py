@@ -191,9 +191,9 @@ def test_watcher_tui_mouse_scroll_moves_in_small_steps(tmp_path: Path, capsys):
         tui.write_transcript(f"line {number}")
     capsys.readouterr()
 
-    tui.scroll_transcript(3)
+    tui.scroll_transcript(1)
 
-    assert tui.scroll_offset == 3
+    assert tui.scroll_offset == 1
 
 
 def test_watcher_tui_status_bar_uses_theme_colors(tmp_path: Path, monkeypatch, capsys):

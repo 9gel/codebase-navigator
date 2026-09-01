@@ -238,11 +238,20 @@ class WatcherTUI:
             return "char", first
 
         sequence = first
-        # Escape sequences arrive as a short burst. Avoid blocking forever on
-        # a standalone Escape key while allowing mouse reports to complete.
-        while select.select([sys.stdin], [], [], 0.05)[0]:
+        # Escape sequences can be fragmented by a PTY. Give each fragment a
+        # short grace period, otherwise the rest of a mouse report would be
+        # mistaken for prompt text.
+        while select.select([sys.stdin], [], [], 0.2)[0]:
             sequence += sys.stdin.read(1)
-            if sequence[-1] in "~ABCDMm":
+            if sequence in ("\033[A", "\033[B", "\033[C", "\033[D", "\033[5~", "\033[6~"):
+                break
+            if sequence == "\033[M":
+                # Legacy X10 mouse reports append three binary bytes.
+                for _ in range(3):
+                    if select.select([sys.stdin], [], [], 0.2)[0]:
+                        sequence += sys.stdin.read(1)
+                break
+            if sequence.startswith("\033[<") and sequence.endswith(("M", "m")):
                 break
 
         if sequence in ("\033[A", "\033[B"):
@@ -355,7 +364,7 @@ class WatcherTUI:
                 terminal_attrs[0] &= ~termios.IXON
                 terminal_attrs[3] &= ~(termios.ECHO | termios.ECHONL | termios.ISIG | termios.IEXTEN)
                 termios.tcsetattr(fd, termios.TCSANOW, terminal_attrs)
-                sys.stdout.write("\033[?1000h\033[?1006h")
+                sys.stdout.write("\033[?1000h\033[?1002h\033[?1006h")
                 sys.stdout.flush()
 
             while self.running:
@@ -394,9 +403,9 @@ class WatcherTUI:
                     elif kind == "page_down":
                         self.scroll_transcript(-max(1, self._viewport_height() - 1))
                     elif kind == "mouse_up":
-                        self.scroll_transcript(3)
+                        self.scroll_transcript(1)
                     elif kind == "mouse_down":
-                        self.scroll_transcript(-3)
+                        self.scroll_transcript(-1)
                 else:
                     line = sys.stdin.readline()
                     if not line:
@@ -411,6 +420,6 @@ class WatcherTUI:
                 import termios
 
                 termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, term_state)
-                sys.stdout.write("\033[?1000l\033[?1006l")
+                sys.stdout.write("\033[?1006l\033[?1002l\033[?1000l")
             self.exit_screen()
             self.on_exit()
