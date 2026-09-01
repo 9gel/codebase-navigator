@@ -31,7 +31,6 @@ ENV/
 .coverage
 htmlcov/
 /exercises/
-eval/report.json
 eval/rejection_report.json
 eval/reports/
 
