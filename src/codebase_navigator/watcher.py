@@ -298,12 +298,7 @@ class DirectoryWatcher:
             on_exit=handle_exit,
         )
 
-        # Pre-populate TUI transcript with startup logs
-        if initial_logs:
-            for log_line in initial_logs:
-                self.tui.write_transcript(log_line)
-
-        self.tui.run_loop()
+        self.tui.run_loop(initial_logs=initial_logs)
 
     def stop(self):
         """Cleanly stop watcher background thread and IPC servers."""

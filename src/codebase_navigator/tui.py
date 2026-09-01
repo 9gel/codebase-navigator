@@ -140,10 +140,16 @@ class WatcherTUI:
         self.last_tool_count = tool_count
         self.render_bottom_chrome()
 
-    def run_loop(self):
+    def run_loop(self, initial_logs: list[str] | None = None):
         """Main REPL loop for interactive TUI session."""
         self.running = True
         self.enter_screen()
+
+        # Print startup logs after entering the alternate screen so they are
+        # not erased by the screen initialization.
+        if initial_logs:
+            for log_line in initial_logs:
+                self.write_transcript(log_line)
 
         # Print initial greeting in the transcript area
         self.write_transcript("🧭 Codebase-Navigator Interactive Console")

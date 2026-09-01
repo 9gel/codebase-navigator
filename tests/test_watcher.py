@@ -73,3 +73,25 @@ def test_watcher_tui_transcript_does_not_deadlock(tmp_path: Path, capsys):
     tui.write_transcript("startup complete")
 
     assert "startup complete" in capsys.readouterr().out
+
+
+def test_watcher_tui_renders_startup_logs_after_screen_setup(tmp_path: Path, monkeypatch, capsys):
+    import io
+
+    from codebase_navigator.tui import WatcherTUI
+
+    tui = WatcherTUI(
+        folder=tmp_path,
+        model_name="test-model",
+        on_submit=lambda _query: None,
+        on_reset=lambda: None,
+        on_status=lambda: "status ok",
+        on_exit=lambda: None,
+    )
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+
+    tui.run_loop(initial_logs=[".tags: updated", "LanceDB: ready"])
+
+    output = capsys.readouterr().out
+    assert output.index(".tags: updated") > output.index("\033[?1049h")
+    assert "LanceDB: ready" in output
