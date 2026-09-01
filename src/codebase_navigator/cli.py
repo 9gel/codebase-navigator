@@ -770,8 +770,9 @@ def _run_ask(
 
         if not quiet and is_tty:
             ans_status = stats.get("status", "answered") if stats else "answered"
-            if ans_status == "refusal":
-                print("⚠️ Answer not found in codebase / Off-topic", file=sys.stderr)
+            if ans_status in ("declined", "refusal"):
+                category = stats.get("decline_category", "out_of_scope")
+                print(f"⚠️ Request declined ({category}) — outside codebase navigation scope", file=sys.stderr)
             else:
                 print("✅ Answer found by agent", file=sys.stderr)
         if not quiet:
