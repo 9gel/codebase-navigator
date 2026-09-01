@@ -52,6 +52,7 @@ class WatcherTUI:
         self.exit_notice = ""
         self.exit_notice_until = 0.0
         self.exit_notice_key = ""
+        self.theme = detect_terminal_theme()
         self.spinner_active = False
         self.spinner_frame = 0
         self._spinner_stop = threading.Event()
@@ -123,8 +124,13 @@ class WatcherTUI:
             else:
                 status_text = status_text + " " * (cols - len(status_text))
 
-            # Invert colors: \033[7m ... \033[0m
-            sys.stdout.write(f"\033[{status_row};1H\033[2K\033[7m{status_text}\033[0m")
+            # Use explicit theme-aware colors instead of inverse video, whose
+            # terminal-dependent white background is harsh in many themes.
+            if self.theme == "light":
+                status_style = "\033[38;5;236m\033[48;5;250m"
+            else:
+                status_style = "\033[38;5;252m\033[48;5;238m"
+            sys.stdout.write(f"\033[{status_row};1H\033[2K{status_style}{status_text}\033[0m")
 
             # 4. Static footer (row H)
             if self.exit_notice and time.monotonic() >= self.exit_notice_until:

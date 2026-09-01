@@ -194,3 +194,23 @@ def test_watcher_tui_mouse_scroll_moves_in_small_steps(tmp_path: Path, capsys):
     tui.scroll_transcript(3)
 
     assert tui.scroll_offset == 3
+
+
+def test_watcher_tui_status_bar_uses_theme_colors(tmp_path: Path, monkeypatch, capsys):
+    from codebase_navigator.tui import WatcherTUI
+
+    monkeypatch.setenv("CN_THEME", "dark")
+    tui = WatcherTUI(
+        folder=tmp_path,
+        model_name="test-model",
+        on_submit=lambda _query: None,
+        on_reset=lambda: None,
+        on_status=lambda: "status ok",
+        on_exit=lambda: None,
+    )
+
+    tui.render_bottom_chrome()
+
+    output = capsys.readouterr().out
+    assert "\033[38;5;252m\033[48;5;238m" in output
+    assert "\033[7m" not in output
