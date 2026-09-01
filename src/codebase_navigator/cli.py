@@ -412,8 +412,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_ask.add_argument("--endpoint", "--base-url", dest="endpoint", default=None, help="OpenAI-compatible LLM endpoint (default: https://openrouter.ai/api/v1)")
     p_ask.add_argument("--api-key", default=None, help="LLM API key")
     p_ask.add_argument("--system-prompt", default=None, help="Additional custom system prompt / persona instructions")
-    p_ask.add_argument("--limit", type=int, default=None, help="Initial search results count (default: 10)")
-    p_ask.add_argument("--max-searches", type=int, default=None, help="Max additional LLM-driven searches (default: 5)")
+    p_ask.add_argument("--limit", type=int, default=None, help="Initial search results count (default: 5)")
+    p_ask.add_argument("--max-searches", type=int, default=None, help="Max additional LLM-driven searches (default: 15)")
     p_ask.add_argument(
         "--links",
         choices=["auto", "markdown", "terminal", "osc8"],

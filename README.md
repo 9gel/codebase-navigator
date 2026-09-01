@@ -178,7 +178,7 @@ The unified `cn` command provides all indexing and search tools:
 - `--model "<model>"`: LLM model name (default: `deepseek/deepseek-v4-flash-0731`).
 - `--endpoint "<url>"`: OpenAI-compatible LLM endpoint (default: `https://openrouter.ai/api/v1`).
 - `--api-key "<key>"`: LLM API key.
-- `--limit <N>`: Initial pre-flight search results count (default: 10).
+- `--limit <N>`: Initial pre-flight search results count (default: 5).
 - `--max-searches <N>`: Max additional tool calls allowed (default: 15).
 - `-q, --quiet`: Suppress progress indicators.
 
@@ -261,7 +261,7 @@ Environment variables take precedence over config files:
 | `CN_MODEL` / `OPENROUTER_MODEL` | LLM model to use | `deepseek/deepseek-v4-flash-0731` |
 | `CN_SYSTEM_PROMPT` | Additional custom system prompt | `None` |
 | `CN_MAX_SEARCHES` | Max tool calls allowed by the LLM | `15` |
-| `CN_ASK_LIMIT` | Initial search result count | `10` |
+| `CN_ASK_LIMIT` | Initial search result count | `5` |
 | `CN_EMBEDDING_MODEL` | FastEmbed ONNX embeddings model | `sentence-transformers/all-MiniLM-L6-v2` |
 | `CN_WIDTH` / `CN_MAX_WIDTH` | Maximum terminal wrap width | `terminal width or 100` |
 | `CN_THEME` | Terminal theme (`auto`, `dark`, `light`) | `auto` |

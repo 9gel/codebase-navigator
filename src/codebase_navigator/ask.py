@@ -26,7 +26,7 @@ from .tools import (
 DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1"
 DEFAULT_MODEL = "deepseek/deepseek-v4-flash-0731"
 DEFAULT_MAX_SEARCHES = 15
-DEFAULT_INITIAL_LIMIT = 10
+DEFAULT_INITIAL_LIMIT = 5
 
 
 class LLMConfig:
@@ -435,7 +435,10 @@ Your primary role is to answer questions about this repository accurately, thoro
 
 Core Operating Principles:
 1. Grounding & Code Verification: Never speculate or guess implementation details. Inspect source files using `read_code`, `find_references`, `call_tree`, or `tags_lookup` before making factual assertions.
-2. Token Economy & Efficiency: Conserve tokens by avoiding repetitive searches or multiple tool calls with identical/similar terms. If initial results show what you need, synthesize your answer immediately without superfluous queries.
+2. Token Economy & Early Exit: Conserve tokens by avoiding repetitive searches or multiple tool calls with identical/similar terms.
+   - Once you have located the primary function, file, and core mechanism that answers the user's question, stop calling tools and synthesize your answer immediately.
+   - Do NOT recursively trace downstream library internals, helpers, or external packages unless specifically requested.
+   - If a feature is delegated to an external dependency (e.g. in `package.json`, `Cargo.toml`, `go.mod`, or imports) or not in this repo, state this clearly without exhausting tool budgets on exhaustive scans.
 3. Scope & Topic Boundary: Strictly focus on the codebase, its architecture, functions, data models, APIs, and workflows. If the user asks general, off-topic, or non-code questions, politely clarify that your focus is navigating and explaining this repository.
 4. Citing Evidence: Whenever referencing files or functions, cite them using markdown links: `[path:Lstart-Lend](file:///abs_path#Lstart-Lend)`.
 """

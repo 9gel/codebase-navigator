@@ -96,14 +96,22 @@ BASELINE_TOOLS_SPEC = [
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Read the entire contents of a file from the repository.",
+            "description": "Read source lines from a file in the repository. Provide start_line and end_line whenever possible to avoid loading entire files.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
                         "description": "Relative path of the file to read (e.g. 'src/app.py').",
-                    }
+                    },
+                    "start_line": {
+                        "type": "integer",
+                        "description": "1-indexed starting line number (optional, default: 1).",
+                    },
+                    "end_line": {
+                        "type": "integer",
+                        "description": "1-indexed ending line number (optional, default: 200).",
+                    },
                 },
                 "required": ["path"],
             },
@@ -113,7 +121,7 @@ BASELINE_TOOLS_SPEC = [
         "type": "function",
         "function": {
             "name": "grep",
-            "description": "Run ripgrep / regex search across all files in the repository.",
+            "description": "Run ripgrep / regex search across repository files to locate symbol names, classes, or patterns.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -174,7 +182,14 @@ def execute_baseline_tool(folder: Path, name: str, args: dict[str, Any]) -> str:
         if not target.is_file():
             return f"Error: File not found: {rel_p}"
         try:
-            return target.read_text(encoding="utf-8", errors="replace")
+            lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
+            s_line = max(1, int(args.get("start_line", 1) or 1))
+            e_line = int(args.get("end_line", s_line + 199) or (s_line + 199))
+            s_idx = s_line - 1
+            e_idx = min(len(lines), e_line)
+            selected = lines[s_idx:e_idx]
+            out_lines = [f"{i}: {line}" for i, line in enumerate(selected, start=s_line)]
+            return "\n".join(out_lines) or "[Empty slice]"
         except Exception as e:
             return f"Error reading {rel_p}: {e}"
 
@@ -253,9 +268,11 @@ def run_baseline_agent(
         {
             "role": "system",
             "content": (
-                "You are an AI coding assistant answering questions about a codebase. "
-                "Use the provided tools (`read_file`, `grep`, `find_files`, `list_dir`) to explore the repository "
-                "and find the exact answer."
+                "You are an expert AI coding assistant answering questions about a codebase.\n"
+                "Guidelines:\n"
+                "1. Use `grep` and `find_files` first to locate relevant definitions, functions, and files.\n"
+                "2. When reading code with `read_file`, specify `start_line` and `end_line` to read targeted line ranges rather than reading entire large files.\n"
+                "3. Once you locate the primary file and mechanism that answers the question, stop calling tools and synthesize your answer directly."
             ),
         },
         {
