@@ -132,24 +132,34 @@ class WatcherTUI:
                 status_style = "\033[38;5;252m\033[48;5;238m"
             sys.stdout.write(f"\033[{status_row};1H\033[2K{status_style}{status_text}\033[0m")
 
-            # 4. Static footer (row H)
-            if self.exit_notice and time.monotonic() >= self.exit_notice_until:
-                self.exit_notice = ""
-                self.exit_notice_key = ""
-            if self.spinner_active:
-                frame = self.SPINNER_FRAMES[self.spinner_frame]
-                footer_text = f" {frame} Agent is working..."
-            else:
-                footer_text = self.exit_notice or " Keep `cn watch` up to ensure `cn search` work efficiently elsewhere."
-            if len(footer_text) > cols:
-                footer_text = footer_text[:cols]
-            else:
-                footer_text = footer_text + " " * (cols - len(footer_text))
-            sys.stdout.write(f"\033[{footer_row};1H\033[2K{footer_text}")
+            # 4. Footer (row H)
+            self._render_footer_locked(cols, footer_row)
 
             # Return cursor to active prompt position
             cursor_col = len(prompt_display) + 1
             sys.stdout.write(f"\033[{prompt_row};{cursor_col}H")
+            sys.stdout.flush()
+
+    def _render_footer_locked(self, cols: int, footer_row: int):
+        """Render the footer; caller must hold ``self.lock``."""
+        if self.exit_notice and time.monotonic() >= self.exit_notice_until:
+            self.exit_notice = ""
+            self.exit_notice_key = ""
+        if self.spinner_active:
+            frame = self.SPINNER_FRAMES[self.spinner_frame]
+            footer_text = f" {frame} Agent is working..."
+        else:
+            footer_text = self.exit_notice or " Keep `cn watch` up to ensure `cn search` work efficiently elsewhere."
+        footer_text = footer_text[:cols].ljust(cols)
+        sys.stdout.write(f"\033[{footer_row};1H\033[2K{footer_text}")
+
+    def render_footer(self):
+        """Update only the footer row, preserving the transcript and prompt."""
+        with self.lock:
+            cols, rows = self.get_dimensions()
+            sys.stdout.write("\033[s")
+            self._render_footer_locked(cols, rows)
+            sys.stdout.write("\033[u\033[?25h")
             sys.stdout.flush()
 
     def write_transcript(self, text: str, auto_scroll: bool = True):
@@ -164,14 +174,14 @@ class WatcherTUI:
             self.render()
 
     def start_spinner(self):
-        """Show an animated transient line below the latest transcript output."""
+        """Show an animated transient activity indicator in the footer."""
         with self.lock:
             if self.spinner_active:
                 return
             self.spinner_active = True
             self.spinner_frame = 0
             self._spinner_stop.clear()
-            self.render()
+            self.render_footer()
 
         def animate():
             while not self._spinner_stop.wait(0.12):
@@ -179,13 +189,13 @@ class WatcherTUI:
                     if not self.spinner_active:
                         return
                     self.spinner_frame = (self.spinner_frame + 1) % len(self.SPINNER_FRAMES)
-                    self.render()
+                    self.render_footer()
 
         self._spinner_thread = threading.Thread(target=animate, daemon=True)
         self._spinner_thread.start()
 
     def stop_spinner(self):
-        """Remove the transient spinner line and restore the full transcript viewport."""
+        """Remove the transient spinner and restore the static footer."""
         with self.lock:
             if not self.spinner_active:
                 return
@@ -193,7 +203,7 @@ class WatcherTUI:
             self._spinner_stop.set()
             thread = self._spinner_thread
             self._spinner_thread = None
-            self.render()
+            self.render_footer()
         if thread and thread is not threading.current_thread():
             thread.join(timeout=1.0)
 

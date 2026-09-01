@@ -140,14 +140,18 @@ def test_watcher_tui_spinner_is_transient(tmp_path: Path, capsys):
     )
 
     tui.write_transcript("latest output")
+    capsys.readouterr()
     tui.start_spinner()
     assert tui.spinner_active is True
     time.sleep(0.15)
     tui.stop_spinner()
+    spinner_output = capsys.readouterr().out
 
     assert tui.spinner_active is False
     assert tui._spinner_thread is None
-    assert "Agent is working..." in capsys.readouterr().out
+    assert "Agent is working..." in spinner_output
+    assert "\033[1;1H" not in spinner_output
+    assert "Keep `cn watch` up to ensure `cn search` work efficiently elsewhere." in spinner_output
 
 
 def test_watcher_tui_prompt_echo_has_theme_colored_dividers(tmp_path: Path, capsys):
