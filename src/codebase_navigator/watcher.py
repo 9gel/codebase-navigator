@@ -72,6 +72,8 @@ class DirectoryWatcher:
         self._stop_event = threading.Event()
         self._watch_thread: threading.Thread | None = None
 
+        self.tui: Any = None
+
     def handle_ask(
         self,
         question: str,
@@ -165,13 +167,15 @@ class DirectoryWatcher:
                 self._log_event(f"⚠️ Watcher error: {e}")
 
     def _log_event(self, text: str):
-        """Print an asynchronous event cleanly above the interactive prompt."""
-        # \r\033[2K clears current prompt line before printing
-        sys.stderr.write(f"\r\033[2K{text}\n")
-        sys.stderr.flush()
+        """Print an asynchronous event cleanly above the interactive prompt or into TUI transcript."""
+        if self.tui and self.tui.running:
+            self.tui.write_transcript(text)
+        else:
+            sys.stderr.write(f"\r\033[2K{text}\n")
+            sys.stderr.flush()
 
     def start(self, interactive: bool = True):
-        """Run watcher loop and IPC server, optionally hosting an interactive console."""
+        """Run watcher loop and IPC server, optionally hosting an interactive full-pane console."""
         from .ipc import discover_daemon_target
 
         existing_target = discover_daemon_target(self.folder, self.custom_index_dir)
@@ -183,22 +187,30 @@ class DirectoryWatcher:
         is_tty = sys.stdin.isatty() and sys.stdout.isatty() if hasattr(sys.stdin, "isatty") else False
         use_interactive = interactive and is_tty
 
-        print(f"🚀 Starting cn watch for: {self.folder}")
-        print("  Performing initial sync...")
+        startup_logs = [
+            f"🚀 Starting cn watch for: {self.folder}",
+            "  Performing initial sync...",
+        ]
+
         ok, msg = self.tags_mgr.generate()
-        print(f"  .tags: {msg}")
+        startup_logs.append(f"  .tags: {msg}")
 
         with self.index_lock:
             u_files, u_chunks, p_files = self.index.sync()
-        print(f"  LanceDB: {u_files} files updated ({u_chunks} chunks), {p_files} pruned.")
-        print(f"  Index location: {self.index.cache_dir}")
+        startup_logs.append(f"  LanceDB: {u_files} files updated ({u_chunks} chunks), {p_files} pruned.")
+        startup_logs.append(f"  Index location: {self.index.cache_dir}")
 
         self.ipc_server.start()
         if self.ipc_server._unix_server:
-            print(f"  🔌 IPC Socket: {self.socket_path}")
+            startup_logs.append(f"  🔌 IPC Socket: {self.socket_path}")
         if self.ipc_server.tcp_port:
-            print(f"  🌐 IPC Loopback TCP: 127.0.0.1:{self.ipc_server.tcp_port} (port file: {self.ipc_server.port_path})")
-        print("  🧠 Agent Session Daemon: Ready (KV prompt caching enabled)")
+            startup_logs.append(f"  🌐 IPC Loopback TCP: 127.0.0.1:{self.ipc_server.tcp_port} (port file: {self.ipc_server.port_path})")
+        startup_logs.append("  🧠 Agent Session Daemon: Ready (KV prompt caching enabled)")
+
+        if not use_interactive:
+            for line in startup_logs:
+                print(line)
+            print("👀 Watching for file changes (Ctrl+C to stop)...\n")
 
         # Start watcher in background thread
         self.running = True
@@ -207,7 +219,6 @@ class DirectoryWatcher:
         self._watch_thread.start()
 
         if not use_interactive:
-            print("👀 Watching for file changes (Ctrl+C to stop)...\n")
             try:
                 while self.running:
                     time.sleep(0.5)
@@ -217,120 +228,82 @@ class DirectoryWatcher:
                 self.stop()
             return
 
-        # Interactive Console Mode
-        self._run_interactive_console()
+        # Full-Pane Interactive Console Mode
+        self._run_interactive_tui(initial_logs=startup_logs)
 
-    def _run_interactive_console(self):
-        """Host rich interactive REPL console directly inside cn watch."""
+    def _run_interactive_tui(self, initial_logs: list[str] | None = None):
+        """Host rich full-pane TUI application directly inside cn watch."""
         from .ask import load_llm_config
-        from .cli import StatusSpinner, detect_terminal_theme, format_output_links
+        from .tui import WatcherTUI
 
         config = load_llm_config(folder=self.folder)
 
-        print("\n" + "=" * 75)
-        print("🧭 Codebase-Navigator Interactive Console")
-        print("   Type your question to ask about this codebase.")
-        print("   Commands: /reset (clear context), /status (index info), /exit (quit)")
-        print("=" * 75 + "\n")
+        def handle_user_query(query: str):
+            def handle_progress(line: str):
+                self.tui.write_transcript(f"  \033[2m{line}\033[0m")
 
-        while self.running:
             try:
-                # Render clean prompt with context stats
-                short_folder = self.folder.name or str(self.folder)
-                model_name = config.model.split("/")[-1]
-                stats_str = (
-                    f" \033[2m[{self.lifetime_turn_tokens:,} tokens]\033[0m"
-                    if self.lifetime_turn_tokens > 0
-                    else ""
+                self.tui.write_transcript("  \033[36m🔍 Reasoning with agent...\033[0m")
+                answer, stats = self.handle_ask(
+                    query,
+                    cfg_data=config.to_dict(),
+                    new_session=False,
+                    verbose=False,
+                    progress_callback=handle_progress,
                 )
 
-                prompt_str = f"\033[36m[{short_folder}]\033[0m ❯ "
-                user_input = input(prompt_str).strip()
+                # Format answer in transcript
+                self.tui.write_transcript(f"\n\033[1;32m🤖 Assistant:\033[0m\n{answer}\n")
 
-                if not user_input:
-                    continue
-
-                if user_input.lower() in ("/exit", "exit", "quit", ":q"):
-                    break
-
-                if user_input.lower() in ("/reset", "reset", "/clear", "clear"):
-                    with self.session_lock:
-                        if self.session:
-                            self.session.reset()
-                        self.lifetime_turn_tokens = 0
-                        self.lifetime_prompt_tokens = 0
-                        self.lifetime_completion_tokens = 0
-                        self.turn_count = 0
-                    print("🧹 Conversation context reset. Started fresh session.\n")
-                    continue
-
-                if user_input.lower() in ("/status", "status"):
-                    code_files, doc_files = self.index.get_available_files() if hasattr(self.index, "get_available_files") else ([], [])
-                    meta = self.index.load_meta()
-                    chunks = sum(m.get("chunks", 0) for m in meta.values())
-                    print(f"📊 Status: {len(meta)} files indexed ({chunks} chunks). Model: {config.model}")
-                    print(f"   Session Context: {self.lifetime_turn_tokens:,} tokens across {self.turn_count} turns.\n")
-                    continue
-
-                # Run in-process query with spinner
-                spinner: StatusSpinner | None = None
-
-                def handle_progress(line: str):
-                    nonlocal spinner
-                    if spinner:
-                        spinner.update_message(line)
-                    else:
-                        spinner = StatusSpinner(line, stream=sys.stderr)
-                        spinner.start()
-
-                try:
-                    spinner = StatusSpinner("🔍 Searching codebase...", stream=sys.stderr)
-                    spinner.start()
-
-                    answer, stats = self.handle_ask(
-                        user_input,
-                        cfg_data=config.to_dict(),
-                        new_session=False,
-                        verbose=False,
-                        progress_callback=handle_progress,
-                    )
-                finally:
-                    if spinner:
-                        spinner.stop()
-
-                # Render formatted markdown answer
-                term_cols = shutil.get_terminal_size((80, 24)).columns if "shutil" in globals() else 80
-                divider_width = min(term_cols, 80)
-                print(f"\n\033[36m{'─' * divider_width}\033[0m\n")
-                print(
-                    format_output_links(
-                        answer,
-                        mode="auto",
-                        wrap=True,
-                        theme="auto",
-                    )
+                # Update status bar counters
+                t_total = stats.get("turn_total_tokens", 0)
+                t_in = stats.get("turn_prompt_tokens", 0)
+                t_out = stats.get("turn_completion_tokens", 0)
+                t_calls = stats.get("tool_calls_count", 0)
+                self.tui.update_stats(
+                    total=self.lifetime_turn_tokens,
+                    prompt=self.lifetime_prompt_tokens,
+                    completion=self.lifetime_completion_tokens,
+                    tool_count=t_calls,
                 )
-                print(f"\n\033[36m{'─' * divider_width}\033[0m")
-
-                # Footer stats
-                turn_in = stats.get("turn_prompt_tokens", 0)
-                turn_out = stats.get("turn_completion_tokens", 0)
-                turn_total = stats.get("turn_total_tokens", 0)
-                tool_count = stats.get("tool_calls_count", 0)
-                tool_suffix = f" | {tool_count} tool call{'s' if tool_count != 1 else ''}" if tool_count > 0 else ""
-                print(
-                    f"\033[2mTokens: {turn_total:,} (prompt: {turn_in:,}, completion: {turn_out:,}){tool_suffix} | "
-                    f"Model: {model_name}\033[0m\n"
-                )
-
-            except EOFError:
-                break
-            except KeyboardInterrupt:
-                print("\n(To quit cn watch, type /exit or press Ctrl+D)")
             except Exception as e:
-                print(f"\n❌ Error: {e}\n")
+                self.tui.write_transcript(f"\n❌ Error: {e}\n")
 
-        self.stop()
+        def handle_reset():
+            with self.session_lock:
+                if self.session:
+                    self.session.reset()
+                self.lifetime_turn_tokens = 0
+                self.lifetime_prompt_tokens = 0
+                self.lifetime_completion_tokens = 0
+                self.turn_count = 0
+
+        def handle_status() -> str:
+            meta = self.index.load_meta()
+            chunks = sum(m.get("chunks", 0) for m in meta.values())
+            return (
+                f"📊 Status: {len(meta)} files indexed ({chunks} chunks). Model: {config.model}\n"
+                f"   Session Context: {self.lifetime_turn_tokens:,} tokens across {self.turn_count} turns."
+            )
+
+        def handle_exit():
+            self.stop()
+
+        self.tui = WatcherTUI(
+            folder=self.folder,
+            model_name=config.model,
+            on_submit=handle_user_query,
+            on_reset=handle_reset,
+            on_status=handle_status,
+            on_exit=handle_exit,
+        )
+
+        # Pre-populate TUI transcript with startup logs
+        if initial_logs:
+            for log_line in initial_logs:
+                self.tui.write_transcript(log_line)
+
+        self.tui.run_loop()
 
     def stop(self):
         """Cleanly stop watcher background thread and IPC servers."""
@@ -339,4 +312,5 @@ class DirectoryWatcher:
         if self._watch_thread and self._watch_thread.is_alive():
             self._watch_thread.join(timeout=2.0)
         self.ipc_server.stop()
-        print("\n👋 cn watch stopped.")
+        if not (self.tui and self.tui.running):
+            print("\n👋 cn watch stopped.")
