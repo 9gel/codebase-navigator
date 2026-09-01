@@ -17,14 +17,15 @@ def test_source_filter(tmp_path: Path):
     assert sf(Change.added, str(tmp_path / "image.png")) is False
 
 
-def test_directory_watcher_headless(tmp_path: Path):
+def test_directory_watcher_headless(tmp_path: Path, capsys):
     from codebase_navigator.watcher import DirectoryWatcher
     import time
 
     watcher = DirectoryWatcher(tmp_path)
-    # Start headless (interactive=False) on background thread
+    # A captured pytest stream is non-TTY, so interactive=True must still use
+    # the headless path and print startup messages rather than entering the TUI.
     import threading
-    t = threading.Thread(target=watcher.start, kwargs={"interactive": False}, daemon=True)
+    t = threading.Thread(target=watcher.start, kwargs={"interactive": True}, daemon=True)
     t.start()
     time.sleep(0.1)
 
@@ -35,6 +36,10 @@ def test_directory_watcher_headless(tmp_path: Path):
         watcher.stop()
         t.join(timeout=2.0)
         assert watcher.running is False
+
+    output = capsys.readouterr().out
+    assert "🚀 Starting cn watch" in output
+    assert "👀 Watching for file changes" in output
 
 
 def test_watcher_tui_layout_and_methods(tmp_path: Path):
