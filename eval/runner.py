@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -14,7 +15,13 @@ from typing import Any
 # Ensure codebase_navigator from src/ is importable
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from codebase_navigator.ask import ask_codebase, call_chat_completions, load_llm_config
+from codebase_navigator.ask import (
+    AGENT_TOOLS_SPEC,
+    SYSTEM_PROMPT,
+    ask_codebase,
+    call_chat_completions,
+    load_llm_config,
+)
 from codebase_navigator.sandbox_bash import bash_tool_spec, run_sandboxed_bash
 
 EXERCISES_DIR = Path(__file__).parent.parent / "exercises"
@@ -37,7 +44,7 @@ def ensure_repo_cloned(repo_name: str, git_url: str, target_dir: Path) -> bool:
         )
         print(f"✅ Cloned {repo_name} successfully.")
         return True
-    except Exception as e:
+    except (subprocess.CalledProcessError, OSError) as e:
         print(f"❌ Failed to clone {repo_name}: {e}")
         return False
 
@@ -80,15 +87,62 @@ Respond in pure JSON format:
 
     try:
         resp = call_chat_completions(config.endpoint, config.api_key, payload, timeout=30.0)
-        content = resp["choices"][0]["message"]["content"].strip()
+        content = (resp["choices"][0]["message"].get("content") or "").strip()
         # Strip code markdown fences if present
         if content.startswith("```"):
             lines = content.splitlines()
             content = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
         data = json.loads(content)
         return bool(data.get("is_correct", False)), data.get("rationale", "")
-    except Exception as e:
+    except (RuntimeError, json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError) as e:
         return False, f"Judge evaluation error: {e}"
+
+
+BASELINE_SYSTEM_PROMPT = (
+    "You are an expert AI coding assistant answering questions about a codebase.\n"
+    "Guidelines:\n"
+    "1. Ground every claim in code you have actually read. Never speculate about implementation details you have not verified; cite file paths and line numbers in your answer.\n"
+    "2. Use `grep`, `find_files`, `bash` (e.g. 'git grep', 'rg', 'find'), and `list_dir` to locate relevant definitions, functions, and files.\n"
+    "3. When reading code with `read_file`, specify `offset` and `limit` to read targeted ranges rather than entire large files.\n"
+    "4. Once you locate the primary file and mechanism that answers the question, stop calling tools and synthesize your answer directly."
+)
+
+
+def estimate_tokens(text: str) -> int:
+    """Rough token estimate using the ~4 chars/token heuristic."""
+    return max(1, len(text) // 4)
+
+
+def compute_prompt_overhead() -> dict[str, int]:
+    """Compute estimated per-turn token overhead for CN and baseline agents."""
+    cn_tools_json = json.dumps(AGENT_TOOLS_SPEC, ensure_ascii=False)
+    base_tools_json = json.dumps(BASELINE_TOOLS_SPEC, ensure_ascii=False)
+    return {
+        "cn_system_prompt_tokens": estimate_tokens(SYSTEM_PROMPT),
+        "baseline_system_prompt_tokens": estimate_tokens(BASELINE_SYSTEM_PROMPT),
+        "cn_tools_spec_tokens": estimate_tokens(cn_tools_json),
+        "baseline_tools_spec_tokens": estimate_tokens(base_tools_json),
+        "cn_per_turn_overhead_tokens": estimate_tokens(SYSTEM_PROMPT)
+        + estimate_tokens(cn_tools_json),
+        "baseline_per_turn_overhead_tokens": estimate_tokens(BASELINE_SYSTEM_PROMPT)
+        + estimate_tokens(base_tools_json),
+    }
+
+
+def print_prompt_overhead() -> dict[str, int]:
+    """Print and return estimated system-prompt and tool-schema token overhead."""
+    oh = compute_prompt_overhead()
+    print("=" * 75)
+    print("📏 Prompt overhead (est. tokens, ~4 chars/token)")
+    print("-" * 75)
+    print(f"  CN system prompt:      {oh['cn_system_prompt_tokens']:>6,} tokens")
+    print(f"  Baseline system prompt:{oh['baseline_system_prompt_tokens']:>6,} tokens")
+    print(f"  CN tools spec:         {oh['cn_tools_spec_tokens']:>6,} tokens")
+    print(f"  Baseline tools spec:   {oh['baseline_tools_spec_tokens']:>6,} tokens")
+    print(f"  CN per-turn overhead:  {oh['cn_per_turn_overhead_tokens']:>6,} tokens")
+    print(f"  Base per-turn overhead:{oh['baseline_per_turn_overhead_tokens']:>6,} tokens")
+    print("=" * 75)
+    return oh
 
 
 BASELINE_TOOLS_SPEC = [
@@ -96,21 +150,21 @@ BASELINE_TOOLS_SPEC = [
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Read source lines from a file in the repository. Provide offset and limit whenever possible to read targeted ranges rather than entire files.",
+            "description": "Read source lines from a file. Use offset/limit for targeted ranges.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Relative path of the file to read (e.g. 'src/app.py').",
+                        "description": "Relative file path.",
                     },
                     "offset": {
                         "type": "integer",
-                        "description": "1-indexed line number to start reading from (optional, default: 1).",
+                        "description": "1-indexed start line (default: 1).",
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "Maximum number of lines to read (optional, default: 2000).",
+                        "description": "Max lines (default: 2000).",
                     },
                 },
                 "required": ["path"],
@@ -121,25 +175,25 @@ BASELINE_TOOLS_SPEC = [
         "type": "function",
         "function": {
             "name": "grep",
-            "description": "Run ripgrep / regex search across repository files to locate symbol names, classes, or patterns.",
+            "description": "Regex/literal search across files via ripgrep.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "pattern": {
                         "type": "string",
-                        "description": "Regular expression or literal text to search for.",
+                        "description": "Regex or literal text.",
                     },
                     "path": {
                         "type": "string",
-                        "description": "Optional subdirectory or file path to restrict the grep to.",
+                        "description": "Optional subdirectory/file to restrict to.",
                     },
                     "path_glob": {
                         "type": "string",
-                        "description": "Optional file glob filter (e.g. '*.py', 'src/**').",
+                        "description": "Optional file glob filter.",
                     },
                     "case_sensitive": {
                         "type": "boolean",
-                        "description": "Whether search is case-sensitive (default: false).",
+                        "description": "Case-sensitive (default: false).",
                     },
                 },
                 "required": ["pattern"],
@@ -150,13 +204,13 @@ BASELINE_TOOLS_SPEC = [
         "type": "function",
         "function": {
             "name": "find_files",
-            "description": "Find files matching a glob pattern in the repository.",
+            "description": "Find files matching a glob pattern.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "pattern": {
                         "type": "string",
-                        "description": "Glob pattern (e.g. '*.py', '**/*router*').",
+                        "description": "Glob pattern.",
                     }
                 },
                 "required": ["pattern"],
@@ -167,13 +221,13 @@ BASELINE_TOOLS_SPEC = [
         "type": "function",
         "function": {
             "name": "list_dir",
-            "description": "List files and subdirectories inside a directory.",
+            "description": "List files and subdirectories in a directory.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Directory to list (default: repository root '.').",
+                        "description": "Directory (default: root '.').",
                     }
                 },
             },
@@ -203,7 +257,7 @@ def execute_baseline_tool(folder: Path, name: str, args: dict[str, Any]) -> str:
             out_lines = [f"{i}: {line}" for i, line in enumerate(selected, start=s_line)]
             suffix = f"\n... [{len(lines)} total lines]" if e_idx < len(lines) else ""
             return ("\n".join(out_lines) if out_lines else "[Empty slice]") + suffix
-        except Exception as e:
+        except (OSError, ValueError) as e:
             return f"Error reading {rel_p}: {e}"
 
     elif name == "grep":
@@ -220,7 +274,9 @@ def execute_baseline_tool(folder: Path, name: str, args: dict[str, Any]) -> str:
         if sub_path:
             cmd.append(sub_path)
         try:
-            res = subprocess.run(cmd, cwd=folder, capture_output=True, text=True, timeout=10.0)
+            res = subprocess.run(
+                cmd, cwd=folder, capture_output=True, text=True, timeout=10.0, check=False
+            )
             out = res.stdout
             if not out and res.stderr:
                 out = res.stderr
@@ -241,12 +297,12 @@ def execute_baseline_tool(folder: Path, name: str, args: dict[str, Any]) -> str:
                                 matches.append(f"{rel}:{idx}:{line}")
                                 if len(matches) >= 200:
                                     break
-                    except Exception:
-                        pass
+                    except OSError:
+                        continue
                 if len(matches) >= 200:
                     break
             return "\n".join(matches) or "No matches found."
-        except Exception as e:
+        except (OSError, subprocess.TimeoutExpired) as e:
             return f"Error running grep: {e}"
 
     elif name == "bash":
@@ -259,7 +315,7 @@ def execute_baseline_tool(folder: Path, name: str, args: dict[str, Any]) -> str:
             if not matches:
                 matches = [str(p.relative_to(folder)) for p in folder.rglob(pattern) if p.is_file()]
             return "\n".join(matches[:100]) if matches else "No matching files found."
-        except Exception as e:
+        except OSError as e:
             return f"Error finding files: {e}"
 
     elif name == "list_dir":
@@ -274,7 +330,7 @@ def execute_baseline_tool(folder: Path, name: str, args: dict[str, Any]) -> str:
                 if not p.name.startswith(".")
             ]
             return "\n".join(entries[:100])
-        except Exception as e:
+        except OSError as e:
             return f"Error listing directory: {e}"
 
     return f"Unknown tool: {name}"
@@ -288,17 +344,7 @@ def run_baseline_agent(
 ) -> tuple[str, dict[str, Any]]:
     """Run typical agent harness with standard tools (read_file, grep, find_files, list_dir)."""
     messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are an expert AI coding assistant answering questions about a codebase.\n"
-                "Guidelines:\n"
-                "1. Ground every claim in code you have actually read. Never speculate about implementation details you have not verified; cite file paths and line numbers in your answer.\n"
-                "2. Use `grep`, `find_files`, `bash` (e.g. 'git grep', 'rg', 'find'), and `list_dir` to locate relevant definitions, functions, and files.\n"
-                "3. When reading code with `read_file`, specify `offset` and `limit` to read targeted ranges rather than entire large files.\n"
-                "4. Once you locate the primary file and mechanism that answers the question, stop calling tools and synthesize your answer directly."
-            ),
-        },
+        {"role": "system", "content": BASELINE_SYSTEM_PROMPT},
         {
             "role": "user",
             "content": f"Question:\n{question}",
@@ -397,6 +443,48 @@ def run_baseline_agent(
         return content, stats
 
 
+class ReportStream:
+    """Streams benchmark results to a JSON file as tasks complete.
+
+    The report is written in two phases so it is always valid JSON:
+      1. On construction, global facts (timestamp, overhead, repo plan) are written
+         with an empty ``results`` list.
+      2. Each completed task is appended and the file is atomically rewritten.
+    """
+
+    def __init__(self, save_report: Path | None, global_facts: dict[str, Any]):
+        self.data: dict[str, Any] = {**global_facts, "results": []}
+        self.report_file: Path | None = None
+        if save_report is not None:
+            self.report_file = self._resolve_path(save_report)
+            self._write()
+
+    @staticmethod
+    def _resolve_path(save_report: Path) -> Path:
+        timestamp_str = time.strftime("%Y%m%d_%H%M%S")
+        if save_report.is_dir() or not save_report.suffix:
+            save_report.mkdir(parents=True, exist_ok=True)
+            return save_report / f"report_{timestamp_str}.json"
+        save_report.parent.mkdir(parents=True, exist_ok=True)
+        return save_report
+
+    def add_result(self, result: dict[str, Any]) -> None:
+        self.data["results"].append(result)
+        self._write()
+
+    def finalize(self, summary: dict[str, Any]) -> None:
+        self.data.update(summary)
+        self._write()
+
+    def _write(self) -> None:
+        if self.report_file is None:
+            return
+        tmp = self.report_file.with_suffix(self.report_file.suffix + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(self.data, f, indent=2)
+        os.replace(tmp, self.report_file)
+
+
 def run_benchmark(
     target_repo: str | None = None,
     use_llm_judge: bool = True,
@@ -419,6 +507,27 @@ def run_benchmark(
     print("\n" + "=" * 75)
     print(f"🎯 Codebase-Navigator Benchmark & Evaluation Harness{title_suffix}")
     print("=" * 75)
+
+    overhead = print_prompt_overhead()
+
+    repo_plan = [
+        {
+            "repo": r["repo"],
+            "language": r.get("language", "Unknown"),
+            "git_url": r["git_url"],
+            "task_count": len(r.get("tasks", [])),
+        }
+        for r in benchmarks
+        if not target_repo or r["repo"].lower() == target_repo.lower()
+    ]
+
+    global_facts: dict[str, Any] = {
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "compare_baseline": compare_baseline,
+        "prompt_overhead": overhead,
+        "repo_plan": repo_plan,
+    }
+    report_stream = ReportStream(save_report, global_facts)
 
     results_report: list[dict[str, Any]] = []
     total_tasks = 0
@@ -526,7 +635,6 @@ def run_benchmark(
                 base_cached = 0
                 base_dt = 0.0
                 base_passed = False
-                base_rationale = ""
                 token_savings_pct = 0.0
                 time_savings_pct = 0.0
 
@@ -574,7 +682,7 @@ def run_benchmark(
                                     "Baseline: ⚖️ Running LLM Judge evaluation...", stream=sys.stderr
                                 )
                                 spinner.start()
-                            base_judge_pass, base_rationale = llm_judge_answer(
+                            base_judge_pass, _ = llm_judge_answer(
                                 question, key, base_answer, config
                             )
                             if spinner:
@@ -608,48 +716,46 @@ def run_benchmark(
                             f"    ⚡ Savings: Tokens {token_savings_pct:+.1f}% ({cn_tokens:,} vs {base_tokens:,}) | "
                             f"Time {time_savings_pct:+.1f}% ({cn_dt:.2f}s vs {base_dt:.2f}s)"
                         )
-                    except Exception as e_base:
+                    except Exception as e_base:  # noqa: BLE001 — isolate agent failures
                         if spinner:
                             spinner.stop()
                             spinner = None
                         print(f"    ❌ Baseline Error: {e_base}")
 
-                results_report.append(
-                    {
-                        "task_id": task_id,
-                        "repo": r_name,
-                        "question": question,
-                        "passed": cn_passed,
-                        "duration_seconds": round(cn_dt, 2),
-                        "tokens": cn_tokens,
-                        "cached_tokens": cn_cached,
-                        "judge_rationale": cn_rationale,
-                        "baseline_passed": base_passed if compare_baseline else None,
-                        "baseline_duration_seconds": round(base_dt, 2)
-                        if compare_baseline
-                        else None,
-                        "baseline_tokens": base_tokens if compare_baseline else None,
-                        "baseline_cached_tokens": base_cached if compare_baseline else None,
-                        "token_savings_percentage": token_savings_pct if compare_baseline else None,
-                        "time_savings_percentage": time_savings_pct if compare_baseline else None,
-                        "answer_preview": cn_answer[:300] + ("..." if len(cn_answer) > 300 else ""),
-                    }
-                )
+                task_result: dict[str, Any] = {
+                    "task_id": task_id,
+                    "repo": r_name,
+                    "question": question,
+                    "passed": cn_passed,
+                    "duration_seconds": round(cn_dt, 2),
+                    "tokens": cn_tokens,
+                    "cached_tokens": cn_cached,
+                    "judge_rationale": cn_rationale,
+                    "baseline_passed": base_passed if compare_baseline else None,
+                    "baseline_duration_seconds": round(base_dt, 2) if compare_baseline else None,
+                    "baseline_tokens": base_tokens if compare_baseline else None,
+                    "baseline_cached_tokens": base_cached if compare_baseline else None,
+                    "token_savings_percentage": token_savings_pct if compare_baseline else None,
+                    "time_savings_percentage": time_savings_pct if compare_baseline else None,
+                    "answer_preview": cn_answer[:300] + ("..." if len(cn_answer) > 300 else ""),
+                }
+                results_report.append(task_result)
+                report_stream.add_result(task_result)
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — isolate agent failures
                 if spinner:
                     spinner.stop()
                     spinner = None
                 print(f"    ❌ Error executing task: {e}")
-                results_report.append(
-                    {
-                        "task_id": task_id,
-                        "repo": r_name,
-                        "question": question,
-                        "passed": False,
-                        "error": str(e),
-                    }
-                )
+                task_result = {
+                    "task_id": task_id,
+                    "repo": r_name,
+                    "question": question,
+                    "passed": False,
+                    "error": str(e),
+                }
+                results_report.append(task_result)
+                report_stream.add_result(task_result)
 
     # Summary
     print("\n" + "=" * 75)
@@ -694,29 +800,15 @@ def run_benchmark(
         )
     print("=" * 75)
 
-    if save_report:
-        save_path = Path(save_report)
-        timestamp_str = time.strftime("%Y%m%d_%H%M%S")
-
-        if save_path.is_dir() or not save_path.suffix:
-            save_path.mkdir(parents=True, exist_ok=True)
-            report_file = save_path / f"report_{timestamp_str}.json"
-        else:
-            save_path.parent.mkdir(parents=True, exist_ok=True)
-            report_file = save_path
-
-        report_payload = {
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "total_tasks": total_tasks,
-            "passed_tasks": passed_tasks,
-            "score_percentage": score_pct,
-            "compare_baseline": compare_baseline,
-            "results": results_report,
-        }
-
-        with open(report_file, "w", encoding="utf-8") as f:
-            json.dump(report_payload, f, indent=2)
-        print(f"📄 Timestamped report saved to: {report_file}")
+    summary: dict[str, Any] = {
+        "total_tasks": total_tasks,
+        "passed_tasks": passed_tasks,
+        "score_percentage": score_pct,
+        "baseline_passed_tasks": baseline_passed_tasks,
+    }
+    report_stream.finalize(summary)
+    if report_stream.report_file is not None:
+        print(f"📄 Timestamped report saved to: {report_stream.report_file}")
 
     return passed_tasks == total_tasks
 

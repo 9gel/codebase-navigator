@@ -140,19 +140,15 @@ def bash_tool_spec() -> dict[str, Any]:
         "function": {
             "name": "bash",
             "description": (
-                "Run a single read-only shell command in the repository. "
-                f"Allowed commands: {allowed}. git is limited to: {git_allowed}. "
-                "No pipes, redirection, or command substitution."
+                "Run one read-only shell command. Allowed: " + allowed + ". "
+                "git limited to: " + git_allowed + ". No pipes/redirection/substitution."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "command": {
                         "type": "string",
-                        "description": (
-                            "The full command to run, e.g. 'git grep -n \"pattern\"' "
-                            "or 'find . -name \"*.py\"'."
-                        ),
+                        "description": "The command to run.",
                     },
                 },
                 "required": ["command"],
