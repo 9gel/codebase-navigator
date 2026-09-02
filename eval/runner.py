@@ -8,7 +8,9 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +28,14 @@ from codebase_navigator.sandbox_bash import bash_tool_spec, run_sandboxed_bash
 
 EXERCISES_DIR = Path(__file__).parent.parent / "exercises"
 BENCHMARK_CONFIG = Path(__file__).parent / "benchmark_tasks.json"
+
+_PRINT_LOCK = threading.Lock()
+
+
+def _safe_print(*args: Any, **kwargs: Any) -> None:
+    """Thread-safe print so parallel task workers don't interleave lines."""
+    with _PRINT_LOCK:
+        print(*args, **kwargs, flush=True)
 
 
 def ensure_repo_cloned(repo_name: str, git_url: str, target_dir: Path) -> bool:
@@ -455,6 +465,7 @@ class ReportStream:
     def __init__(self, save_report: Path | None, global_facts: dict[str, Any]):
         self.data: dict[str, Any] = {**global_facts, "results": []}
         self.report_file: Path | None = None
+        self._lock = threading.Lock()
         if save_report is not None:
             self.report_file = self._resolve_path(save_report)
             self._write()
@@ -469,12 +480,14 @@ class ReportStream:
         return save_report
 
     def add_result(self, result: dict[str, Any]) -> None:
-        self.data["results"].append(result)
-        self._write()
+        with self._lock:
+            self.data["results"].append(result)
+            self._write()
 
     def finalize(self, summary: dict[str, Any]) -> None:
-        self.data.update(summary)
-        self._write()
+        with self._lock:
+            self.data.update(summary)
+            self._write()
 
     def _write(self) -> None:
         if self.report_file is None:
@@ -485,11 +498,182 @@ class ReportStream:
         os.replace(tmp, self.report_file)
 
 
+def _run_task(
+    r_name: str,
+    r_dir: Path,
+    task: dict[str, Any],
+    config,
+    use_llm_judge: bool,
+    compare_baseline: bool,
+    use_spinner: bool,
+) -> dict[str, Any]:
+    """Execute a single benchmark task (CN agent + judge, then optional baseline) and return its result."""
+    from codebase_navigator.cli import StatusSpinner
+
+    task_id = task["id"]
+    question = task["question"]
+    key = task["expected_answer_key"]
+    req_kws = task.get("required_keywords", [])
+    req_files = task.get("required_files", [])
+
+    _safe_print(f"\n  ▶ [{task_id}] Q: {question}")
+
+    spinner: StatusSpinner | None = None
+
+    def _stop_spinner() -> None:
+        nonlocal spinner
+        if spinner:
+            spinner.stop()
+            spinner = None
+
+    def _progress(label: str, line: str) -> None:
+        nonlocal spinner
+        if not use_spinner:
+            return
+        if spinner:
+            spinner.update_message(f"{label}: {line}")
+        else:
+            spinner = StatusSpinner(f"{label}: {line}", stream=sys.stderr)
+            spinner.start()
+
+    def handle_cn_progress(line: str) -> None:
+        _progress("CN", line)
+
+    def handle_base_progress(line: str) -> None:
+        _progress("Baseline", line)
+
+    # 1. Evaluate Codebase-Navigator Agent
+    t0 = time.time()
+    try:
+        if use_spinner:
+            spinner = StatusSpinner("CN: 🔍 Searching codebase...", stream=sys.stderr)
+            spinner.start()
+
+        cn_answer, cn_stats = ask_codebase(
+            folder=r_dir,
+            question=question,
+            config=config,
+            verbose=False,
+            new_session=True,
+            progress_callback=handle_cn_progress,
+        )
+        _stop_spinner()
+
+        cn_dt = time.time() - t0
+        cn_kw_matches = [kw for kw in req_kws if kw.lower() in cn_answer.lower()]
+        cn_file_matches = [f for f in req_files if f.lower() in cn_answer.lower()]
+        cn_rule_pass = (len(cn_kw_matches) >= min(1, len(req_kws))) and (
+            len(cn_file_matches) >= min(1, len(req_files))
+        )
+
+        cn_judge_pass = False
+        cn_rationale = ""
+        if use_llm_judge and config.api_key:
+            cn_judge_pass, cn_rationale = llm_judge_answer(question, key, cn_answer, config)
+
+        cn_passed = cn_judge_pass if use_llm_judge else cn_rule_pass
+
+        cn_tokens = cn_stats.get("context_output_tokens", 0)
+        cn_cached = cn_stats.get("cached_tokens", 0)
+        cn_cached_str = f", cached: {cn_cached:,}" if cn_cached > 0 else ""
+        _safe_print(
+            f"    [CN]       Status: {'✅ PASS' if cn_passed else '❌ FAIL'} (took {cn_dt:.2f}s, tokens: {cn_tokens:,}{cn_cached_str})"
+        )
+
+        # 2. Evaluate Baseline Agent (if --compare-baseline)
+        base_tokens = 0
+        base_cached = 0
+        base_dt = 0.0
+        base_passed = False
+        token_savings_pct = 0.0
+        time_savings_pct = 0.0
+
+        if compare_baseline:
+            t_b0 = time.time()
+            try:
+                if use_spinner:
+                    spinner = StatusSpinner(
+                        "Baseline: 🤖 Reasoning with agent...", stream=sys.stderr
+                    )
+                    spinner.start()
+
+                base_answer, base_stats = run_baseline_agent(
+                    r_dir, question, config, progress_callback=handle_base_progress
+                )
+                _stop_spinner()
+
+                base_dt = time.time() - t_b0
+                base_kw_matches = [kw for kw in req_kws if kw.lower() in base_answer.lower()]
+                base_file_matches = [f for f in req_files if f.lower() in base_answer.lower()]
+                base_rule_pass = (len(base_kw_matches) >= min(1, len(req_kws))) and (
+                    len(base_file_matches) >= min(1, len(req_files))
+                )
+
+                if use_llm_judge and config.api_key:
+                    base_judge_pass, _ = llm_judge_answer(question, key, base_answer, config)
+                else:
+                    base_judge_pass = base_rule_pass
+
+                base_passed = base_judge_pass
+
+                base_tokens = base_stats.get("context_output_tokens", 0)
+                base_cached = base_stats.get("cached_tokens", 0)
+
+                if base_tokens > 0:
+                    token_savings_pct = round(((base_tokens - cn_tokens) / base_tokens) * 100, 1)
+
+                time_savings_pct = (
+                    round(((base_dt - cn_dt) / base_dt) * 100, 1) if base_dt > 0 else 0.0
+                )
+
+                base_cached_str = f", cached: {base_cached:,}" if base_cached > 0 else ""
+                _safe_print(
+                    f"    [Baseline] Status: {'✅ PASS' if base_passed else '❌ FAIL'} (took {base_dt:.2f}s, tokens: {base_tokens:,}{base_cached_str})"
+                )
+                _safe_print(
+                    f"    ⚡ Savings: Tokens {token_savings_pct:+.1f}% ({cn_tokens:,} vs {base_tokens:,}) | "
+                    f"Time {time_savings_pct:+.1f}% ({cn_dt:.2f}s vs {base_dt:.2f}s)"
+                )
+            except Exception as e_base:  # noqa: BLE001 — isolate agent failures
+                _stop_spinner()
+                _safe_print(f"    ❌ Baseline Error: {e_base}")
+
+        return {
+            "task_id": task_id,
+            "repo": r_name,
+            "question": question,
+            "passed": cn_passed,
+            "duration_seconds": round(cn_dt, 2),
+            "tokens": cn_tokens,
+            "cached_tokens": cn_cached,
+            "judge_rationale": cn_rationale,
+            "baseline_passed": base_passed if compare_baseline else None,
+            "baseline_duration_seconds": round(base_dt, 2) if compare_baseline else None,
+            "baseline_tokens": base_tokens if compare_baseline else None,
+            "baseline_cached_tokens": base_cached if compare_baseline else None,
+            "token_savings_percentage": token_savings_pct if compare_baseline else None,
+            "time_savings_percentage": time_savings_pct if compare_baseline else None,
+            "answer_preview": cn_answer[:300] + ("..." if len(cn_answer) > 300 else ""),
+        }
+
+    except Exception as e:  # noqa: BLE001 — isolate agent failures
+        _stop_spinner()
+        _safe_print(f"    ❌ Error executing task: {e}")
+        return {
+            "task_id": task_id,
+            "repo": r_name,
+            "question": question,
+            "passed": False,
+            "error": str(e),
+        }
+
+
 def run_benchmark(
     target_repo: str | None = None,
     use_llm_judge: bool = True,
     save_report: Path | None = Path("eval/reports"),
     compare_baseline: bool = False,
+    workers: int = 4,
 ):
     """Run full evaluation suite across configured repositories with optional baseline comparison."""
     if not BENCHMARK_CONFIG.is_file():
@@ -498,8 +682,6 @@ def run_benchmark(
 
     with open(BENCHMARK_CONFIG, "r", encoding="utf-8") as f:
         benchmarks = json.load(f)
-
-    from codebase_navigator.cli import StatusSpinner
 
     is_tty = sys.stderr.isatty() if hasattr(sys.stderr, "isatty") else False
 
@@ -526,17 +708,12 @@ def run_benchmark(
         "compare_baseline": compare_baseline,
         "prompt_overhead": overhead,
         "repo_plan": repo_plan,
+        "workers": workers,
     }
     report_stream = ReportStream(save_report, global_facts)
 
-    results_report: list[dict[str, Any]] = []
-    total_tasks = 0
-    passed_tasks = 0
-    baseline_passed_tasks = 0
-
-    total_cn_tokens = 0
-    total_base_tokens = 0
-
+    # Build the flat work list, cloning repos and resolving configs up front.
+    work_items: list[tuple[str, Path, Any, dict[str, Any]]] = []
     for repo_entry in benchmarks:
         r_name = repo_entry["repo"]
         if target_repo and r_name.lower() != target_repo.lower():
@@ -558,206 +735,48 @@ def run_benchmark(
         print("-" * 60)
 
         for task in repo_entry.get("tasks", []):
-            task_id = task["id"]
-            question = task["question"]
-            key = task["expected_answer_key"]
-            req_kws = task.get("required_keywords", [])
-            req_files = task.get("required_files", [])
+            work_items.append((r_name, r_dir, config, task))
 
-            total_tasks += 1
-            print(f"\n  ▶ [{task_id}] Q: {question}")
+    total_tasks = len(work_items)
+    use_spinner = is_tty and workers <= 1
 
-            spinner: StatusSpinner | None = None
+    results_report: list[dict[str, Any]] = []
+    completed = 0
 
-            def handle_cn_progress(line: str):
-                nonlocal spinner
-                if not is_tty:
-                    return
-                if spinner:
-                    spinner.update_message(f"CN: {line}")
-                else:
-                    spinner = StatusSpinner(f"CN: {line}", stream=sys.stderr)
-                    spinner.start()
-
-            # 1. Evaluate Codebase-Navigator Agent
-            t0 = time.time()
-            try:
-                if is_tty:
-                    spinner = StatusSpinner("CN: 🔍 Searching codebase...", stream=sys.stderr)
-                    spinner.start()
-
-                cn_answer, cn_stats = ask_codebase(
-                    folder=r_dir,
-                    question=question,
-                    config=config,
-                    verbose=False,
-                    new_session=True,
-                    progress_callback=handle_cn_progress,
-                )
-                if spinner:
-                    spinner.stop()
-                    spinner = None
-
-                cn_dt = time.time() - t0
-                cn_kw_matches = [kw for kw in req_kws if kw.lower() in cn_answer.lower()]
-                cn_file_matches = [f for f in req_files if f.lower() in cn_answer.lower()]
-                cn_rule_pass = (len(cn_kw_matches) >= min(1, len(req_kws))) and (
-                    len(cn_file_matches) >= min(1, len(req_files))
-                )
-
-                cn_judge_pass = False
-                cn_rationale = ""
-                if use_llm_judge and config.api_key:
-                    if is_tty:
-                        spinner = StatusSpinner(
-                            "CN: ⚖️ Running LLM Judge evaluation...", stream=sys.stderr
-                        )
-                        spinner.start()
-                    cn_judge_pass, cn_rationale = llm_judge_answer(question, key, cn_answer, config)
-                    if spinner:
-                        spinner.stop()
-                        spinner = None
-
-                cn_passed = cn_judge_pass if use_llm_judge else cn_rule_pass
-                if cn_passed:
-                    passed_tasks += 1
-
-                cn_tokens = cn_stats.get("context_output_tokens", 0)
-                cn_cached = cn_stats.get("cached_tokens", 0)
-                total_cn_tokens += cn_tokens
-                cn_cached_str = f", cached: {cn_cached:,}" if cn_cached > 0 else ""
-                print(
-                    f"    [CN]       Status: {'✅ PASS' if cn_passed else '❌ FAIL'} (took {cn_dt:.2f}s, tokens: {cn_tokens:,}{cn_cached_str})"
-                )
-
-                # 2. Evaluate Baseline Agent (if --compare-baseline)
-                base_tokens = 0
-                base_cached = 0
-                base_dt = 0.0
-                base_passed = False
-                token_savings_pct = 0.0
-                time_savings_pct = 0.0
-
-                if compare_baseline:
-
-                    def handle_base_progress(line: str):
-                        nonlocal spinner
-                        if not is_tty:
-                            return
-                        if spinner:
-                            spinner.update_message(f"Baseline: {line}")
-                        else:
-                            spinner = StatusSpinner(f"Baseline: {line}", stream=sys.stderr)
-                            spinner.start()
-
-                    t_b0 = time.time()
-                    try:
-                        if is_tty:
-                            spinner = StatusSpinner(
-                                "Baseline: 🤖 Reasoning with agent...", stream=sys.stderr
-                            )
-                            spinner.start()
-
-                        base_answer, base_stats = run_baseline_agent(
-                            r_dir, question, config, progress_callback=handle_base_progress
-                        )
-                        if spinner:
-                            spinner.stop()
-                            spinner = None
-
-                        base_dt = time.time() - t_b0
-                        base_kw_matches = [
-                            kw for kw in req_kws if kw.lower() in base_answer.lower()
-                        ]
-                        base_file_matches = [
-                            f for f in req_files if f.lower() in base_answer.lower()
-                        ]
-                        base_rule_pass = (len(base_kw_matches) >= min(1, len(req_kws))) and (
-                            len(base_file_matches) >= min(1, len(req_files))
-                        )
-
-                        if use_llm_judge and config.api_key:
-                            if is_tty:
-                                spinner = StatusSpinner(
-                                    "Baseline: ⚖️ Running LLM Judge evaluation...", stream=sys.stderr
-                                )
-                                spinner.start()
-                            base_judge_pass, _ = llm_judge_answer(
-                                question, key, base_answer, config
-                            )
-                            if spinner:
-                                spinner.stop()
-                                spinner = None
-                        else:
-                            base_judge_pass = base_rule_pass
-
-                        base_passed = base_judge_pass
-                        if base_passed:
-                            baseline_passed_tasks += 1
-
-                        base_tokens = base_stats.get("context_output_tokens", 0)
-                        base_cached = base_stats.get("cached_tokens", 0)
-                        total_base_tokens += base_tokens
-
-                        if base_tokens > 0:
-                            token_savings_pct = round(
-                                ((base_tokens - cn_tokens) / base_tokens) * 100, 1
-                            )
-
-                        time_savings_pct = (
-                            round(((base_dt - cn_dt) / base_dt) * 100, 1) if base_dt > 0 else 0.0
-                        )
-
-                        base_cached_str = f", cached: {base_cached:,}" if base_cached > 0 else ""
-                        print(
-                            f"    [Baseline] Status: {'✅ PASS' if base_passed else '❌ FAIL'} (took {base_dt:.2f}s, tokens: {base_tokens:,}{base_cached_str})"
-                        )
-                        print(
-                            f"    ⚡ Savings: Tokens {token_savings_pct:+.1f}% ({cn_tokens:,} vs {base_tokens:,}) | "
-                            f"Time {time_savings_pct:+.1f}% ({cn_dt:.2f}s vs {base_dt:.2f}s)"
-                        )
-                    except Exception as e_base:  # noqa: BLE001 — isolate agent failures
-                        if spinner:
-                            spinner.stop()
-                            spinner = None
-                        print(f"    ❌ Baseline Error: {e_base}")
-
-                task_result: dict[str, Any] = {
-                    "task_id": task_id,
-                    "repo": r_name,
-                    "question": question,
-                    "passed": cn_passed,
-                    "duration_seconds": round(cn_dt, 2),
-                    "tokens": cn_tokens,
-                    "cached_tokens": cn_cached,
-                    "judge_rationale": cn_rationale,
-                    "baseline_passed": base_passed if compare_baseline else None,
-                    "baseline_duration_seconds": round(base_dt, 2) if compare_baseline else None,
-                    "baseline_tokens": base_tokens if compare_baseline else None,
-                    "baseline_cached_tokens": base_cached if compare_baseline else None,
-                    "token_savings_percentage": token_savings_pct if compare_baseline else None,
-                    "time_savings_percentage": time_savings_pct if compare_baseline else None,
-                    "answer_preview": cn_answer[:300] + ("..." if len(cn_answer) > 300 else ""),
-                }
-                results_report.append(task_result)
-                report_stream.add_result(task_result)
-
-            except Exception as e:  # noqa: BLE001 — isolate agent failures
-                if spinner:
-                    spinner.stop()
-                    spinner = None
-                print(f"    ❌ Error executing task: {e}")
-                task_result = {
-                    "task_id": task_id,
-                    "repo": r_name,
-                    "question": question,
-                    "passed": False,
-                    "error": str(e),
-                }
-                results_report.append(task_result)
-                report_stream.add_result(task_result)
+    if workers <= 1 or total_tasks <= 1:
+        for r_name, r_dir, config, task in work_items:
+            result = _run_task(
+                r_name, r_dir, task, config, use_llm_judge, compare_baseline, use_spinner
+            )
+            results_report.append(result)
+            report_stream.add_result(result)
+            completed += 1
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            future_to_task = {
+                pool.submit(
+                    _run_task,
+                    r_name,
+                    r_dir,
+                    task,
+                    config,
+                    use_llm_judge,
+                    compare_baseline,
+                    use_spinner,
+                ): (r_name, task)
+                for r_name, r_dir, config, task in work_items
+            }
+            for future in as_completed(future_to_task):
+                result = future.result()
+                results_report.append(result)
+                report_stream.add_result(result)
+                completed += 1
+                _safe_print(f"    🧮 Progress: {completed}/{total_tasks} tasks complete")
 
     # Summary
+    passed_tasks = sum(1 for r in results_report if r.get("passed"))
+    baseline_passed_tasks = sum(1 for r in results_report if r.get("baseline_passed"))
+
     print("\n" + "=" * 75)
     score_pct = (passed_tasks / total_tasks * 100) if total_tasks > 0 else 0
     print(f"📊 CN Evaluation Score:       {passed_tasks}/{total_tasks} passed ({score_pct:.1f}%)")
@@ -825,6 +844,12 @@ if __name__ == "__main__":
         help="Run A/B benchmark against generic baseline agent (cat/rg/find/ls)",
     )
     parser.add_argument(
+        "--workers",
+        type=int,
+        default=4,
+        help="Number of tasks to run in parallel (default: 4)",
+    )
+    parser.add_argument(
         "--report",
         default="eval/reports",
         help="Directory or file path to save report (default: eval/reports/report_<timestamp>.json)",
@@ -836,4 +861,5 @@ if __name__ == "__main__":
         use_llm_judge=not args.no_judge,
         save_report=Path(args.report) if args.report else None,
         compare_baseline=args.compare_baseline,
+        workers=args.workers,
     )
