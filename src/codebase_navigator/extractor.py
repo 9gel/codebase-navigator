@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import ast
 import hashlib
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Any
 
 
@@ -42,22 +42,34 @@ class DocExtractor:
             content = "\n".join(chunk_lines).strip()
             if len(content) >= 20:
                 title = " > ".join(current_headers) if current_headers else f"{path.name} (top)"
-                chunk_id = hashlib.sha256(f"{rel_path}:{chunk_start}:{title}".encode("utf-8")).hexdigest()[:16]
-                chunks.append({
-                    "id": chunk_id,
-                    "path": rel_path,
-                    "abs_path": str(path.resolve()),
-                    "doc_type": "markdown",
-                    "title": title,
-                    "start_line": chunk_start,
-                    "end_line": end_line,
-                    "content": f"# {title}\n\n{content}",
-                })
+                chunk_id = hashlib.sha256(f"{rel_path}:{chunk_start}:{title}".encode()).hexdigest()[
+                    :16
+                ]
+                chunks.append(
+                    {
+                        "id": chunk_id,
+                        "path": rel_path,
+                        "abs_path": str(path.resolve()),
+                        "doc_type": "markdown",
+                        "title": title,
+                        "start_line": chunk_start,
+                        "end_line": end_line,
+                        "content": f"# {title}\n\n{content}",
+                    }
+                )
             chunk_lines = []
+
+        inside_fence = False
 
         # 1. Section-level chunking
         for idx, line in enumerate(lines, start=1):
-            match = header_re.match(line)
+            s_line = line.strip()
+            if s_line.startswith("```"):
+                inside_fence = not inside_fence
+                chunk_lines.append(line)
+                continue
+
+            match = header_re.match(line) if not inside_fence else None
             if match:
                 level = len(match.group(1))
                 heading_text = match.group(2).strip()
@@ -80,66 +92,88 @@ class DocExtractor:
         t_start = 0
         t_name = ""
         t_lines: list[str] = []
+        inside_fence = False
         for idx, line in enumerate(lines, start=1):
             s = line.strip()
-            match = term_re.match(s)
+            if s.startswith("```"):
+                inside_fence = not inside_fence
+
+            match = term_re.match(s) if not inside_fence else None
             if match:
                 if t_lines and t_name and len("\n".join(t_lines)) >= 30:
-                    c_id = hashlib.sha256(f"{rel_path}:{t_start}:{t_name}".encode("utf-8")).hexdigest()[:16]
-                    chunks.append({
-                        "id": c_id,
-                        "path": rel_path,
-                        "abs_path": str(path.resolve()),
-                        "doc_type": "markdown",
-                        "title": f"{path.name} > {t_name}",
-                        "start_line": t_start,
-                        "end_line": idx - 1,
-                        "content": f"# {path.name} > {t_name}\n\n" + "\n".join(t_lines),
-                    })
-                t_name = match.group(1) or match.group(2)
-                t_start = idx
-                t_lines = [line]
-            elif t_lines:
-                if s == "" and len(t_lines) >= 2 and not any(
-                    lines[min(len(lines) - 1, idx)].strip().startswith(p) for p in ["-", "*", ">"]
-                ):
-                    if len("\n".join(t_lines)) >= 30:
-                        c_id = hashlib.sha256(f"{rel_path}:{t_start}:{t_name}".encode("utf-8")).hexdigest()[:16]
-                        chunks.append({
+                    c_id = hashlib.sha256(f"{rel_path}:{t_start}:{t_name}".encode()).hexdigest()[
+                        :16
+                    ]
+                    chunks.append(
+                        {
                             "id": c_id,
                             "path": rel_path,
                             "abs_path": str(path.resolve()),
                             "doc_type": "markdown",
                             "title": f"{path.name} > {t_name}",
                             "start_line": t_start,
-                            "end_line": idx,
+                            "end_line": idx - 1,
                             "content": f"# {path.name} > {t_name}\n\n" + "\n".join(t_lines),
-                        })
+                        }
+                    )
+                t_name = match.group(1) or match.group(2)
+                t_start = idx
+                t_lines = [line]
+            elif t_lines:
+                if (
+                    s == ""
+                    and len(t_lines) >= 2
+                    and not any(
+                        lines[min(len(lines) - 1, idx)].strip().startswith(p)
+                        for p in ["-", "*", ">"]
+                    )
+                ):
+                    if len("\n".join(t_lines)) >= 30:
+                        c_id = hashlib.sha256(
+                            f"{rel_path}:{t_start}:{t_name}".encode()
+                        ).hexdigest()[:16]
+                        chunks.append(
+                            {
+                                "id": c_id,
+                                "path": rel_path,
+                                "abs_path": str(path.resolve()),
+                                "doc_type": "markdown",
+                                "title": f"{path.name} > {t_name}",
+                                "start_line": t_start,
+                                "end_line": idx,
+                                "content": f"# {path.name} > {t_name}\n\n" + "\n".join(t_lines),
+                            }
+                        )
                     t_name = ""
                     t_lines = []
                 else:
                     t_lines.append(line)
 
         if t_lines and t_name and len("\n".join(t_lines)) >= 30:
-            c_id = hashlib.sha256(f"{rel_path}:{t_start}:{t_name}".encode("utf-8")).hexdigest()[:16]
-            chunks.append({
-                "id": c_id,
-                "path": rel_path,
-                "abs_path": str(path.resolve()),
-                "doc_type": "markdown",
-                "title": f"{path.name} > {t_name}",
-                "start_line": t_start,
-                "end_line": len(lines),
-                "content": f"# {path.name} > {t_name}\n\n" + "\n".join(t_lines),
-            })
+            c_id = hashlib.sha256(f"{rel_path}:{t_start}:{t_name}".encode()).hexdigest()[:16]
+            chunks.append(
+                {
+                    "id": c_id,
+                    "path": rel_path,
+                    "abs_path": str(path.resolve()),
+                    "doc_type": "markdown",
+                    "title": f"{path.name} > {t_name}",
+                    "start_line": t_start,
+                    "end_line": len(lines),
+                    "content": f"# {path.name} > {t_name}\n\n" + "\n".join(t_lines),
+                }
+            )
 
         return chunks
 
     def extract_code_doc(self, path: Path) -> list[dict[str, Any]]:
-        """Extract docstrings and comment blocks from source files."""
-        if path.suffix == ".py":
+        """Extract structure chunks, docstrings, and comment blocks from source files."""
+        ext = path.suffix.lower()
+        if ext == ".py":
             return self._extract_python(path)
-        return self._extract_generic_comments(path)
+        chunks = self._extract_code_structure(path)
+        chunks.extend(self._extract_generic_comments(path))
+        return chunks
 
     def _extract_python(self, path: Path) -> list[dict[str, Any]]:
         try:
@@ -164,17 +198,22 @@ class DocExtractor:
         module_doc = ast.get_docstring(tree)
         if module_doc and len(module_doc.strip()) > 10:
             doc_lines = len(module_doc.splitlines())
-            chunk_id = hashlib.sha256(f"{rel_path}:1:module".encode("utf-8")).hexdigest()[:16]
-            chunks.append({
-                "id": chunk_id,
-                "path": rel_path,
-                "abs_path": str(path.resolve()),
-                "doc_type": "code_doc",
-                "title": f"{path.name} (module docstring)",
-                "start_line": 1,
-                "end_line": min(len(lines), doc_lines + 5),
-                "content": f"Module {rel_path}:\n{module_doc.strip()}",
-            })
+            chunk_id = hashlib.sha256(f"{rel_path}:1:module".encode()).hexdigest()[:16]
+            chunks.append(
+                {
+                    "id": chunk_id,
+                    "path": rel_path,
+                    "abs_path": str(path.resolve()),
+                    "doc_type": "code_doc",
+                    "title": f"{path.name} (module docstring)",
+                    "start_line": 1,
+                    "end_line": min(len(lines), doc_lines + 5),
+                    "content": (
+                        f"File: {rel_path} | Language: Python\n"
+                        f"Module {rel_path}:\n{module_doc.strip()}"
+                    ),
+                }
+            )
 
         # Functions & Classes
         for node in ast.walk(tree):
@@ -200,19 +239,172 @@ class DocExtractor:
                 if doc:
                     text_parts.append(doc.strip())
 
+                # Include initial body lines up to 50 lines or end of node
+                body_limit = min(end_l, start_l + 50)
+                body_lines = lines[start_l:body_limit]
+                if body_lines:
+                    text_parts.append("\n".join(body_lines))
+
                 text = "\n".join(text_parts).strip()
                 if len(text) > 30:
-                    chunk_id = hashlib.sha256(f"{rel_path}:{start_l}:{node_name}".encode("utf-8")).hexdigest()[:16]
-                    chunks.append({
-                        "id": chunk_id,
-                        "path": rel_path,
-                        "abs_path": str(path.resolve()),
-                        "doc_type": "code_doc",
-                        "title": f"{path.name} > {node_name} ({kind})",
-                        "start_line": start_l,
-                        "end_line": end_l,
-                        "content": f"{rel_path} ({kind} {node_name}):\n{text}",
-                    })
+                    chunk_id = hashlib.sha256(
+                        f"{rel_path}:{start_l}:{node_name}".encode()
+                    ).hexdigest()[:16]
+                    chunks.append(
+                        {
+                            "id": chunk_id,
+                            "path": rel_path,
+                            "abs_path": str(path.resolve()),
+                            "doc_type": "code_doc",
+                            "title": f"{path.name} > {node_name} ({kind})",
+                            "start_line": start_l,
+                            "end_line": body_limit,
+                            "content": (
+                                f"File: {rel_path} | Language: Python\n"
+                                f"{rel_path} ({kind} {node_name}):\n{text}"
+                            ),
+                        }
+                    )
+
+        return chunks
+
+    def _extract_code_structure(self, path: Path) -> list[dict[str, Any]]:
+        try:
+            source = path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            return []
+
+        try:
+            rel_path = str(path.relative_to(self.base_folder))
+        except ValueError:
+            rel_path = str(path)
+
+        lines = source.splitlines()
+        ext = path.suffix.lower()
+
+        lang_map = {
+            ".rs": "Rust",
+            ".go": "Go",
+            ".ts": "TypeScript",
+            ".tsx": "TypeScript",
+            ".js": "JavaScript",
+            ".jsx": "JavaScript",
+            ".java": "Java",
+            ".kt": "Kotlin",
+            ".c": "C",
+            ".cpp": "C++",
+            ".cc": "C++",
+            ".h": "C/C++ Header",
+            ".hpp": "C++ Header",
+            ".cs": "C#",
+            ".rb": "Ruby",
+            ".php": "PHP",
+            ".swift": "Swift",
+        }
+        lang = lang_map.get(ext, "Code")
+
+        # Regex definitions
+        rust_def = re.compile(
+            r"^\s*(?:pub(?:\s*\([^)]+\))?\s+)?(?:async\s+)?(?:unsafe\s+)?(?:extern(?:\s+\"[^\"]+\")?\s+)?"
+            r"(fn|struct|enum|trait|type|mod)\s+([A-Za-z0-9_]+)"
+        )
+        rust_impl = re.compile(
+            r"^\s*(?:unsafe\s+)?impl(?:\s*<[^>]+>)?\s+(?:([A-Za-z0-9_]+)\s+for\s+)?([A-Za-z0-9_]+)"
+        )
+        go_func = re.compile(r"^\s*func\s+(?:\([^)]+\)\s+)?([A-Za-z0-9_]+)\s*\(")
+        go_type = re.compile(r"^\s*type\s+([A-Za-z0-9_]+)\s+(struct|interface)")
+        js_func = re.compile(
+            r"^\s*(?:export(?:\s+default)?\s+)?(?:async\s+)?function(?:\s*\*|\s+)\s*([A-Za-z0-9_$]+)\s*\("
+        )
+        js_class = re.compile(r"^\s*(?:export(?:\s+default)?\s+)?class\s+([A-Za-z0-9_$]+)")
+        js_const_fn = re.compile(
+            r"^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z0-9_$]+)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z0-9_$]+)\s*=>"
+        )
+        js_ts_interface = re.compile(r"^\s*(?:export\s+)?(interface|type)\s+([A-Za-z0-9_$]+)")
+        c_java_decl = re.compile(
+            r"^\s*(?:(?:public|protected|private|static|final|abstract|synchronized|native|constexpr|inline|virtual)\s+)*"
+            r"(?:class|interface|record|struct|enum)\s+([A-Za-z0-9_]+)"
+        )
+        c_java_method = re.compile(
+            r"^\s*(?:(?:public|protected|private|static|final|abstract|synchronized|native|constexpr|inline|virtual)\s+)+"
+            r"[A-Za-z0-9_<>,\[\]\s*&]+\s+([A-Za-z0-9_]+)\s*\([^;]*\)\s*(?:throws\s+[A-Za-z0-9_,\s]+)?\s*\{?"
+        )
+
+        chunks: list[dict[str, Any]] = []
+
+        for idx, line in enumerate(lines, start=1):
+            s = line.strip()
+            if not s or s.startswith(("//", "/*", "*", "#")):
+                continue
+
+            symbol_name = ""
+            kind = "code"
+
+            if ext == ".rs":
+                m = rust_def.match(line)
+                if m:
+                    kind = m.group(1)
+                    symbol_name = m.group(2)
+                else:
+                    m2 = rust_impl.match(line)
+                    if m2:
+                        kind = "impl"
+                        symbol_name = (
+                            f"{m2.group(1)} for {m2.group(2)}" if m2.group(1) else m2.group(2)
+                        )
+            elif ext == ".go":
+                m = go_func.match(line)
+                if m:
+                    kind = "func"
+                    symbol_name = m.group(1)
+                else:
+                    m2 = go_type.match(line)
+                    if m2:
+                        kind = m2.group(2)
+                        symbol_name = m2.group(1)
+            elif ext in {".js", ".jsx", ".ts", ".tsx"}:
+                m = js_func.match(line) or js_class.match(line) or js_const_fn.match(line)
+                if m:
+                    kind = "function"
+                    symbol_name = m.group(1)
+                else:
+                    m2 = js_ts_interface.match(line)
+                    if m2:
+                        kind = m2.group(1)
+                        symbol_name = m2.group(2)
+            elif ext in {".java", ".kt", ".c", ".cpp", ".cc", ".h", ".hpp", ".cs"}:
+                m = c_java_decl.match(line)
+                if m:
+                    kind = "type"
+                    symbol_name = m.group(1)
+                else:
+                    m2 = c_java_method.match(line)
+                    if m2:
+                        kind = "method"
+                        symbol_name = m2.group(1)
+
+            if symbol_name:
+                end_l = min(len(lines), idx + 35)
+                chunk_body = "\n".join(lines[idx - 1 : end_l])
+                if len(chunk_body.strip()) >= 30:
+                    chunk_id = hashlib.sha256(
+                        f"{rel_path}:{idx}:{symbol_name}".encode()
+                    ).hexdigest()[:16]
+                    chunks.append(
+                        {
+                            "id": chunk_id,
+                            "path": rel_path,
+                            "abs_path": str(path.resolve()),
+                            "doc_type": "code_doc",
+                            "title": f"{path.name} > {symbol_name} ({kind})",
+                            "start_line": idx,
+                            "end_line": end_l,
+                            "content": (
+                                f"File: {rel_path} | Language: {lang}\n"
+                                f"{rel_path} ({kind} {symbol_name}):\n{chunk_body}"
+                            ),
+                        }
+                    )
 
         return chunks
 
@@ -250,32 +442,46 @@ class DocExtractor:
                 if len(comment_block) >= 3:
                     text = "\n".join(comment_block).strip()
                     if len(text) > 40:
-                        chunk_id = hashlib.sha256(f"{rel_path}:{block_start}:comment".encode("utf-8")).hexdigest()[:16]
-                        chunks.append({
-                            "id": chunk_id,
-                            "path": rel_path,
-                            "abs_path": str(path.resolve()),
-                            "doc_type": "code_doc",
-                            "title": f"{path.name}: comment (L{block_start}-{idx-1})",
-                            "start_line": block_start,
-                            "end_line": idx - 1,
-                            "content": f"{rel_path} (L{block_start}-{idx-1}):\n{text}",
-                        })
+                        chunk_id = hashlib.sha256(
+                            f"{rel_path}:{block_start}:comment".encode()
+                        ).hexdigest()[:16]
+                        chunks.append(
+                            {
+                                "id": chunk_id,
+                                "path": rel_path,
+                                "abs_path": str(path.resolve()),
+                                "doc_type": "code_doc",
+                                "title": f"{path.name}: comment (L{block_start}-{idx - 1})",
+                                "start_line": block_start,
+                                "end_line": idx - 1,
+                                "content": (
+                                    f"File: {rel_path}\n"
+                                    f"{rel_path} (L{block_start}-{idx - 1}):\n{text}"
+                                ),
+                            }
+                        )
                 comment_block = []
 
         if len(comment_block) >= 3:
             text = "\n".join(comment_block).strip()
             if len(text) > 40:
-                chunk_id = hashlib.sha256(f"{rel_path}:{block_start}:comment".encode("utf-8")).hexdigest()[:16]
-                chunks.append({
-                    "id": chunk_id,
-                    "path": rel_path,
-                    "abs_path": str(path.resolve()),
-                    "doc_type": "code_doc",
-                    "title": f"{path.name}: comment (L{block_start}-{len(lines)})",
-                    "start_line": block_start,
-                    "end_line": len(lines),
-                    "content": f"{rel_path} (L{block_start}-{len(lines)}):\n{text}",
-                })
+                chunk_id = hashlib.sha256(f"{rel_path}:{block_start}:comment".encode()).hexdigest()[
+                    :16
+                ]
+                chunks.append(
+                    {
+                        "id": chunk_id,
+                        "path": rel_path,
+                        "abs_path": str(path.resolve()),
+                        "doc_type": "code_doc",
+                        "title": f"{path.name}: comment (L{block_start}-{len(lines)})",
+                        "start_line": block_start,
+                        "end_line": len(lines),
+                        "content": (
+                            f"File: {rel_path}\n"
+                            f"{rel_path} (L{block_start}-{len(lines)}):\n{text}"
+                        ),
+                    }
+                )
 
         return chunks

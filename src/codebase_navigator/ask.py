@@ -598,11 +598,44 @@ def call_chat_completions(
         raise RuntimeError(f"Failed to connect to LLM endpoint ({url}): {e.reason}") from e
 
 
+def build_compact_tree(folder: Path, max_depth: int = 2, max_entries: int = 50) -> str:
+    """Build a compact directory tree for high-level repository context."""
+    from .config import IGNORE_DIR_NAMES
+
+    entries: list[str] = []
+    base = folder.resolve()
+
+    def _walk(curr: Path, depth: int, prefix: str):
+        if depth > max_depth or len(entries) >= max_entries:
+            return
+        try:
+            children = sorted(curr.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+        except (PermissionError, OSError):
+            return
+
+        for child in children:
+            if len(entries) >= max_entries:
+                entries.append(f"{prefix}... (truncated)")
+                return
+            name = child.name
+            if name.startswith(".") or name in IGNORE_DIR_NAMES:
+                continue
+
+            if child.is_dir():
+                entries.append(f"{prefix}{name}/")
+                _walk(child, depth + 1, prefix + "  ")
+            else:
+                entries.append(f"{prefix}{name}")
+
+    _walk(base, 1, "")
+    return "\n".join(entries)
+
+
 SYSTEM_PROMPT = """You are an expert code navigation agent. Answer questions about this repository accurately using concrete evidence from code you have actually read.
 
 Guidelines:
 1. Ground every claim in code you have read. Never speculate about implementation you have not verified; cite file paths and line numbers.
-2. Trust the pre-flight retrieval first. The "Pre-flight Codebase Retrieval" and "Exact Symbol Definitions" sections are already ranked, relevant context for this question — answer directly from them and verify only the specific lines you cite with `read_code`. If that context is insufficient or off-target, refine with `search` or `tags_lookup`. Use literal `grep_search` (or read-only `bash`) only for trivial exact-string lookups, and `find_references`/`call_tree` only when you must trace callers/callees.
+2. Consider the pre-flight retrieval first. The "Pre-flight Codebase Retrieval" and "Exact Symbol Definitions" sections are already ranked context for this question — evaluate them and verify specific lines with `read_code`. If that context is insufficient, off-target, or absent, search with `search` or `tags_lookup`. Use literal `grep_search` (or read-only `bash`) only for exact-string lookups, and `find_references`/`call_tree` only when tracing callers/callees.
 3. When reading code, pass `start_line`/`end_line` to read targeted ranges rather than entire files.
 4. Once you have located the primary file and mechanism that answers the question, stop calling tools and synthesize your answer. Do not re-verify with additional tools unless a claim is uncertain, and do not recursively trace downstream library internals or external dependencies unless asked.
 
@@ -807,6 +840,10 @@ class AgentSession:
 
         emit(f"🤖 Retrieved {len(initial_chunks)} code/doc chunks. Reasoning with agent...")
 
+        # Compact repository tree
+        repo_tree = build_compact_tree(self.folder, max_depth=2, max_entries=50)
+        tree_section = f"Repository Structure:\n```\n{repo_tree}\n```\n\n" if repo_tree else ""
+
         # Exact symbol tag discovery
         preflight_symbols = find_preflight_symbols(self.folder, question)
         symbols_text = ""
@@ -814,19 +851,30 @@ class AgentSession:
             sym_lines = []
             for s in preflight_symbols:
                 sym_lines.append(
-                    f"- `{s['symbol']}` ({s.get('kind', 'symbol')}) at [{s['path']}:{s['line']}](file://{s['abs_path']}#L{s['line']})\n  Preview: `{s.get('preview', '')}`"
+                    f"- `{s['symbol']}` ({s.get('kind', 'symbol')}) at "
+                    f"[{s['path']}:{s['line']}](file://{s['abs_path']}#L{s['line']})\n"
+                    f"  Preview: `{s.get('preview', '')}`"
                 )
             symbols_text = "📌 Exact Symbol Definitions (.tags):\n" + "\n".join(sym_lines) + "\n\n"
 
-        initial_context_text = format_chunks_for_llm(initial_chunks, full_limit=3)
+        if initial_chunks:
+            initial_context_text = format_chunks_for_llm(initial_chunks, full_limit=3)
+            retrieval_text = (
+                f"The 'Pre-flight Codebase Retrieval' and 'Exact Symbol Definitions' sections "
+                f"below are ranked, relevant context retrieved for this question. "
+                f"Consider them and use `read_code` to verify the exact lines you cite. "
+                f"If insufficient or off-target, run a new `search`.\n\n"
+                f"{symbols_text}"
+                f"Pre-flight Codebase Retrieval:\n{initial_context_text}"
+            )
+        else:
+            retrieval_text = (
+                f"{symbols_text}"
+                f"No confident pre-flight retrieval chunks found. "
+                f"Use `search` or `tags_lookup` to explore relevant code."
+            )
 
-        user_content = (
-            f"Question:\n{question}\n\n"
-            f"The 'Pre-flight Codebase Retrieval' and 'Exact Symbol Definitions' sections below are ranked, relevant context already retrieved for this question. "
-            f"Answer from them directly; use `read_code` to verify the exact lines you cite. Only run a new `search` if this context is insufficient or off-target.\n\n"
-            f"{symbols_text}"
-            f"Pre-flight Codebase Retrieval:\n{initial_context_text}"
-        )
+        user_content = f"Question:\n{question}\n\n{tree_section}{retrieval_text}"
         self.messages.append({"role": "user", "content": user_content})
 
         searches_remaining = self.config.max_searches

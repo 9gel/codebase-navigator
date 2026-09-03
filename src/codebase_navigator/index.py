@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import lancedb
 
 if TYPE_CHECKING:
     from fastembed import TextEmbedding
+
+from lancedb.index import FTS
 
 from .config import (
     DOC_SCHEMA,
@@ -22,8 +24,25 @@ from .extractor import DocExtractor
 from .tags import get_available_files
 
 COMMON_STOPWORDS = {
-    "what", "is", "a", "an", "the", "in", "on", "of", "for", "to",
-    "and", "or", "how", "why", "where", "which", "does", "do", "can",
+    "what",
+    "is",
+    "a",
+    "an",
+    "the",
+    "in",
+    "on",
+    "of",
+    "for",
+    "to",
+    "and",
+    "or",
+    "how",
+    "why",
+    "where",
+    "which",
+    "does",
+    "do",
+    "can",
 }
 
 
@@ -43,6 +62,7 @@ class VectorIndex:
     def model(self) -> TextEmbedding:
         if self._model is None:
             from fastembed import TextEmbedding
+
             with silence_stdio():
                 self._model = TextEmbedding(model_name=EMBEDDING_MODEL_NAME)
         return self._model
@@ -52,6 +72,14 @@ class VectorIndex:
             self.table = self.db.open_table("documents")
         except Exception:
             self.table = self.db.create_table("documents", schema=DOC_SCHEMA, mode="create")
+
+    def _ensure_fts_index(self):
+        """Create or update full-text search index on content column if rows exist."""
+        try:
+            if len(self.table) > 0:
+                self.table.create_index("content", config=FTS(), replace=True)
+        except Exception:
+            pass
 
     def load_meta(self) -> dict[str, dict[str, Any]]:
         if self.meta_file.exists():
@@ -142,6 +170,9 @@ class VectorIndex:
 
             self.table.add(all_chunks_to_embed)
 
+        if files_to_index or force:
+            self._ensure_fts_index()
+
         for fpath, chunks in files_to_index:
             try:
                 rel_p = str(fpath.relative_to(self.folder))
@@ -174,6 +205,7 @@ class VectorIndex:
             meta = self.load_meta()
             meta.pop(rel_p, None)
             self.save_meta(meta)
+            self._ensure_fts_index()
             return 0
 
         extractor = DocExtractor(self.folder)
@@ -188,6 +220,8 @@ class VectorIndex:
             for chunk, vec in zip(chunks, embeddings):
                 chunk["vector"] = vec.tolist() if hasattr(vec, "tolist") else list(vec)
             self.table.add(chunks)
+
+        self._ensure_fts_index()
 
         meta = self.load_meta()
         stat = fpath.stat()
@@ -205,28 +239,39 @@ class VectorIndex:
         limit: int = 5,
         doc_type: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Hybrid semantic vector search with keyword & title match re-ranking."""
+        """True hybrid semantic vector + BM25 FTS search with Reciprocal Rank Fusion."""
+        if len(self.table) == 0:
+            return []
+
         q_vec = list(self.model.embed([query]))[0]
         if hasattr(q_vec, "tolist"):
             q_vec = q_vec.tolist()
         else:
             q_vec = list(q_vec)
-        fetch_limit = max(limit * 4, 20)
-        search_query = self.table.search(q_vec).metric("cosine").limit(fetch_limit)
+        fetch_limit = max(limit * 4, 25)
 
+        # Normalize doc_type filter
+        norm_type = None
         if doc_type and doc_type != "all":
-            norm_type = "markdown" if doc_type in ["md", "markdown"] else "code_doc" if doc_type in ["code", "code_doc"] else doc_type
+            norm_type = (
+                "markdown"
+                if doc_type in ["md", "markdown"]
+                else "code_doc"
+                if doc_type in ["code", "code_doc"]
+                else doc_type
+            )
+
+        # 1. Vector Search
+        search_query = self.table.search(q_vec).metric("cosine").limit(fetch_limit)
+        if norm_type:
             search_query = search_query.where(f'doc_type = "{norm_type}"')
 
         try:
-            raw_results = search_query.to_list()
+            vector_results = search_query.to_list()
         except Exception:
-            raw_results = []
+            vector_results = []
 
-        if not raw_results:
-            return []
-
-        # Extract significant query terms
+        # 2. BM25 / FTS Search
         clean_terms = [
             w.lower()
             for w in re.findall(r"[A-Za-z0-9_]+", query)
@@ -234,42 +279,81 @@ class VectorIndex:
         ]
         clean_phrase = " ".join(clean_terms)
 
+        fts_results: list[dict[str, Any]] = []
+        if clean_terms:
+            fts_query_str = clean_phrase if clean_phrase else " ".join(clean_terms)
+            try:
+                fts_query = self.table.search(fts_query_str, query_type="fts").limit(fetch_limit)
+                if norm_type:
+                    fts_query = fts_query.where(f'doc_type = "{norm_type}"')
+                fts_results = fts_query.to_list()
+            except Exception:
+                fts_results = []
+
+        # 3. Reciprocal Rank Fusion (RRF, k=60)
+        k_rrf = 60
+        merged_candidates: dict[str, dict[str, Any]] = {}
+        rrf_scores: dict[str, float] = {}
+
+        for rank, r in enumerate(vector_results):
+            cid = r.get("id") or f"{r.get('path')}:{r.get('start_line')}"
+            merged_candidates[cid] = r
+            rrf_scores[cid] = rrf_scores.get(cid, 0.0) + (1.0 / (k_rrf + rank + 1))
+
+        for rank, r in enumerate(fts_results):
+            cid = r.get("id") or f"{r.get('path')}:{r.get('start_line')}"
+            if cid not in merged_candidates:
+                merged_candidates[cid] = r
+            rrf_scores[cid] = rrf_scores.get(cid, 0.0) + (1.0 / (k_rrf + rank + 1))
+
+        if not merged_candidates:
+            return []
+
+        # Normalization factor for RRF: max theoretical score with rank 0 in both is 2 / (k_rrf + 1)
+        max_rrf = 2.0 / (k_rrf + 1)
+
         scored_results: list[dict[str, Any]] = []
-        for r in raw_results:
-            dist = r.get("_distance", 0.0)
-            base_score = max(0.0, min(1.0, 1.0 - (dist / 2.0)))
+        for cid, r in merged_candidates.items():
+            dist = r.get("_distance", None)
+            if dist is not None:
+                vec_base = max(0.0, min(1.0, 1.0 - (dist / 2.0)))
+            else:
+                vec_base = 0.50
+
+            # Base score combining vector proximity and RRF rank
+            norm_rrf = rrf_scores.get(cid, 0.0) / max_rrf
+            base_score = max(vec_base, norm_rrf * 0.90)
             score = base_score
 
             title_lower = r.get("title", "").lower()
             content_lower = r.get("content", "").lower()
-            dtype = r.get("doc_type", "")
 
-            # 1. Exact phrase match in title
+            # Exact phrase match in title
             if clean_phrase and clean_phrase in title_lower:
                 score += 0.12
-            # 2. Individual term matches in title
+            # Individual term matches in title
             for term in clean_terms:
                 if term in title_lower:
                     score += 0.04
-
-            # 3. Term definitions or documentation boost
-            if dtype == "markdown":
-                score += 0.04
+                # Content keyword match boost (+0.02 per term)
+                elif term in content_lower:
+                    score += 0.02
 
             score = min(0.99, score)
 
-            scored_results.append({
-                "score": round(score, 3),
-                "base_score": round(base_score, 3),
-                "path": r["path"],
-                "abs_path": r["abs_path"],
-                "doc_type": r["doc_type"],
-                "title": r["title"],
-                "start_line": r["start_line"],
-                "end_line": r["end_line"],
-                "content": r["content"],
-            })
+            scored_results.append(
+                {
+                    "score": round(score, 3),
+                    "base_score": round(base_score, 3),
+                    "path": r["path"],
+                    "abs_path": r["abs_path"],
+                    "doc_type": r["doc_type"],
+                    "title": r["title"],
+                    "start_line": r["start_line"],
+                    "end_line": r["end_line"],
+                    "content": r["content"],
+                }
+            )
 
-        # Re-sort by boosted hybrid score
         scored_results.sort(key=lambda x: x["score"], reverse=True)
         return scored_results[:limit]

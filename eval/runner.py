@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -95,17 +96,44 @@ Respond in pure JSON format:
         "temperature": 0.0,
     }
 
-    try:
-        resp = call_chat_completions(config.endpoint, config.api_key, payload, timeout=30.0)
-        content = (resp["choices"][0]["message"].get("content") or "").strip()
-        # Strip code markdown fences if present
-        if content.startswith("```"):
-            lines = content.splitlines()
-            content = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
-        data = json.loads(content)
-        return bool(data.get("is_correct", False)), data.get("rationale", "")
-    except (RuntimeError, json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError) as e:
-        return False, f"Judge evaluation error: {e}"
+    attempts = 3
+    last_error: Exception | None = None
+    raw_response_content = ""
+
+    for attempt in range(attempts):
+        try:
+            resp = call_chat_completions(config.endpoint, config.api_key, payload, timeout=30.0)
+            raw_response_content = (resp["choices"][0]["message"].get("content") or "").strip()
+            content = raw_response_content
+            # Robust JSON stripping for ```json ... ``` or ``` ... ```
+            fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", content)
+            if fence_match:
+                content = fence_match.group(1).strip()
+            elif content.startswith("```"):
+                lines = content.splitlines()
+                content = "\n".join(
+                    lines[1:-1] if lines[-1].startswith("```") else lines[1:]
+                ).strip()
+
+            data = json.loads(content)
+            return bool(data.get("is_correct", False)), data.get("rationale", "")
+        except (
+            RuntimeError,
+            json.JSONDecodeError,
+            KeyError,
+            IndexError,
+            TypeError,
+            ValueError,
+        ) as e:
+            last_error = e
+            if attempt < attempts - 1:
+                time.sleep(1.0 * (attempt + 1))
+                continue
+
+    error_msg = f"Judge evaluation error: {last_error}"
+    if raw_response_content:
+        error_msg += f" (raw judge response: {raw_response_content!r})"
+    return False, error_msg
 
 
 BASELINE_SYSTEM_PROMPT = (

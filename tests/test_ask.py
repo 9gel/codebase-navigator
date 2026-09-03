@@ -22,7 +22,14 @@ from codebase_navigator.ask import (
 
 def test_load_llm_config_defaults(monkeypatch, tmp_path):
     # Clear any ambient env vars
-    for env in ["CN_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY", "CN_ENDPOINT", "CN_MODEL", "CODEBASE_NAVIGATOR_MODEL"]:
+    for env in [
+        "CN_API_KEY",
+        "OPENROUTER_API_KEY",
+        "OPENAI_API_KEY",
+        "CN_ENDPOINT",
+        "CN_MODEL",
+        "CODEBASE_NAVIGATOR_MODEL",
+    ]:
         monkeypatch.delenv(env, raising=False)
 
     # Point home to clean tmp_path so user ~/.config is isolated
@@ -160,8 +167,8 @@ def test_find_preflight_symbols(tmp_path: Path):
     # Create a mock .tags file
     tag_content = (
         "!_TAG_FILE_FORMAT\t2\t/extended format/\n"
-        "FlaskGroup\tsrc/cli.py\t/^class FlaskGroup:$/;\"\tc\tline:50\n"
-        "SecureCookie\tsrc/sessions.py\t/^class SecureCookie:$/;\"\tc\tline:100\n"
+        'FlaskGroup\tsrc/cli.py\t/^class FlaskGroup:$/;"\tc\tline:50\n'
+        'SecureCookie\tsrc/sessions.py\t/^class SecureCookie:$/;"\tc\tline:100\n'
     )
     (tmp_path / ".tags").write_text(tag_content, encoding="utf-8")
 
@@ -296,7 +303,9 @@ def test_ask_codebase_with_tool_calling_loop(tmp_path: Path):
         patch("codebase_navigator.ask.execute_search", mock_search),
         patch("codebase_navigator.ask.call_chat_completions", mock_chat),
     ):
-        answer, _stats = ask_codebase(tmp_path, "Where is the IPCServer defined?", cfg, verbose=False)
+        answer, _stats = ask_codebase(
+            tmp_path, "Where is the IPCServer defined?", cfg, verbose=False
+        )
         assert answer == "IPCServer is implemented in `src/ipc.py`."
         assert mock_search.call_count == 2
         assert mock_chat.call_count == 2
@@ -309,15 +318,16 @@ def test_custom_system_prompt_configuration(tmp_path: Path, monkeypatch):
     dot_cn = tmp_path / ".codebase-navigator"
     dot_cn.mkdir()
     cfg_file = dot_cn / "config.toml"
-    cfg_file.write_text('''
+    cfg_file.write_text("""
 [llm]
 system_prompt = "You are a specialized security auditor."
-''')
+""")
 
     cfg = load_llm_config(folder=tmp_path)
     assert cfg.system_prompt == "You are a specialized security auditor."
 
     from codebase_navigator.ask import AgentSession, build_effective_system_prompt
+
     eff_prompt = build_effective_system_prompt(cfg.system_prompt)
     assert "Additional User Instructions:" in eff_prompt
     assert "You are a specialized security auditor." in eff_prompt
@@ -325,3 +335,48 @@ system_prompt = "You are a specialized security auditor."
     session = AgentSession(tmp_path, cfg)
     assert session.messages[0]["role"] == "system"
     assert "You are a specialized security auditor." in session.messages[0]["content"]
+
+
+def test_build_compact_tree(tmp_path: Path):
+    from codebase_navigator.ask import build_compact_tree
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.py").write_text("print('hello')")
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "foo.js").write_text("// ignore")
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "README.md").write_text("# Test")
+
+    tree = build_compact_tree(tmp_path, max_depth=2, max_entries=50)
+    assert "src/" in tree
+    assert "main.py" in tree
+    assert "README.md" in tree
+    assert "node_modules" not in tree
+    assert ".git" not in tree
+
+
+def test_ask_empty_seed_skips_preflight_framing(tmp_path: Path):
+    from unittest.mock import MagicMock, patch
+
+    from codebase_navigator.ask import AgentSession, LLMConfig
+
+    cfg = LLMConfig(api_key="test-key")
+    (tmp_path / "main.py").write_text("print(1)")
+    session = AgentSession(tmp_path, cfg)
+
+    mock_search = MagicMock(return_value=[])
+    mock_chat = MagicMock(
+        return_value={"choices": [{"message": {"role": "assistant", "content": "Done"}}]}
+    )
+
+    with (
+        patch("codebase_navigator.ask.execute_search", mock_search),
+        patch("codebase_navigator.ask.call_chat_completions", mock_chat),
+    ):
+        ans, _ = session.ask("Where is foo?", verbose=False)
+        assert ans == "Done"
+        # Verify user message structure
+        user_msg = session.messages[1]["content"]
+        assert "Repository Structure:" in user_msg
+        assert "No confident pre-flight retrieval chunks found." in user_msg
+        assert "Pre-flight Codebase Retrieval:" not in user_msg
