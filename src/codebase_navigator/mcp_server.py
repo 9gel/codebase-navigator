@@ -43,7 +43,7 @@ def resolve_repository_root(
     ctx: Context | None = None,
 ) -> Path:
     """Resolve target repository directory using hierarchy:
-    
+
     1. Explicit `repo_root` parameter passed in tool call.
     2. Client declared workspace root from MCP handshake (`roots/list`).
     3. Last successfully used / auto-discovered repository root.
@@ -131,6 +131,7 @@ def codebase_search(
 
     # 1. Check if live cn watch daemon is active for this folder (via socket or TCP port)
     from .ipc import discover_daemon_target, query_target
+
     target = discover_daemon_target(folder)
     if target is not None:
         results = query_target(target, query, limit=limit, doc_type=doc_type)
@@ -222,9 +223,13 @@ def codebase_references(
     for r in refs:
         t = r.get("type", "reference")
         if t == "definition":
-            lines.append(f"📌 Definition: [{r['path']}:{r['line']}](file://{r['abs_path']}#L{r['line']}) ({r.get('kind', 'symbol')}) - `{r.get('preview', '')}`")
+            lines.append(
+                f"📌 Definition: [{r['path']}:{r['line']}](file://{r['abs_path']}#L{r['line']}) ({r.get('kind', 'symbol')}) - `{r.get('preview', '')}`"
+            )
         else:
-            lines.append(f"🔍 Usage/Caller: [{r['path']}:{r['line']}](file://{r['abs_path']}#L{r['line']}) - `{r.get('context', '')}`")
+            lines.append(
+                f"🔍 Usage/Caller: [{r['path']}:{r['line']}](file://{r['abs_path']}#L{r['line']}) - `{r.get('context', '')}`"
+            )
     return "\n".join(lines)
 
 
@@ -254,11 +259,15 @@ def codebase_call_tree(
         out.append("Callers (Functions/Files that invoke this symbol):")
         for c in tree["callers"]:
             fn_ctx = f" (in `{c.get('caller_function')}`)" if c.get("caller_function") else ""
-            out.append(f"  - [{c['path']}:{c.get('call_line', 1)}](file://{c['abs_path']}#L{c.get('call_line', 1)}){fn_ctx}: `{c.get('preview', '')}`")
+            out.append(
+                f"  - [{c['path']}:{c.get('call_line', 1)}](file://{c['abs_path']}#L{c.get('call_line', 1)}){fn_ctx}: `{c.get('preview', '')}`"
+            )
     if tree.get("callees"):
         out.append("Callees (Functions invoked by this symbol):")
         for c in tree["callees"]:
-            out.append(f"  - Calls `{c.get('symbol')}` at [{c['path']}:{c['line']}](file://{c['abs_path']}#L{c['line']})")
+            out.append(
+                f"  - Calls `{c.get('symbol')}` at [{c['path']}:{c['line']}](file://{c['abs_path']}#L{c['line']})"
+            )
 
     if not tree.get("callers") and not tree.get("callees") and not tree.get("definitions"):
         return f"No call tree data found for '{symbol}' in {folder.name}."
@@ -284,13 +293,17 @@ def codebase_grep(
         repo_root: Optional path to target repository root.
     """
     folder = resolve_repository_root(repo_root, ctx)
-    matches = tool_grep_search(folder, pattern, path_glob=path_glob, case_sensitive=case_sensitive, limit=limit)
+    matches = tool_grep_search(
+        folder, pattern, path_glob=path_glob, case_sensitive=case_sensitive, limit=limit
+    )
     if not matches:
         return f"No pattern matches found for '{pattern}' in {folder.name}."
 
     lines = []
     for m in matches:
-        lines.append(f"- [{m['path']}:{m['line']}](file://{m['abs_path']}#L{m['line']}): `{m['content']}`")
+        lines.append(
+            f"- [{m['path']}:{m['line']}](file://{m['abs_path']}#L{m['line']}): `{m['content']}`"
+        )
     return "\n".join(lines)
 
 

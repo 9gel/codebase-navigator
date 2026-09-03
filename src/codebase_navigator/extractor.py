@@ -42,21 +42,54 @@ class DocExtractor:
             content = "\n".join(chunk_lines).strip()
             if len(content) >= 20:
                 title = " > ".join(current_headers) if current_headers else f"{path.name} (top)"
-                chunk_id = hashlib.sha256(f"{rel_path}:{chunk_start}:{title}".encode()).hexdigest()[
-                    :16
-                ]
-                chunks.append(
-                    {
-                        "id": chunk_id,
-                        "path": rel_path,
-                        "abs_path": str(path.resolve()),
-                        "doc_type": "markdown",
-                        "title": title,
-                        "start_line": chunk_start,
-                        "end_line": end_line,
-                        "content": f"# {title}\n\n{content}",
-                    }
-                )
+
+                # Check if oversized (> 500 words / ~512 tokens)
+                words = content.split()
+                if len(words) > 500:
+                    # Split into overlapping windows of ~400 words with 60 word (15%) overlap
+                    window_size = 400
+                    overlap = 60
+                    stride = window_size - overlap
+
+                    sub_idx = 0
+                    for start_w in range(0, len(words), stride):
+                        sub_words = words[start_w : start_w + window_size]
+                        if not sub_words or (start_w > 0 and len(sub_words) < 30):
+                            continue
+                        sub_content = " ".join(sub_words)
+                        sub_title = f"{title} (part {sub_idx + 1})" if sub_idx > 0 else title
+                        c_id = hashlib.sha256(
+                            f"{rel_path}:{chunk_start}:{sub_title}:{sub_idx}".encode()
+                        ).hexdigest()[:16]
+                        chunks.append(
+                            {
+                                "id": c_id,
+                                "path": rel_path,
+                                "abs_path": str(path.resolve()),
+                                "doc_type": "markdown",
+                                "title": sub_title,
+                                "start_line": chunk_start,
+                                "end_line": end_line,
+                                "content": f"# {sub_title}\n\n{sub_content}",
+                            }
+                        )
+                        sub_idx += 1
+                else:
+                    chunk_id = hashlib.sha256(
+                        f"{rel_path}:{chunk_start}:{title}".encode()
+                    ).hexdigest()[:16]
+                    chunks.append(
+                        {
+                            "id": chunk_id,
+                            "path": rel_path,
+                            "abs_path": str(path.resolve()),
+                            "doc_type": "markdown",
+                            "title": title,
+                            "start_line": chunk_start,
+                            "end_line": end_line,
+                            "content": f"# {title}\n\n{content}",
+                        }
+                    )
             chunk_lines = []
 
         inside_fence = False
@@ -478,8 +511,7 @@ class DocExtractor:
                         "start_line": block_start,
                         "end_line": len(lines),
                         "content": (
-                            f"File: {rel_path}\n"
-                            f"{rel_path} (L{block_start}-{len(lines)}):\n{text}"
+                            f"File: {rel_path}\n{rel_path} (L{block_start}-{len(lines)}):\n{text}"
                         ),
                     }
                 )

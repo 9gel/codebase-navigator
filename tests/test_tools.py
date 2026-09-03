@@ -55,4 +55,7 @@ def process_order(x):
     tree = get_call_tree(tmp_path, "calculate_total", path="module.py")
     assert tree["symbol"] == "calculate_total"
     assert len(tree["callers"]) >= 1
-    assert any(c.get("caller_function") == "process_order" or "process_order" in c.get("preview", "") for c in tree["callers"])
+    assert any(
+        c.get("caller_function") == "process_order" or "process_order" in c.get("preview", "")
+        for c in tree["callers"]
+    )

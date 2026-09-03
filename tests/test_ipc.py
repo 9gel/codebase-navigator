@@ -91,6 +91,7 @@ def test_duplicate_ipc_server_rejected(tmp_path: Path):
     try:
         server2 = IPCServer(sock_path, idx)
         import pytest
+
         with pytest.raises(RuntimeError, match="Another cn watch instance is already running"):
             server2.start()
     finally:
@@ -104,6 +105,7 @@ def test_stale_socket_recovery(tmp_path: Path):
 
     # Create a dummy stale socket/file
     import socket
+
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.bind(str(sock_path))
     s.close()  # Closed/dead socket file leftover on disk
@@ -141,6 +143,7 @@ def test_ipc_version_mismatch_rejection(tmp_path: Path):
         time.sleep(0.05)
         # Send command with mismatched version
         import socket, json
+
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.connect(str(sock_path))
         req = {"action": "search", "version": "0.0.1", "query": "hello"}
@@ -202,8 +205,8 @@ def test_tcp_loopback_discovery_and_query(tmp_path: Path):
 
 def test_deterministic_port_hash(tmp_path: Path):
     from codebase_navigator.config import get_default_tcp_port
+
     port1 = get_default_tcp_port(tmp_path)
     port2 = get_default_tcp_port(tmp_path)
     assert port1 == port2
     assert 10000 <= port1 < 60000
-

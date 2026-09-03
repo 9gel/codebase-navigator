@@ -42,6 +42,9 @@ _MODEL_DIMS = {
     "intfloat/e5-base-v2": 768,
     "intfloat/e5-large-v2": 1024,
     "nomic-ai/nomic-embed-text-v1.5": 768,
+    "nomic-ai/nomic-embed-text-v1.5-Q": 768,
+    "nomic-ai/nomic-embed-text-v1": 768,
+    "jinaai/jina-embeddings-v2-base-code": 768,
 }
 VECTOR_DIM = _MODEL_DIMS.get(EMBEDDING_MODEL_NAME, 384)
 

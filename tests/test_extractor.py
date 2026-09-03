@@ -146,3 +146,23 @@ export const authenticate = async (token: string) => {
     assert any("UserSession" in t for t in ts_titles)
     assert any("authenticate" in t for t in ts_titles)
     assert "Language: TypeScript" in ts_chunks[0]["content"]
+
+
+def test_extract_markdown_splits_oversized_sections(tmp_path: Path):
+    extractor = DocExtractor(tmp_path)
+    md_file = tmp_path / "LONG.md"
+    # Generate 1200 words in a single section without subheaders
+    words = ["word" + str(i) for i in range(1200)]
+    md_file.write_text("# Huge Section\n\n" + " ".join(words))
+
+    chunks = extractor.extract_markdown(md_file)
+    assert len(chunks) >= 3
+    titles = [c["title"] for c in chunks]
+    assert "Huge Section" in titles[0]
+    assert "Huge Section (part 2)" in titles[1]
+    assert "Huge Section (part 3)" in titles[2]
+    # Check that part 2 contains words from part 1 (overlap)
+    p1_words = set(chunks[0]["content"].split())
+    p2_words = set(chunks[1]["content"].split())
+    overlap_words = p1_words.intersection(p2_words)
+    assert len(overlap_words) >= 20

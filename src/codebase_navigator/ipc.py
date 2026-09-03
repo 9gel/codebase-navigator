@@ -59,9 +59,15 @@ class _IPCRequestHandler(socketserver.StreamRequestHandler):
                     new_session = req.get("new_session", False)
                     verbose = req.get("verbose", True)
                     if self.server.watcher:
+
                         def progress_cb(msg_text: str):
                             try:
-                                prog_payload = json.dumps({"type": "progress", "message": msg_text}).encode("utf-8") + b"\n"
+                                prog_payload = (
+                                    json.dumps({"type": "progress", "message": msg_text}).encode(
+                                        "utf-8"
+                                    )
+                                    + b"\n"
+                                )
                                 self.wfile.write(prog_payload)
                                 self.wfile.flush()
                             except (BrokenPipeError, ConnectionResetError, OSError):
@@ -76,7 +82,11 @@ class _IPCRequestHandler(socketserver.StreamRequestHandler):
                         )
                         resp = {"type": "final", "status": "ok", "answer": answer, "stats": stats}
                     else:
-                        resp = {"type": "final", "status": "error", "error": "Watcher daemon not configured for ask"}
+                        resp = {
+                            "type": "final",
+                            "status": "error",
+                            "error": "Watcher daemon not configured for ask",
+                        }
                 elif action == "reset_session":
                     if self.server.watcher and self.server.watcher.session:
                         self.server.watcher.session.reset()
@@ -250,7 +260,9 @@ class IPCServer:
             self._threads.append(t_tcp)
 
         if not self._unix_server and not self._tcp_server:
-            raise RuntimeError("Failed to bind either Unix Domain Socket or TCP loopback port for cn watch.")
+            raise RuntimeError(
+                "Failed to bind either Unix Domain Socket or TCP loopback port for cn watch."
+            )
 
     def stop(self):
         """Stop servers and clean up socket/port files."""
@@ -337,7 +349,7 @@ def send_target_command(
     action: str,
     payload: dict[str, Any] | None = None,
     timeout: float = 180.0,
-    progress_callback = None,
+    progress_callback=None,
 ) -> dict[str, Any] | None:
     """Send command to daemon target and return parsed response with streaming support."""
     try:
@@ -392,7 +404,7 @@ def send_socket_command(
     action: str,
     payload: dict[str, Any] | None = None,
     timeout: float = 180.0,
-    progress_callback = None,
+    progress_callback=None,
 ) -> dict[str, Any] | None:
     """Backward compatibility alias: send command via target or socket path."""
     return send_target_command(
@@ -404,7 +416,9 @@ def send_socket_command(
     )
 
 
-def ping_target(target: Path | int | tuple[str, int], timeout: float = 0.5) -> dict[str, Any] | None:
+def ping_target(
+    target: Path | int | tuple[str, int], timeout: float = 0.5
+) -> dict[str, Any] | None:
     """Check if target daemon is active and return its status info."""
     return send_target_command(target, action="status", timeout=timeout)
 

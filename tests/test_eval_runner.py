@@ -63,4 +63,3 @@ def test_rejection_runner_saves_report_to_directory(tmp_path: Path):
     assert (tmp_path / "reports.json").exists() is False
     assert (tmp_path / "report.json").exists() is False
     assert (tmp_path / "rejection_report.json").exists() is False
-

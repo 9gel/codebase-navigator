@@ -16,7 +16,11 @@ EVAL_TASKS = [
     {
         "repo": "flask",
         "question": "Where is the before_request hook dispatched during request handling in Flask?",
-        "expected_keywords": ["preprocess_request", "full_dispatch_request", "before_request_funcs"],
+        "expected_keywords": [
+            "preprocess_request",
+            "full_dispatch_request",
+            "before_request_funcs",
+        ],
         "expected_files": ["src/flask/app.py", "flask/app.py", "app.py"],
     },
     {
@@ -53,7 +57,9 @@ def run_eval(repo_name: str | None = None) -> bool:
 
         config = load_llm_config(folder=repo_path)
         if not config.api_key:
-            print("⚠️  No API key found in environment (OPENROUTER_API_KEY/CN_API_KEY). Skipping live LLM call.")
+            print(
+                "⚠️  No API key found in environment (OPENROUTER_API_KEY/CN_API_KEY). Skipping live LLM call."
+            )
             continue
 
         t0 = time.time()

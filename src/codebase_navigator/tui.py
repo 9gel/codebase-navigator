@@ -118,7 +118,7 @@ class WatcherTUI:
             )
             tool_info = f" | {self.last_tool_count} tools" if self.last_tool_count > 0 else ""
             status_text = f" 📁 {short_folder}  │  🧠 {short_model}  │  {token_info}{tool_info}  │  /help /reset /exit "
-            
+
             # Truncate or pad status text to fill the full width
             if len(status_text) > cols:
                 status_text = status_text[:cols]
@@ -150,7 +150,10 @@ class WatcherTUI:
             frame = self.SPINNER_FRAMES[self.spinner_frame]
             footer_text = f" {frame} Agent is working..."
         else:
-            footer_text = self.exit_notice or " Keep `cn watch` up to ensure `cn search` work efficiently elsewhere."
+            footer_text = (
+                self.exit_notice
+                or " Keep `cn watch` up to ensure `cn search` work efficiently elsewhere."
+            )
         footer_text = footer_text[:cols].ljust(cols)
         sys.stdout.write(f"\033[{footer_row};1H\033[2K{footer_text}")
 
@@ -224,7 +227,6 @@ class WatcherTUI:
             index = start + row - 1
             line = self.transcript_lines[index] if index < end else ""
             sys.stdout.write(f"\033[{row};1H\033[2K{line}")
-
 
     def render(self, prompt_text: str = ""):
         """Render the transcript and fixed terminal chrome."""
@@ -311,7 +313,9 @@ class WatcherTUI:
             return
         if query.lower() in ("/help", "help", "?"):
             self.write_transcript("\n📖 Commands:")
-            self.write_transcript("  /reset  - Clear multi-turn conversation memory and restart fresh")
+            self.write_transcript(
+                "  /reset  - Clear multi-turn conversation memory and restart fresh"
+            )
             self.write_transcript("  /status - Show file count, chunk statistics, and active model")
             self.write_transcript("  /exit   - Quit cn watch and restore terminal\n")
             return
@@ -361,7 +365,9 @@ class WatcherTUI:
         # Print initial greeting in the transcript area
         self.write_transcript("🧭 Codebase-Navigator Interactive Console")
         self.write_transcript("   Type your question to ask about this codebase.")
-        self.write_transcript("   Commands: /reset (clear context), /status (index info), /exit (quit)\n")
+        self.write_transcript(
+            "   Commands: /reset (clear context), /status (index info), /exit (quit)\n"
+        )
 
         input_tty = hasattr(sys.stdin, "fileno") and sys.stdin.isatty()
         input_text = ""
@@ -380,7 +386,9 @@ class WatcherTUI:
                 # control) before the TUI can display its exit hint.
                 terminal_attrs = termios.tcgetattr(fd)
                 terminal_attrs[0] &= ~termios.IXON
-                terminal_attrs[3] &= ~(termios.ECHO | termios.ECHONL | termios.ISIG | termios.IEXTEN)
+                terminal_attrs[3] &= ~(
+                    termios.ECHO | termios.ECHONL | termios.ISIG | termios.IEXTEN
+                )
                 termios.tcsetattr(fd, termios.TCSANOW, terminal_attrs)
                 sys.stdout.write("\033[?1000h\033[?1002h\033[?1006h")
                 sys.stdout.flush()

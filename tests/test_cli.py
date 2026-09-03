@@ -45,7 +45,9 @@ def test_cn_parser_subcommands():
     assert parser.prog == "cn"
 
     # search
-    args = parser.parse_args(["search", "test query", "/some/path", "--limit", "10", "--type", "md"])
+    args = parser.parse_args(
+        ["search", "test query", "/some/path", "--limit", "10", "--type", "md"]
+    )
     assert args.command == "search"
     assert args.query == "test query"
     assert args.folder == "/some/path"
@@ -79,16 +81,26 @@ def test_cn_parser_subcommands():
     assert args.debounce == 500
 
     # ask
-    args = parser.parse_args([
-        "ask", "How does indexing work?", "/my/repo",
-        "--model", "test-model",
-        "--endpoint", "https://api.openai.com/v1",
-        "--api-key", "test-key",
-        "--limit", "15",
-        "--max-searches", "4",
-        "--index-dir", "/custom/idx",
-        "-q",
-    ])
+    args = parser.parse_args(
+        [
+            "ask",
+            "How does indexing work?",
+            "/my/repo",
+            "--model",
+            "test-model",
+            "--endpoint",
+            "https://api.openai.com/v1",
+            "--api-key",
+            "test-key",
+            "--limit",
+            "15",
+            "--max-searches",
+            "4",
+            "--index-dir",
+            "/custom/idx",
+            "-q",
+        ]
+    )
     assert args.command == "ask"
     assert args.question == "How does indexing work?"
     assert args.folder == "/my/repo"
@@ -116,14 +128,66 @@ def test_cn_main_dispatch(monkeypatch, tmp_path: Path):
     def mock_watch(folder, debounce_ms=1000, custom_index_dir=None, interactive=True):
         called["watch"] = (folder, debounce_ms, custom_index_dir, interactive)
 
-    def mock_search(folder, query, limit=5, doc_type="all", links="auto", theme="auto", wrap=None, width=None, custom_index_dir=None):
-        called["search"] = (folder, query, limit, doc_type, links, theme, wrap, width, custom_index_dir)
+    def mock_search(
+        folder,
+        query,
+        limit=5,
+        doc_type="all",
+        links="auto",
+        theme="auto",
+        wrap=None,
+        width=None,
+        custom_index_dir=None,
+    ):
+        called["search"] = (
+            folder,
+            query,
+            limit,
+            doc_type,
+            links,
+            theme,
+            wrap,
+            width,
+            custom_index_dir,
+        )
 
     def mock_tags(folder, symbol, exact=False, limit=20):
         called["tags"] = (folder, symbol, exact, limit)
 
-    def mock_ask(folder, question, model=None, endpoint=None, api_key=None, system_prompt=None, limit=None, max_searches=None, links="auto", theme="auto", wrap=None, width=None, custom_index_dir=None, quiet=False, new_session=False):
-        called["ask"] = (folder, question, model, endpoint, api_key, system_prompt, limit, max_searches, links, theme, wrap, width, custom_index_dir, quiet, new_session)
+    def mock_ask(
+        folder,
+        question,
+        model=None,
+        endpoint=None,
+        api_key=None,
+        system_prompt=None,
+        limit=None,
+        max_searches=None,
+        links="auto",
+        theme="auto",
+        wrap=None,
+        width=None,
+        custom_index_dir=None,
+        quiet=False,
+        new_session=False,
+    ):
+        called["ask"] = (
+            folder,
+            question,
+            model,
+            endpoint,
+            api_key,
+            system_prompt,
+            limit,
+            max_searches,
+            links,
+            theme,
+            wrap,
+            width,
+            custom_index_dir,
+            quiet,
+            new_session,
+        )
 
     monkeypatch.setattr(cli_mod, "_run_status", mock_status)
     monkeypatch.setattr(cli_mod, "_run_sync", mock_sync)
@@ -141,14 +205,74 @@ def test_cn_main_dispatch(monkeypatch, tmp_path: Path):
     main(["watch", str(tmp_path), "--debounce", "2000", "--no-interactive"])
     assert called["watch"] == (tmp_path.resolve(), 2000, None, False)
 
-    main(["search", "hello world", str(tmp_path), "--limit", "3", "--type", "code", "--links", "osc8", "--theme", "dark", "--no-wrap", "--width", "80"])
-    assert called["search"] == (tmp_path.resolve(), "hello world", 3, "code", "osc8", "dark", False, 80, None)
+    main(
+        [
+            "search",
+            "hello world",
+            str(tmp_path),
+            "--limit",
+            "3",
+            "--type",
+            "code",
+            "--links",
+            "osc8",
+            "--theme",
+            "dark",
+            "--no-wrap",
+            "--width",
+            "80",
+        ]
+    )
+    assert called["search"] == (
+        tmp_path.resolve(),
+        "hello world",
+        3,
+        "code",
+        "osc8",
+        "dark",
+        False,
+        80,
+        None,
+    )
 
     main(["tags", "MySymbol", str(tmp_path), "--exact"])
     assert called["tags"] == (tmp_path.resolve(), "MySymbol", True, 20)
 
-    main(["ask", "What is the architecture?", str(tmp_path), "--model", "custom-model", "--limit", "12", "--links", "terminal", "--theme", "light", "--wrap", "--width", "90"])
-    assert called["ask"] == (tmp_path.resolve(), "What is the architecture?", "custom-model", None, None, None, 12, None, "terminal", "light", True, 90, None, False, False)
+    main(
+        [
+            "ask",
+            "What is the architecture?",
+            str(tmp_path),
+            "--model",
+            "custom-model",
+            "--limit",
+            "12",
+            "--links",
+            "terminal",
+            "--theme",
+            "light",
+            "--wrap",
+            "--width",
+            "90",
+        ]
+    )
+    assert called["ask"] == (
+        tmp_path.resolve(),
+        "What is the architecture?",
+        "custom-model",
+        None,
+        None,
+        None,
+        12,
+        None,
+        "terminal",
+        "light",
+        True,
+        90,
+        None,
+        False,
+        False,
+    )
 
 
 def test_format_output_links_and_wrapping():
@@ -170,17 +294,23 @@ def test_format_output_links_and_wrapping():
         assert len(line) <= 55
 
     # Color mode (dark theme): backticks light blue and file links green
-    colored_dark = format_output_links(raw, mode="terminal", wrap=True, width=60, color=True, theme="dark")
+    colored_dark = format_output_links(
+        raw, mode="terminal", wrap=True, width=60, color=True, theme="dark"
+    )
     assert "\033[38;5;75m`classify_retail_destination`\033[0m" in colored_dark
     assert "\033[32msrc/policy.py:86-123\033[0m" in colored_dark
 
     # Color mode (light theme): backticks dark blue and file links dark green
-    colored_light = format_output_links(raw, mode="terminal", wrap=True, width=60, color=True, theme="light")
+    colored_light = format_output_links(
+        raw, mode="terminal", wrap=True, width=60, color=True, theme="light"
+    )
     assert "\033[38;5;26m`classify_retail_destination`\033[0m" in colored_light
     assert "\033[38;5;28msrc/policy.py:86-123\033[0m" in colored_light
 
     # OSC 8 mode with wrapping at 50 cols and color
-    wrapped_osc8 = format_output_links(raw, mode="osc8", wrap=True, width=50, color=True, theme="dark")
+    wrapped_osc8 = format_output_links(
+        raw, mode="osc8", wrap=True, width=50, color=True, theme="dark"
+    )
     assert "\033[32m\033]8;;file:///home/user/repo/src/policy.py#L86-L123\033\\" in wrapped_osc8
     assert "src/policy.py:86-123" in wrapped_osc8
 
@@ -207,7 +337,10 @@ def test_wrap_terminal_text_structures():
 
     # Test width=None (default terminal width auto-detection without error)
     wrapped_default = wrap_terminal_text(sample, width=None)
-    assert "long_code_line_that_must_not_be_wrapped_under_any_circumstances = 123456789" in wrapped_default
+    assert (
+        "long_code_line_that_must_not_be_wrapped_under_any_circumstances = 123456789"
+        in wrapped_default
+    )
     assert "### Header Title" in wrapped_default
 
 
@@ -257,6 +390,7 @@ wrap = true
     assert res3["width"] == 90
     assert res3["theme"] == "light"
 
+
 def test_status_spinner_truncation(monkeypatch):
     import io
     import os
@@ -268,7 +402,9 @@ def test_status_spinner_truncation(monkeypatch):
     stream.isatty = lambda: True
 
     # Mock terminal width to 40 columns
-    monkeypatch.setattr(shutil, "get_terminal_size", lambda fallback=(80, 20): os.terminal_size((40, 20)))
+    monkeypatch.setattr(
+        shutil, "get_terminal_size", lambda fallback=(80, 20): os.terminal_size((40, 20))
+    )
 
     spinner = StatusSpinner(
         "🔎 [Tool 3/15: grep_search] limit=20, path_glob='node_modules/router/**/*.js', pattern='matchLayer|function router|han'",
@@ -282,5 +418,3 @@ def test_status_spinner_truncation(monkeypatch):
         msg = msg[: avail - 3].rstrip() + "..."
     assert len(msg) <= avail
     assert msg.endswith("...")
-
-

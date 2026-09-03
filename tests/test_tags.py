@@ -29,7 +29,7 @@ def test_get_available_files(tmp_path: Path):
 
 def test_parse_tag_line(tmp_path: Path):
     mgr = TagsManager(tmp_path)
-    tag_line = "my_func\tsrc/app.py\t/^def my_func():$/;\"\tf\tline:42"
+    tag_line = 'my_func\tsrc/app.py\t/^def my_func():$/;"\tf\tline:42'
     parsed = mgr._parse_tag_line(tag_line, tmp_path)
 
     assert parsed is not None

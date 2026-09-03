@@ -76,8 +76,10 @@ class TagsManager:
         input_data = "\n".join(rel_paths) + "\n"
         cmd = [
             "ctags",
-            "-L", "-",
-            "-f", str(self.tag_file),
+            "-L",
+            "-",
+            "-f",
+            str(self.tag_file),
             "--fields=+n+K",
             "--sort=yes",
         ]
@@ -136,7 +138,9 @@ class TagsManager:
 
         for tag_file in tag_files:
             try:
-                regex = re.compile(pattern if not exact else f"^{re.escape(pattern)}$", re.IGNORECASE)
+                regex = re.compile(
+                    pattern if not exact else f"^{re.escape(pattern)}$", re.IGNORECASE
+                )
                 with open(tag_file, "r", encoding="utf-8", errors="replace") as f:
                     for line in f:
                         if line.startswith("!_"):
