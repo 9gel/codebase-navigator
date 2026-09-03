@@ -7,17 +7,20 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 # Ensure codebase_navigator from src/ is importable
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from codebase_navigator import __version__
 from codebase_navigator.ask import (
     AGENT_TOOLS_SPEC,
     SYSTEM_PROMPT,
@@ -25,10 +28,15 @@ from codebase_navigator.ask import (
     call_chat_completions,
     load_llm_config,
 )
+from codebase_navigator.config import EMBEDDING_MODEL_NAME
+from codebase_navigator.index import VectorIndex
 from codebase_navigator.sandbox_bash import bash_tool_spec, run_sandboxed_bash
+from codebase_navigator.tags import TagsManager
 
 EXERCISES_DIR = Path(__file__).parent.parent / "exercises"
 BENCHMARK_CONFIG = Path(__file__).parent / "benchmark_tasks.json"
+DEFAULT_RUNS_DIR = Path("eval/runs")
+DEFAULT_JUDGE_MODEL = "deepseek/deepseek-v4-pro"
 
 _PRINT_LOCK = threading.Lock()
 
@@ -65,6 +73,7 @@ def llm_judge_answer(
     answer_key: str,
     candidate_answer: str,
     config,
+    judge_model: str = DEFAULT_JUDGE_MODEL,
 ) -> tuple[bool, str]:
     """Use an LLM-as-a-judge to evaluate if candidate answer accurately matches ground truth key."""
     prompt = f"""You are an expert code intelligence evaluator.
@@ -91,7 +100,7 @@ Respond in pure JSON format:
 }}
 """
     payload = {
-        "model": config.model,
+        "model": judge_model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.0,
     }
@@ -390,9 +399,10 @@ def run_baseline_agent(
     ]
 
     searches_remaining = config.max_searches
+    prompt_tokens = 0
     output_tokens = 0
-    context_tokens = 0
     cached_tokens = 0
+    api_calls = 0
     tool_calls_count = 0
 
     while True:
@@ -416,9 +426,11 @@ def run_baseline_agent(
             or usage.get("cache_read_input_tokens", 0)
             or 0
         )
-        context_tokens = p_tok
-        cached_tokens = cached_tok
+        cached_tok = min(cached_tok, p_tok)
+        prompt_tokens += p_tok
+        cached_tokens += cached_tok
         output_tokens += c_tok
+        api_calls += 1
 
         choices = response_data.get("choices", [])
         if not choices:
@@ -471,15 +483,91 @@ def run_baseline_agent(
             continue
 
         content = msg.get("content") or ""
+        uncached_prompt_tokens = max(0, prompt_tokens - cached_tokens)
         stats = {
-            "context_tokens": context_tokens,
+            "prompt_tokens": prompt_tokens,
+            "context_tokens": prompt_tokens,
             "output_tokens": output_tokens,
-            "context_output_tokens": context_tokens + output_tokens,
+            "completion_tokens": output_tokens,
+            "context_output_tokens": prompt_tokens + output_tokens,
+            "total_tokens": prompt_tokens + output_tokens,
             "cached_tokens": cached_tokens,
-            "net_tokens": max(0, context_tokens + output_tokens - cached_tokens),
+            "uncached_prompt_tokens": uncached_prompt_tokens,
+            "net_tokens": uncached_prompt_tokens + output_tokens,
+            "api_calls": api_calls,
             "tool_calls_count": tool_calls_count,
         }
         return content, stats
+
+
+def create_run_directory(runs_dir: Path) -> tuple[Path, str]:
+    """Create a unique timestamped directory for one immutable evaluation run."""
+    now = datetime.now(UTC)
+    timestamp = now.isoformat().replace("+00:00", "Z")
+    run_name = f"run_{now.strftime('%Y%m%d_%H%M%S_%f')}"
+    run_dir = runs_dir / run_name
+    run_dir.mkdir(parents=True, exist_ok=False)
+    (run_dir / "indexes").mkdir()
+    return run_dir, timestamp
+
+
+def get_git_commit(repo_dir: Path) -> str:
+    """Return the exact source revision evaluated for a repository."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_dir,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise RuntimeError(f"Could not determine git commit for {repo_dir}: {exc}") from exc
+    commit = result.stdout.strip()
+    if not re.fullmatch(r"[0-9a-fA-F]{40,64}", commit):
+        raise RuntimeError(f"Unexpected git commit returned for {repo_dir}: {commit!r}")
+    return commit
+
+
+def prepare_evaluation_index(
+    repo_name: str,
+    repo_dir: Path,
+    run_dir: Path,
+    git_url: str,
+    git_commit: str,
+) -> tuple[Path, dict[str, Any]]:
+    """Build and describe an isolated vector/ctags index inside the run package."""
+    index_dir = run_dir / "indexes" / repo_name
+    index_dir.mkdir(parents=True, exist_ok=False)
+
+    tags_ok, tags_message = TagsManager(repo_dir, tag_file=index_dir / ".tags").generate()
+    if not tags_ok:
+        raise RuntimeError(f"Failed to build tags for {repo_name}: {tags_message}")
+
+    updated_files, indexed_chunks, pruned_files = VectorIndex(
+        repo_dir, custom_index_dir=str(index_dir)
+    ).sync(force=True)
+    if updated_files <= 0 or indexed_chunks <= 0:
+        raise RuntimeError(
+            f"Evaluation index for {repo_name} is empty "
+            f"({updated_files} files, {indexed_chunks} chunks)"
+        )
+
+    metadata: dict[str, Any] = {
+        "repo": repo_name,
+        "git_url": git_url,
+        "git_commit": git_commit,
+        "embedding_model": EMBEDDING_MODEL_NAME,
+        "indexed_files": updated_files,
+        "indexed_chunks": indexed_chunks,
+        "pruned_files": pruned_files,
+        "tags_file": ".tags",
+        "tags_status": tags_message,
+    }
+    (index_dir / "metadata.json").write_text(
+        json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
+    )
+    return index_dir, metadata
 
 
 class ReportStream:
@@ -490,40 +578,27 @@ class ReportStream:
          with an empty ``results`` list.
       2. Each completed task is appended and the file is atomically rewritten.
 
-    If ``log_dir`` is provided, a companion JSONL trace log is written under that
-    directory with the same timestamp as the report file, containing full answers,
+    A companion JSONL trace log in the same run directory contains full answers,
     tool-call traces, and judge rationales for offline analysis.
     """
 
-    def __init__(
-        self,
-        save_report: Path | None,
-        global_facts: dict[str, Any],
-        log_dir: Path | None = None,
-    ):
+    def __init__(self, run_dir: Path, global_facts: dict[str, Any]):
         self.data: dict[str, Any] = {**global_facts, "results": []}
-        self.report_file: Path | None = None
-        self.trace_file: Path | None = None
+        self.report_file = run_dir / "report.json"
+        self.trace_file = run_dir / "log.jsonl"
         self._lock = threading.Lock()
-        self.timestamp_str = time.strftime("%Y%m%d_%H%M%S")
-        if save_report is not None:
-            self.report_file = self._resolve_report_path(save_report)
-            self._write()
-            if log_dir is not None:
-                log_dir.mkdir(parents=True, exist_ok=True)
-                self.trace_file = log_dir / f"log_{self.timestamp_str}.jsonl"
-                self._write_trace({"type": "header", **global_facts})
-
-    def _resolve_report_path(self, save_report: Path) -> Path:
-        if save_report.is_dir() or not save_report.suffix:
-            save_report.mkdir(parents=True, exist_ok=True)
-            return save_report / f"report_{self.timestamp_str}.json"
-        save_report.parent.mkdir(parents=True, exist_ok=True)
-        return save_report
+        self._write()
+        self._write_trace({"type": "header", **global_facts})
 
     def add_result(self, result: dict[str, Any]) -> None:
         with self._lock:
             self.data["results"].append(result)
+            self._write()
+
+    def update_facts(self, **facts: Any) -> None:
+        """Persist run metadata as repository preparation progresses."""
+        with self._lock:
+            self.data.update(facts)
             self._write()
 
     def record_trace(self, entry: dict[str, Any]) -> None:
@@ -535,8 +610,6 @@ class ReportStream:
                 print(f"⚠️  Trace write failed: {e}", file=sys.stderr)
 
     def _write_trace(self, entry: dict[str, Any]) -> None:
-        if self.trace_file is None:
-            return
         # ensure_ascii escapes lone surrogates (from mis-decoded tool output) that
         # would otherwise raise UnicodeEncodeError and crash the whole benchmark.
         with self._lock, open(self.trace_file, "a", encoding="utf-8") as f:
@@ -559,8 +632,11 @@ class ReportStream:
 def _run_task(
     r_name: str,
     r_dir: Path,
+    repo_git_commit: str,
+    index_dir: Path,
     task: dict[str, Any],
     config,
+    judge_model: str,
     use_llm_judge: bool,
     compare_baseline: bool,
     use_spinner: bool,
@@ -620,6 +696,7 @@ def _run_task(
             folder=r_dir,
             question=question,
             config=config,
+            custom_index_dir=str(index_dir),
             verbose=False,
             new_session=True,
             progress_callback=handle_cn_progress,
@@ -636,11 +713,16 @@ def _run_task(
         cn_judge_pass = False
         cn_rationale = ""
         if use_llm_judge and config.api_key:
-            cn_judge_pass, cn_rationale = llm_judge_answer(question, key, cn_answer, config)
+            cn_judge_pass, cn_rationale = llm_judge_answer(
+                question, key, cn_answer, config, judge_model=judge_model
+            )
 
         cn_passed = cn_judge_pass if use_llm_judge else cn_rule_pass
 
-        cn_tokens = cn_stats.get("net_tokens", cn_stats.get("context_output_tokens", 0))
+        cn_tokens = cn_stats.get("total_tokens", cn_stats.get("context_output_tokens", 0))
+        cn_net_tokens = cn_stats.get("net_tokens", cn_tokens)
+        cn_prompt_tokens = cn_stats.get("prompt_tokens", cn_stats.get("context_tokens", 0))
+        cn_output_tokens = cn_stats.get("completion_tokens", cn_stats.get("output_tokens", 0))
         cn_cached = cn_stats.get("cached_tokens", 0)
         cn_cached_str = f", cached: {cn_cached:,}" if cn_cached > 0 else ""
         _safe_print(
@@ -649,7 +731,11 @@ def _run_task(
 
         # 2. Evaluate Baseline Agent (if --compare-baseline)
         base_tokens = 0
+        base_net_tokens = 0
+        base_prompt_tokens = 0
+        base_output_tokens = 0
         base_cached = 0
+        base_stats: dict[str, Any] = {}
         base_dt = 0.0
         base_passed = False
         base_answer = ""
@@ -680,7 +766,7 @@ def _run_task(
 
                 if use_llm_judge and config.api_key:
                     base_judge_pass, base_rationale = llm_judge_answer(
-                        question, key, base_answer, config
+                        question, key, base_answer, config, judge_model=judge_model
                     )
                 else:
                     base_judge_pass = base_rule_pass
@@ -688,7 +774,14 @@ def _run_task(
                 base_passed = base_judge_pass
 
                 base_tokens = base_stats.get(
-                    "net_tokens", base_stats.get("context_output_tokens", 0)
+                    "total_tokens", base_stats.get("context_output_tokens", 0)
+                )
+                base_net_tokens = base_stats.get("net_tokens", base_tokens)
+                base_prompt_tokens = base_stats.get(
+                    "prompt_tokens", base_stats.get("context_tokens", 0)
+                )
+                base_output_tokens = base_stats.get(
+                    "completion_tokens", base_stats.get("output_tokens", 0)
                 )
                 base_cached = base_stats.get("cached_tokens", 0)
 
@@ -714,16 +807,25 @@ def _run_task(
         result: dict[str, Any] = {
             "task_id": task_id,
             "repo": r_name,
+            "repo_git_commit": repo_git_commit,
             "question": question,
             "passed": cn_passed,
             "duration_seconds": round(cn_dt, 2),
             "tokens": cn_tokens,
+            "net_tokens": cn_net_tokens,
+            "prompt_tokens": cn_prompt_tokens,
+            "output_tokens": cn_output_tokens,
             "cached_tokens": cn_cached,
+            "api_calls": cn_stats.get("api_calls", 0),
             "judge_rationale": cn_rationale,
             "baseline_passed": base_passed if compare_baseline else None,
             "baseline_duration_seconds": round(base_dt, 2) if compare_baseline else None,
             "baseline_tokens": base_tokens if compare_baseline else None,
+            "baseline_net_tokens": base_net_tokens if compare_baseline else None,
+            "baseline_prompt_tokens": base_prompt_tokens if compare_baseline else None,
+            "baseline_output_tokens": base_output_tokens if compare_baseline else None,
             "baseline_cached_tokens": base_cached if compare_baseline else None,
+            "baseline_api_calls": base_stats.get("api_calls", 0) if compare_baseline else None,
             "token_savings_percentage": token_savings_pct if compare_baseline else None,
             "time_savings_percentage": time_savings_pct if compare_baseline else None,
             "answer_preview": cn_answer[:300] + ("..." if len(cn_answer) > 300 else ""),
@@ -733,6 +835,7 @@ def _run_task(
             trace_entry: dict[str, Any] = {
                 "task_id": task_id,
                 "repo": r_name,
+                "repo_git_commit": repo_git_commit,
                 "question": question,
                 "expected_answer_key": key,
                 "required_keywords": req_kws,
@@ -742,7 +845,11 @@ def _run_task(
                     "answer": cn_answer,
                     "judge_rationale": cn_rationale,
                     "tokens": cn_tokens,
+                    "net_tokens": cn_net_tokens,
+                    "prompt_tokens": cn_prompt_tokens,
+                    "output_tokens": cn_output_tokens,
                     "cached_tokens": cn_cached,
+                    "api_calls": cn_stats.get("api_calls", 0),
                     "duration_seconds": round(cn_dt, 2),
                     "tool_trace": cn_trace,
                 },
@@ -753,7 +860,11 @@ def _run_task(
                     "answer": base_answer,
                     "judge_rationale": base_rationale,
                     "tokens": base_tokens,
+                    "net_tokens": base_net_tokens,
+                    "prompt_tokens": base_prompt_tokens,
+                    "output_tokens": base_output_tokens,
                     "cached_tokens": base_cached,
+                    "api_calls": base_stats.get("api_calls", 0),
                     "duration_seconds": round(base_dt, 2),
                     "tool_trace": base_trace,
                 }
@@ -767,6 +878,7 @@ def _run_task(
         result = {
             "task_id": task_id,
             "repo": r_name,
+            "repo_git_commit": repo_git_commit,
             "question": question,
             "passed": False,
             "error": str(e),
@@ -776,6 +888,7 @@ def _run_task(
                 {
                     "task_id": task_id,
                     "repo": r_name,
+                    "repo_git_commit": repo_git_commit,
                     "question": question,
                     "expected_answer_key": key,
                     "cn": {"passed": False, "error": str(e), "tool_trace": cn_trace},
@@ -787,12 +900,12 @@ def _run_task(
 def run_benchmark(
     target_repo: str | None = None,
     use_llm_judge: bool = True,
-    save_report: Path | None = Path("eval/reports"),
     compare_baseline: bool = False,
     workers: int = 4,
-    save_log: Path | None = None,
+    runs_dir: Path = DEFAULT_RUNS_DIR,
+    judge_model: str | None = None,
 ):
-    """Run full evaluation suite across configured repositories with optional baseline comparison."""
+    """Run benchmarks in a timestamped, self-contained artifact directory."""
     if not BENCHMARK_CONFIG.is_file():
         print(f"❌ Configuration not found: {BENCHMARK_CONFIG}")
         sys.exit(1)
@@ -800,37 +913,63 @@ def run_benchmark(
     with open(BENCHMARK_CONFIG, "r", encoding="utf-8") as f:
         benchmarks = json.load(f)
 
+    resolved_judge_model = (
+        judge_model
+        or os.environ.get("CN_EVAL_JUDGE_MODEL")
+        or os.environ.get("CN_JUDGE_MODEL")
+        or DEFAULT_JUDGE_MODEL
+    )
+    run_dir, run_timestamp = create_run_directory(runs_dir)
+    shutil.copy2(BENCHMARK_CONFIG, run_dir / "benchmark_tasks.json")
+
     is_tty = sys.stderr.isatty() if hasattr(sys.stderr, "isatty") else False
 
     title_suffix = " (A/B Baseline Comparison)" if compare_baseline else ""
     print("\n" + "=" * 75)
     print(f"🎯 Codebase-Navigator Benchmark & Evaluation Harness{title_suffix}")
+    print(f"📦 Run package: {run_dir}")
+    if use_llm_judge:
+        print(f"⚖️  Judge model: {resolved_judge_model}")
     print("=" * 75)
 
     overhead = print_prompt_overhead()
 
-    repo_plan = [
+    # Write the report and log before repository preparation so even an interrupted
+    # or failed index build leaves a useful, self-describing run package.
+    repo_plan: list[dict[str, Any]] = [
         {
-            "repo": r["repo"],
-            "language": r.get("language", "Unknown"),
-            "git_url": r["git_url"],
-            "task_count": len(r.get("tasks", [])),
+            "repo": entry["repo"],
+            "language": entry.get("language", "Unknown"),
+            "git_url": entry["git_url"],
+            "task_count": len(entry.get("tasks", [])),
+            "status": "pending",
         }
-        for r in benchmarks
-        if not target_repo or r["repo"].lower() == target_repo.lower()
+        for entry in benchmarks
+        if not target_repo or entry["repo"].lower() == target_repo.lower()
     ]
-
     global_facts: dict[str, Any] = {
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "timestamp": run_timestamp,
+        "run_directory": str(run_dir.resolve()),
+        "status": "preparing",
+        "codebase_navigator_version": __version__,
+        "embedding_model": EMBEDDING_MODEL_NAME,
+        "judge_model": resolved_judge_model if use_llm_judge else None,
         "compare_baseline": compare_baseline,
+        "token_metric": {
+            "tokens": "sum of prompt and completion tokens across every model call",
+            "cached_tokens": "sum of cached prompt tokens across every model call",
+            "net_tokens": "uncached prompt tokens plus completion tokens across every model call",
+        },
         "prompt_overhead": overhead,
+        "benchmark_tasks_snapshot": "benchmark_tasks.json",
         "repo_plan": repo_plan,
         "workers": workers,
     }
-    report_stream = ReportStream(save_report, global_facts, log_dir=save_log)
+    report_stream = ReportStream(run_dir, global_facts)
 
-    # Build the flat work list, cloning repos and resolving configs up front.
-    work_items: list[tuple[str, Path, Any, dict[str, Any]]] = []
+    # Clone and index each repository exactly once before parallel task execution.
+    repo_facts_by_name = {entry["repo"]: entry for entry in repo_plan}
+    work_items: list[tuple[str, Path, str, Path, Any, dict[str, Any]]] = []
     for repo_entry in benchmarks:
         r_name = repo_entry["repo"]
         if target_repo and r_name.lower() != target_repo.lower():
@@ -839,20 +978,49 @@ def run_benchmark(
         r_url = repo_entry["git_url"]
         r_lang = repo_entry.get("language", "Unknown")
         r_dir = EXERCISES_DIR / r_name
+        repo_facts = repo_facts_by_name[r_name]
 
         if not ensure_repo_cloned(r_name, r_url, r_dir):
+            repo_facts["status"] = "clone_failed"
+            report_stream.update_facts(repo_plan=repo_plan)
             continue
 
+        git_commit = get_git_commit(r_dir)
+        repo_facts["git_commit"] = git_commit
         config = load_llm_config(folder=r_dir)
         if not config.api_key:
             print(f"\n⚠️  No API key found. Skipping live queries for {r_name}.")
+            repo_facts["status"] = "skipped_no_api_key"
+            report_stream.update_facts(repo_plan=repo_plan)
             continue
 
         print(f"\n📁 Repository: {r_name} ({r_lang}) [{r_dir}]")
+        print(f"   Git commit: {git_commit}")
+        print(f"   Building isolated index in {run_dir / 'indexes' / r_name}...")
+        repo_facts["candidate_model"] = config.model
+        repo_facts["status"] = "indexing"
+        report_stream.update_facts(repo_plan=repo_plan)
+        try:
+            index_dir, index_metadata = prepare_evaluation_index(
+                r_name, r_dir, run_dir, r_url, git_commit
+            )
+        except Exception as exc:
+            repo_facts["status"] = "index_failed"
+            repo_facts["error"] = str(exc)
+            report_stream.update_facts(repo_plan=repo_plan, status="failed")
+            raise
+        repo_facts["index"] = {
+            "path": str(index_dir.relative_to(run_dir)),
+            **index_metadata,
+        }
+        repo_facts["status"] = "ready"
+        report_stream.update_facts(repo_plan=repo_plan)
         print("-" * 60)
 
         for task in repo_entry.get("tasks", []):
-            work_items.append((r_name, r_dir, config, task))
+            work_items.append((r_name, r_dir, git_commit, index_dir, config, task))
+
+    report_stream.update_facts(status="running", repo_plan=repo_plan)
 
     total_tasks = len(work_items)
     use_spinner = is_tty and workers <= 1
@@ -861,12 +1029,15 @@ def run_benchmark(
     completed = 0
 
     if workers <= 1 or total_tasks <= 1:
-        for r_name, r_dir, config, task in work_items:
+        for r_name, r_dir, git_commit, index_dir, config, task in work_items:
             result = _run_task(
                 r_name,
                 r_dir,
+                git_commit,
+                index_dir,
                 task,
                 config,
+                resolved_judge_model,
                 use_llm_judge,
                 compare_baseline,
                 use_spinner,
@@ -882,14 +1053,17 @@ def run_benchmark(
                     _run_task,
                     r_name,
                     r_dir,
+                    git_commit,
+                    index_dir,
                     task,
                     config,
+                    resolved_judge_model,
                     use_llm_judge,
                     compare_baseline,
                     use_spinner,
                     report_stream.record_trace,
                 ): (r_name, task)
-                for r_name, r_dir, config, task in work_items
+                for r_name, r_dir, git_commit, index_dir, config, task in work_items
             }
             for future in as_completed(future_to_task):
                 result = future.result()
@@ -945,16 +1119,16 @@ def run_benchmark(
     print("=" * 75)
 
     summary: dict[str, Any] = {
+        "status": "complete",
         "total_tasks": total_tasks,
         "passed_tasks": passed_tasks,
         "score_percentage": score_pct,
         "baseline_passed_tasks": baseline_passed_tasks,
     }
     report_stream.finalize(summary)
-    if report_stream.report_file is not None:
-        print(f"📄 Timestamped report saved to: {report_stream.report_file}")
-    if report_stream.trace_file is not None:
-        print(f"📜 Trace log saved to: {report_stream.trace_file}")
+    print(f"📄 Report saved to: {report_stream.report_file}")
+    print(f"📜 Trace log saved to: {report_stream.trace_file}")
+    print(f"📦 Complete run package: {run_dir}")
 
     return passed_tasks == total_tasks
 
@@ -977,22 +1151,25 @@ if __name__ == "__main__":
         help="Number of tasks to run in parallel (default: 4)",
     )
     parser.add_argument(
-        "--report",
-        default="eval/reports",
-        help="Directory or file path to save report (default: eval/reports/report_<timestamp>.json)",
+        "--runs-dir",
+        default=str(DEFAULT_RUNS_DIR),
+        help="Parent directory for timestamped run packages (default: eval/runs)",
     )
     parser.add_argument(
-        "--log",
-        default="eval/logs",
-        help="Directory to save the per-task trace log (default: eval/logs/log_<timestamp>.jsonl)",
+        "--judge-model",
+        default=None,
+        help=(
+            f"LLM judge model (default: {DEFAULT_JUDGE_MODEL}; "
+            "also configurable with CN_EVAL_JUDGE_MODEL)"
+        ),
     )
     args = parser.parse_args()
 
     run_benchmark(
         target_repo=args.repo,
         use_llm_judge=not args.no_judge,
-        save_report=Path(args.report) if args.report else None,
         compare_baseline=args.compare_baseline,
         workers=args.workers,
-        save_log=Path(args.log) if args.log else None,
+        runs_dir=Path(args.runs_dir),
+        judge_model=args.judge_model,
     )

@@ -1,6 +1,6 @@
-import pytest
 from pathlib import Path
-from codebase_navigator.tags import get_available_files, TagsManager
+
+from codebase_navigator.tags import TagsManager, get_available_files
 
 
 def test_get_available_files(tmp_path: Path):
@@ -37,3 +37,22 @@ def test_parse_tag_line(tmp_path: Path):
     assert parsed["path"] == "src/app.py"
     assert parsed["line"] == 42
     assert parsed["kind"] == "f"
+
+
+def test_custom_tag_file_resolves_paths_against_repository(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    source = repo / "app.py"
+    source.write_text("def custom_symbol():\n    pass\n", encoding="utf-8")
+    tag_file = tmp_path / "run" / "indexes" / "repo" / ".tags"
+    tag_file.parent.mkdir(parents=True)
+    tag_file.write_text(
+        'custom_symbol\tapp.py\t/^def custom_symbol():$/;"\tf\tline:1\n',
+        encoding="utf-8",
+    )
+
+    matches = TagsManager(repo, tag_file=tag_file).lookup_symbol("custom_symbol", exact=True)
+
+    assert len(matches) == 1
+    assert matches[0]["path"] == "app.py"
+    assert matches[0]["abs_path"] == str(source.resolve())

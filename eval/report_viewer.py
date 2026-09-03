@@ -2,8 +2,8 @@
 """Render a codebase-navigator benchmark report JSON as TTY-like human-readable output.
 
 Usage:
-    uv run eval/report_viewer.py eval/reports/report_YYYYMMDD_HHMMSS.json
-    uv run eval/report_viewer.py --watch eval/reports/report_YYYYMMDD_HHMMSS.json
+    uv run eval/report_viewer.py eval/runs/run_YYYYMMDD_HHMMSSffffff/report.json
+    uv run eval/report_viewer.py --watch eval/runs/run_YYYYMMDD_HHMMSSffffff/report.json
 
 The report is streamed by ``eval/runner.py`` as tasks complete, so ``--watch``
 re-renders the file in place as new results are appended.
@@ -208,6 +208,10 @@ def render(report: dict[str, Any]) -> str:
     suffix = " (A/B Baseline Comparison)" if compare_baseline else ""
 
     out: list[str] = [_banner(suffix)]
+    if report.get("judge_model"):
+        out.append(f"⚖️  Judge model: {report['judge_model']}")
+    if report.get("embedding_model"):
+        out.append(f"🧠 Embedding model: {report['embedding_model']}")
     out += render_overhead(report.get("prompt_overhead"))
 
     results = report.get("results", [])
@@ -217,8 +221,10 @@ def render(report: dict[str, Any]) -> str:
     for r in results:
         repo = r.get("repo", "?")
         if repo != last_repo:
-            lang = repo_plan.get(repo, {}).get("language", "Unknown")
-            out.append(f"\n📁 Repository: {repo} ({lang})")
+            plan = repo_plan.get(repo, {})
+            lang = plan.get("language", "Unknown")
+            commit = plan.get("git_commit", "unknown")
+            out.append(f"\n📁 Repository: {repo} ({lang}) @ {commit}")
             out.append("-" * 60)
             last_repo = repo
         out += render_result(r, compare_baseline)

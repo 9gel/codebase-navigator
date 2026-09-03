@@ -155,7 +155,7 @@
       {
         "id": "httpx-event-hooks",
         "question": "where in the request pipeline are request and response event hooks actually called?",
-        "expected_answer_key": "Triggered in Client._send_handling_redirects or Client.send via event_hooks in _client.py.",
+        "expected_answer_key": "In httpx/_client.py, Client.send calls _send_handling_auth, which calls _send_handling_redirects. The sync and async _send_handling_redirects loops invoke request event hooks immediately before _send_single_request and response event hooks immediately afterward, so hooks run for redirect hops and auth-generated requests.",
         "required_keywords": [
           "event_hooks",
           "_client.py"
@@ -265,7 +265,7 @@
       {
         "id": "vikunja-task-reminders",
         "question": "where are task reminders or background periodic jobs scheduled and processed in vikunja?",
-        "expected_answer_key": "Handled in pkg/modules/reminder/ or pkg/cron/ background worker routines in Go.",
+        "expected_answer_key": "In pkg/initialize/init.go, FullInit starts pkg/cron and registers models.RegisterReminderCron and models.RegisterOverdueReminderCron. The every-minute jobs are implemented in pkg/models/task_reminder.go and pkg/models/task_overdue_reminder.go; they query due reminders or overdue tasks and dispatch notifications and webhook events.",
         "required_keywords": [
           "cron",
           "pkg"
@@ -289,7 +289,7 @@
       {
         "id": "vikunja-jwt-auth",
         "question": "where is user authentication token parsing and jwt validation handled?",
-        "expected_answer_key": "In pkg/user/ or pkg/routes/api/v1/auth.go validating JWT bearer tokens with golang-jwt.",
+        "expected_answer_key": "HTTP JWT bearer parsing and signature validation are configured by SetupTokenMiddleware in pkg/routes/api_tokens.go using echo-jwt with config.ServiceSecret. Validated claims are interpreted by GetAuthFromClaims in pkg/modules/auth/auth.go and GetUserFromClaims in pkg/user/user.go. GetUserIDFromToken in pkg/modules/auth/auth.go performs explicit golang-jwt parsing for non-Echo paths such as WebSockets.",
         "required_keywords": [
           "token",
           "pkg"

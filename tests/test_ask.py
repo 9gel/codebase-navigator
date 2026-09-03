@@ -311,6 +311,58 @@ def test_ask_codebase_with_tool_calling_loop(tmp_path: Path):
         assert mock_chat.call_count == 2
 
 
+def test_ask_token_metrics_accumulate_every_model_call(tmp_path: Path):
+    cfg = LLMConfig(api_key="test-key", max_searches=2)
+    (tmp_path / "demo.py").write_text("value = 1\n", encoding="utf-8")
+    first = {
+        "usage": {
+            "prompt_tokens": 100,
+            "completion_tokens": 10,
+            "prompt_tokens_details": {"cached_tokens": 40},
+        },
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "one",
+                            "function": {
+                                "name": "read_code",
+                                "arguments": json.dumps({"path": "demo.py"}),
+                            },
+                        }
+                    ],
+                }
+            }
+        ],
+    }
+    second = {
+        "usage": {
+            "prompt_tokens": 200,
+            "completion_tokens": 20,
+            "prompt_tokens_details": {"cached_tokens": 120},
+        },
+        "choices": [{"message": {"role": "assistant", "content": "done"}}],
+    }
+
+    with (
+        patch("codebase_navigator.ask.execute_search", return_value=[]),
+        patch("codebase_navigator.ask.call_chat_completions", side_effect=[first, second]),
+    ):
+        answer, stats = ask_codebase(tmp_path, "Where is demo?", cfg, verbose=False)
+
+    assert answer == "done"
+    assert stats["prompt_tokens"] == 300
+    assert stats["completion_tokens"] == 30
+    assert stats["cached_tokens"] == 160
+    assert stats["total_tokens"] == 330
+    assert stats["net_tokens"] == 170
+    assert stats["api_calls"] == 2
+    assert stats["lifetime_total_tokens"] == 330
+
+
 def test_custom_system_prompt_configuration(tmp_path: Path, monkeypatch):
     for env in ["CN_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY"]:
         monkeypatch.delenv(env, raising=False)

@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import re
 import subprocess
+from pathlib import Path
 from typing import Any
 
 from .config import CODE_EXTENSIONS, DOC_EXTENSIONS, IGNORE_DIR_NAMES
@@ -56,9 +56,10 @@ def get_available_files(folder: Path) -> tuple[list[Path], list[Path]]:
 class TagsManager:
     """Manages generation, updates, and symbol lookups from .tags files."""
 
-    def __init__(self, folder: Path):
+    def __init__(self, folder: Path, tag_file: Path | None = None):
         self.folder = folder
-        self.tag_file = folder / ".tags"
+        self.tag_file = tag_file.resolve() if tag_file is not None else folder / ".tags"
+        self._custom_tag_file = tag_file is not None
 
     def generate(self) -> tuple[bool, str]:
         """Generate or regenerate .tags for all source files in the folder."""
@@ -74,6 +75,7 @@ class TagsManager:
                 rel_paths.append(str(p))
 
         input_data = "\n".join(rel_paths) + "\n"
+        self.tag_file.parent.mkdir(parents=True, exist_ok=True)
         cmd = [
             "ctags",
             "-L",
@@ -106,6 +108,9 @@ class TagsManager:
 
     def find_tag_file(self) -> Path | None:
         """Find .tags in folder or climb parent directories."""
+        if self._custom_tag_file:
+            return self.tag_file if self.tag_file.exists() else None
+
         curr = self.folder
         for parent in [curr, *curr.parents]:
             tf = parent / ".tags"
@@ -125,10 +130,11 @@ class TagsManager:
         if tf:
             tag_files.append(tf)
 
-        # Also search child folders' .tags
-        for p in self.folder.rglob(".tags"):
-            if p not in tag_files:
-                tag_files.append(p)
+        if not self._custom_tag_file:
+            # Also search child folders' .tags
+            for p in self.folder.rglob(".tags"):
+                if p not in tag_files:
+                    tag_files.append(p)
 
         if not tag_files:
             return []
@@ -150,7 +156,8 @@ class TagsManager:
                             continue
                         sym = parts[0]
                         if regex.search(sym):
-                            parsed = self._parse_tag_line(line, tag_file.parent)
+                            base_dir = self.folder if self._custom_tag_file else tag_file.parent
+                            parsed = self._parse_tag_line(line, base_dir)
                             if parsed:
                                 key = (parsed["symbol"], parsed["path"], parsed["line"])
                                 if key not in seen_keys:

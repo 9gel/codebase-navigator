@@ -166,3 +166,12 @@ To ensure high-quality, hallucination-free retrieval across multiple languages, 
 - **Retrieval Precision**: Does the agent cite the exact file and line numbers of the true implementation?
 - **Turn Efficiency**: Does the agent reach the correct conclusion within 1–3 tool turns?
 - **Token Economy**: Does the hybrid toolset reduce total prompt/completion tokens compared to raw file grep sweeps?
+
+Each benchmark invocation produces an immutable package under
+`eval/runs/run_<UTC timestamp>/`. The harness force-builds isolated LanceDB and
+ctags indexes for every target repository before parallel task execution, then
+stores those indexes beside `report.json`, `log.jsonl`, and the exact benchmark
+task snapshot. Repository Git commits, embedding model, candidate model, judge
+model, and cumulative per-call token usage are recorded in the package. The
+judge defaults to `deepseek/deepseek-v4-pro` and is independently configurable
+from the candidate model.

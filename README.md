@@ -381,9 +381,25 @@ uv run eval/runner.py --no-judge
 # Run A/B token-savings comparison against a generic baseline agent (cat/rg/find/ls):
 uv run eval/runner.py --compare-baseline
 
-# Export structured JSON evaluation report:
-uv run eval/runner.py --report eval/reports
+# Override the default deepseek/deepseek-v4-pro judge model:
+uv run eval/runner.py --judge-model openai/gpt-5.2
+
+# Store timestamped run packages under a different parent directory:
+uv run eval/runner.py --runs-dir /tmp/cn-eval-runs
 ```
+
+Every invocation creates a self-contained package under
+`eval/runs/run_<UTC timestamp>/`. It contains `report.json`, the complete
+`log.jsonl` trace, a snapshot of `benchmark_tasks.json`, and isolated LanceDB
+and ctags indexes under `indexes/<repository>/`. The report and per-repository
+index metadata record the exact Git commit evaluated. Indexes are rebuilt once
+before task workers start, so a run never reuses ambient `.codebase-navigator`
+state from an exercise repository.
+
+The judge defaults to `deepseek/deepseek-v4-pro`. Override it with
+`--judge-model` or `CN_EVAL_JUDGE_MODEL`. Token totals accumulate prompt,
+completion, and cached-input usage across every model call rather than reporting
+only the final turn.
 
 #### Comparing time and token savings with baseline tool usage
 

@@ -302,12 +302,14 @@ def extract_symbol_candidates(question: str) -> list[str]:
 
 
 def find_preflight_symbols(
-    folder: Path, question: str, max_symbols: int = 5
+    folder: Path,
+    question: str,
+    max_symbols: int = 5,
+    tag_file: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Look up exact/fuzzy symbol definitions in .tags for question identifiers."""
-    tags_mgr = TagsManager(folder)
-    tag_file = tags_mgr.find_tag_file()
-    if not tag_file:
+    tags_mgr = TagsManager(folder, tag_file=tag_file)
+    if not tags_mgr.find_tag_file():
         return []
 
     candidates = extract_symbol_candidates(question)
@@ -652,6 +654,8 @@ def execute_tool_call(
     custom_index_dir: str | None = None,
 ) -> str:
     """Dispatch tool call to appropriate backend."""
+    tag_file = Path(custom_index_dir) / ".tags" if custom_index_dir else None
+
     if fn_name == "search":
         query_term = fn_args.get("query", "").strip()
         doc_type = fn_args.get("type", "all")
@@ -674,7 +678,7 @@ def execute_tool_call(
         symbol = fn_args.get("symbol", "")
         exact = bool(fn_args.get("exact", False))
         limit = int(fn_args.get("limit", 10))
-        tags_mgr = TagsManager(folder)
+        tags_mgr = TagsManager(folder, tag_file=tag_file)
         matches = tags_mgr.lookup_symbol(symbol, exact=exact, limit=limit)
         if not matches:
             return f"No symbol tags found matching '{symbol}'."
@@ -689,7 +693,9 @@ def execute_tool_call(
         symbol = fn_args.get("symbol", "")
         path_filter = fn_args.get("path_filter")
         limit = int(fn_args.get("limit", 15))
-        refs = find_references(folder, symbol, path_filter=path_filter, limit=limit)
+        refs = find_references(
+            folder, symbol, path_filter=path_filter, limit=limit, tag_file=tag_file
+        )
         if not refs:
             return f"No definitions or references found for '{symbol}'."
         out = []
@@ -708,7 +714,7 @@ def execute_tool_call(
     elif fn_name == "call_tree":
         symbol = fn_args.get("symbol", "")
         path = fn_args.get("path")
-        tree = get_call_tree(folder, symbol, path=path)
+        tree = get_call_tree(folder, symbol, path=path, tag_file=tag_file)
         out = [f"Call Tree for `{symbol}`:"]
         if tree.get("definitions"):
             out.append("Definitions:")
@@ -778,12 +784,17 @@ class AgentSession:
         self.lifetime_prompt_tokens = 0
         self.lifetime_completion_tokens = 0
         self.lifetime_cached_tokens = 0
+        self.lifetime_api_calls = 0
 
     def reset(self):
         """Reset conversation messages back to system prompt."""
         self.effective_system_prompt = build_effective_system_prompt(self.config.system_prompt)
         self.messages = [{"role": "system", "content": self.effective_system_prompt}]
         self.turn_count = 0
+        self.lifetime_prompt_tokens = 0
+        self.lifetime_completion_tokens = 0
+        self.lifetime_cached_tokens = 0
+        self.lifetime_api_calls = 0
 
     def ask(
         self,
@@ -845,7 +856,8 @@ class AgentSession:
         tree_section = f"Repository Structure:\n```\n{repo_tree}\n```\n\n" if repo_tree else ""
 
         # Exact symbol tag discovery
-        preflight_symbols = find_preflight_symbols(self.folder, question)
+        tag_file = Path(self.custom_index_dir) / ".tags" if self.custom_index_dir else None
+        preflight_symbols = find_preflight_symbols(self.folder, question, tag_file=tag_file)
         symbols_text = ""
         if preflight_symbols:
             sym_lines = []
@@ -879,9 +891,10 @@ class AgentSession:
 
         searches_remaining = self.config.max_searches
         seen_tool_calls: set[str] = set()
+        prompt_tokens = 0
         output_tokens = 0
-        context_tokens = 0
         cached_tokens = 0
+        api_calls = 0
         tool_calls_count = 0
 
         while True:
@@ -907,13 +920,16 @@ class AgentSession:
                 or usage.get("cache_read_input_tokens", 0)
                 or 0
             )
+            cached_tok = min(cached_tok, p_tok)
 
-            context_tokens = p_tok
-            cached_tokens = cached_tok
+            prompt_tokens += p_tok
+            cached_tokens += cached_tok
             output_tokens += c_tok
-            self.lifetime_prompt_tokens = max(self.lifetime_prompt_tokens, p_tok)
+            api_calls += 1
+            self.lifetime_prompt_tokens += p_tok
             self.lifetime_completion_tokens += c_tok
-            self.lifetime_cached_tokens = max(self.lifetime_cached_tokens, cached_tok)
+            self.lifetime_cached_tokens += cached_tok
+            self.lifetime_api_calls += 1
 
             choices = response_data.get("choices", [])
             if not choices:
@@ -983,18 +999,29 @@ class AgentSession:
 
                 if declined_early:
                     self.messages.append({"role": "assistant", "content": decline_reason})
+                    uncached_prompt_tokens = max(0, prompt_tokens - cached_tokens)
                     stats = {
-                        "context_tokens": context_tokens,
+                        "prompt_tokens": prompt_tokens,
+                        "context_tokens": prompt_tokens,
                         "output_tokens": output_tokens,
-                        "context_output_tokens": context_tokens + output_tokens,
+                        "completion_tokens": output_tokens,
+                        "context_output_tokens": prompt_tokens + output_tokens,
+                        "total_tokens": prompt_tokens + output_tokens,
                         "cached_tokens": cached_tokens,
-                        "net_tokens": max(0, context_tokens + output_tokens - cached_tokens),
+                        "uncached_prompt_tokens": uncached_prompt_tokens,
+                        "net_tokens": uncached_prompt_tokens + output_tokens,
+                        "api_calls": api_calls,
                         "tool_calls_count": tool_calls_count,
                         "lifetime_prompt_tokens": self.lifetime_prompt_tokens,
                         "lifetime_completion_tokens": self.lifetime_completion_tokens,
                         "lifetime_cached_tokens": self.lifetime_cached_tokens,
                         "lifetime_total_tokens": self.lifetime_prompt_tokens
                         + self.lifetime_completion_tokens,
+                        "lifetime_net_tokens": max(
+                            0, self.lifetime_prompt_tokens - self.lifetime_cached_tokens
+                        )
+                        + self.lifetime_completion_tokens,
+                        "lifetime_api_calls": self.lifetime_api_calls,
                         "status": "declined",
                         "decline_category": decline_category,
                     }
@@ -1029,18 +1056,29 @@ class AgentSession:
             ]
             is_refusal = any(p in content_lower for p in refusal_patterns)
 
+            uncached_prompt_tokens = max(0, prompt_tokens - cached_tokens)
             stats = {
-                "context_tokens": context_tokens,
+                "prompt_tokens": prompt_tokens,
+                "context_tokens": prompt_tokens,
                 "output_tokens": output_tokens,
-                "context_output_tokens": context_tokens + output_tokens,
+                "completion_tokens": output_tokens,
+                "context_output_tokens": prompt_tokens + output_tokens,
+                "total_tokens": prompt_tokens + output_tokens,
                 "cached_tokens": cached_tokens,
-                "net_tokens": max(0, context_tokens + output_tokens - cached_tokens),
+                "uncached_prompt_tokens": uncached_prompt_tokens,
+                "net_tokens": uncached_prompt_tokens + output_tokens,
+                "api_calls": api_calls,
                 "tool_calls_count": tool_calls_count,
                 "lifetime_prompt_tokens": self.lifetime_prompt_tokens,
                 "lifetime_completion_tokens": self.lifetime_completion_tokens,
                 "lifetime_cached_tokens": self.lifetime_cached_tokens,
                 "lifetime_total_tokens": self.lifetime_prompt_tokens
                 + self.lifetime_completion_tokens,
+                "lifetime_net_tokens": max(
+                    0, self.lifetime_prompt_tokens - self.lifetime_cached_tokens
+                )
+                + self.lifetime_completion_tokens,
+                "lifetime_api_calls": self.lifetime_api_calls,
                 "status": "refusal" if is_refusal else "answered",
             }
             return content, stats

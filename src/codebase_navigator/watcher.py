@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-import shutil
 import sys
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 from watchfiles import Change, DefaultFilter, watch
@@ -14,7 +13,7 @@ from watchfiles import Change, DefaultFilter, watch
 from .ask import DEFAULT_INITIAL_LIMIT, AgentSession, LLMConfig
 from .config import CODE_EXTENSIONS, DOC_EXTENSIONS, IGNORE_DIR_NAMES, get_socket_path
 from .index import VectorIndex
-from .ipc import IPCServer, ping_socket
+from .ipc import IPCServer
 from .tags import TagsManager
 
 
@@ -109,7 +108,7 @@ class DirectoryWatcher:
                 progress_callback=progress_callback,
             )
             if stats:
-                self.lifetime_prompt_tokens = stats.get("context_tokens", 0)
+                self.lifetime_prompt_tokens = stats.get("lifetime_prompt_tokens", 0)
                 self.lifetime_completion_tokens = stats.get("lifetime_completion_tokens", 0)
                 self.lifetime_turn_tokens = (
                     self.lifetime_prompt_tokens + self.lifetime_completion_tokens
@@ -133,7 +132,6 @@ class DirectoryWatcher:
                     break
 
                 code_changed = False
-                doc_changed = False
                 affected_files: list[Path] = []
 
                 for change_type, change_path in changes:
@@ -143,7 +141,6 @@ class DirectoryWatcher:
                         code_changed = True
                         affected_files.append(p)
                     elif ext in DOC_EXTENSIONS:
-                        doc_changed = True
                         affected_files.append(p)
 
                 if not affected_files:
@@ -278,9 +275,6 @@ class DirectoryWatcher:
                 self.tui.write_transcript(f"\n\033[1;32m🤖 Assistant:\033[0m\n{answer}\n")
 
                 # Update status bar counters
-                t_total = stats.get("context_output_tokens", 0)
-                t_in = stats.get("context_tokens", 0)
-                t_out = stats.get("output_tokens", 0)
                 t_calls = stats.get("tool_calls_count", 0)
                 self.tui.update_stats(
                     total=self.lifetime_turn_tokens,
@@ -306,7 +300,8 @@ class DirectoryWatcher:
             chunks = sum(m.get("chunks", 0) for m in meta.values())
             return (
                 f"📊 Status: {len(meta)} files indexed ({chunks} chunks). Model: {config.model}\n"
-                f"   Session Context: {self.lifetime_turn_tokens:,} tokens across {self.turn_count} turns."
+                f"   Session Usage: {self.lifetime_turn_tokens:,} tokens across "
+                f"{self.turn_count} turns."
             )
 
         def handle_exit():

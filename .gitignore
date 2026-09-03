@@ -36,6 +36,7 @@ eval/report.json
 eval/reports.json
 eval/reports/
 eval/logs/
+eval/runs/
 
 # Ruff
 .ruff_cache/

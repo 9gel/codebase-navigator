@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import ast
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
 from .config import CODE_EXTENSIONS, DOC_EXTENSIONS, IGNORE_DIR_NAMES
@@ -211,6 +211,7 @@ def find_references(
     symbol: str,
     path_filter: str | None = None,
     limit: int = 20,
+    tag_file: Path | None = None,
 ) -> list[dict[str, Any]]:
     """1-shot hybrid tool to find definitions and all call/usage sites of a symbol.
 
@@ -221,7 +222,7 @@ def find_references(
         return []
 
     # 1. Look up definition(s)
-    tags_mgr = TagsManager(folder)
+    tags_mgr = TagsManager(folder, tag_file=tag_file)
     defs = tags_mgr.lookup_symbol(sym, exact=True, limit=5)
     def_locations = {(d["path"], d["line"]) for d in defs}
 
@@ -340,10 +341,11 @@ def get_call_tree(
     symbol: str,
     path: str | None = None,
     limit: int = 15,
+    tag_file: Path | None = None,
 ) -> dict[str, Any]:
     """Trace caller and callee relationships for a given function or class."""
     sym = symbol.strip()
-    tags_mgr = TagsManager(folder)
+    tags_mgr = TagsManager(folder, tag_file=tag_file)
     defs = tags_mgr.lookup_symbol(sym, exact=True, limit=5)
 
     result: dict[str, Any] = {
@@ -376,7 +378,7 @@ def get_call_tree(
                 result["callers"].append(c)
 
     # General reference search for external callers across the repo
-    external_refs = find_references(folder, sym, limit=limit)
+    external_refs = find_references(folder, sym, limit=limit, tag_file=tag_file)
     for ref in external_refs:
         if ref.get("type") == "reference":
             # Add to callers if not already present
