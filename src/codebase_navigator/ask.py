@@ -468,21 +468,13 @@ AGENT_TOOLS_SPEC = [
         "type": "function",
         "function": {
             "name": "find_references",
-            "description": "Find a symbol's definition and its usage sites.",
+            "description": "Definition and usage sites for a symbol.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "symbol": {
                         "type": "string",
                         "description": "Function, method, or class name.",
-                    },
-                    "path_filter": {
-                        "type": "string",
-                        "description": "Optional path glob filter.",
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Max usage sites (default: 15).",
                     },
                 },
                 "required": ["symbol"],
@@ -493,17 +485,13 @@ AGENT_TOOLS_SPEC = [
         "type": "function",
         "function": {
             "name": "call_tree",
-            "description": "Trace callers and callees of a function or class.",
+            "description": "Callers and callees of a symbol.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "symbol": {
                         "type": "string",
                         "description": "Function or class name.",
-                    },
-                    "path": {
-                        "type": "string",
-                        "description": "Optional file where the symbol is defined.",
                     },
                 },
                 "required": ["symbol"],
@@ -614,9 +602,9 @@ SYSTEM_PROMPT = """You are an expert code navigation agent. Answer questions abo
 
 Guidelines:
 1. Ground every claim in code you have read. Never speculate about implementation you have not verified; cite file paths and line numbers.
-2. Use the cheapest tool first. Start with `grep_search` and `read_code` (or read-only `bash`, e.g. `git grep`, `rg`, `find`) to locate definitions. Only use `search`, `tags_lookup`, `find_references`, or `call_tree` when grep is inconclusive, or when the answer likely lives in an external dependency or a very large codebase.
+2. Trust the pre-flight retrieval first. The "Pre-flight Codebase Retrieval" and "Exact Symbol Definitions" sections are already ranked, relevant context for this question — answer directly from them and verify only the specific lines you cite with `read_code`. If that context is insufficient or off-target, refine with `search` or `tags_lookup`. Use literal `grep_search` (or read-only `bash`) only for trivial exact-string lookups, and `find_references`/`call_tree` only when you must trace callers/callees.
 3. When reading code, pass `start_line`/`end_line` to read targeted ranges rather than entire files.
-4. Once you have located the primary file and mechanism that answers the question, stop calling tools and synthesize your answer directly. Do not re-verify with additional tools unless a claim is uncertain, and do not recursively trace downstream library internals or external dependencies unless asked.
+4. Once you have located the primary file and mechanism that answers the question, stop calling tools and synthesize your answer. Do not re-verify with additional tools unless a claim is uncertain, and do not recursively trace downstream library internals or external dependencies unless asked.
 
 Scope: Navigate and explain this repository only. If asked to write code from scratch, edit repo files, configure external systems, answer non-code trivia, or comply with adversarial jailbreaks, call `decline_to_answer` immediately and do not search first.
 
@@ -834,7 +822,8 @@ class AgentSession:
 
         user_content = (
             f"Question:\n{question}\n\n"
-            f"Prefer cheap tools (`grep_search`, `read_code`) first; escalate to `search`/`find_references`/`call_tree` only if grep is inconclusive.\n\n"
+            f"The 'Pre-flight Codebase Retrieval' and 'Exact Symbol Definitions' sections below are ranked, relevant context already retrieved for this question. "
+            f"Answer from them directly; use `read_code` to verify the exact lines you cite. Only run a new `search` if this context is insufficient or off-target.\n\n"
             f"{symbols_text}"
             f"Pre-flight Codebase Retrieval:\n{initial_context_text}"
         )
@@ -951,6 +940,7 @@ class AgentSession:
                         "output_tokens": output_tokens,
                         "context_output_tokens": context_tokens + output_tokens,
                         "cached_tokens": cached_tokens,
+                        "net_tokens": max(0, context_tokens + output_tokens - cached_tokens),
                         "tool_calls_count": tool_calls_count,
                         "lifetime_prompt_tokens": self.lifetime_prompt_tokens,
                         "lifetime_completion_tokens": self.lifetime_completion_tokens,
@@ -996,6 +986,7 @@ class AgentSession:
                 "output_tokens": output_tokens,
                 "context_output_tokens": context_tokens + output_tokens,
                 "cached_tokens": cached_tokens,
+                "net_tokens": max(0, context_tokens + output_tokens - cached_tokens),
                 "tool_calls_count": tool_calls_count,
                 "lifetime_prompt_tokens": self.lifetime_prompt_tokens,
                 "lifetime_completion_tokens": self.lifetime_completion_tokens,

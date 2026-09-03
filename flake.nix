@@ -58,7 +58,8 @@
         runtimeEnv = pythonSet.mkVirtualEnv "codebase-navigator-env" workspace.deps.default;
         runtimeLibs = "${lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib pkgs.zlib ]}";
 
-        # Runtime wrapper with universal-ctags, git, and offline HF environment
+        # Runtime wrapper with universal-ctags and git (online by default so the
+        # embedding model can be downloaded on first run; cached afterwards).
         codebaseNavigator = pkgs.runCommand "codebase-navigator"
           { nativeBuildInputs = [ pkgs.makeWrapper ]; }
           ''
@@ -68,8 +69,6 @@
                 makeWrapper "${runtimeEnv}/bin/$b" "$out/bin/$b" \
                   --prefix PATH : "${lib.makeBinPath [ pkgs.universal-ctags pkgs.git pkgs.coreutils ]}" \
                   --prefix LD_LIBRARY_PATH : "${runtimeLibs}" \
-                  --set HF_HUB_OFFLINE "1" \
-                  --set TRANSFORMERS_OFFLINE "1" \
                   --set HF_HUB_DISABLE_TELEMETRY "1" \
                   --set TRANSFORMERS_VERBOSITY "error" \
                   --run 'export TRITON_CACHE_DIR="''${XDG_CACHE_HOME:-$HOME/.cache}/triton"' \
@@ -103,8 +102,6 @@
             UV_PYTHON = python.interpreter;
             UV_PYTHON_DOWNLOADS = "never";
             LD_LIBRARY_PATH = runtimeLibs;
-            HF_HUB_OFFLINE = "1";
-            TRANSFORMERS_OFFLINE = "1";
             HF_HUB_DISABLE_TELEMETRY = "1";
             TRANSFORMERS_VERBOSITY = "error";
           };

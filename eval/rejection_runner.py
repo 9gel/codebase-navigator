@@ -76,6 +76,7 @@ def run_rejection_benchmark(
     save_report: Path | None = Path("eval/reports"),
     api_key: str | None = None,
     model: str | None = None,
+    save_log: Path | None = None,
 ) -> bool:
     """Run all 100 rejection evaluation prompts."""
     if not benchmark_file.exists():
@@ -108,6 +109,7 @@ def run_rejection_benchmark(
     passed_count = 0
     total_tokens = 0
     total_duration = 0.0
+    trace_log: list[dict[str, Any]] = []
 
     category_stats: dict[str, dict[str, int]] = {}
 
@@ -128,6 +130,7 @@ def run_rejection_benchmark(
         spinner.start()
 
         t0 = time.time()
+        trace: list[str] = []
         try:
             answer, stats = ask_codebase(
                 folder=target_repo,
@@ -135,12 +138,22 @@ def run_rejection_benchmark(
                 config=config,
                 verbose=False,
                 new_session=True,  # Test each prompt in isolation
+                progress_callback=trace.append,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — isolate per-task agent failures
             if spinner:
                 spinner.stop()
             print(f"    ❌ Execution Error: {e}")
             results_report.append(
+                {
+                    "task_id": t_id,
+                    "category": category,
+                    "prompt": prompt,
+                    "passed": False,
+                    "error": str(e),
+                }
+            )
+            trace_log.append(
                 {
                     "task_id": t_id,
                     "category": category,
@@ -187,6 +200,22 @@ def run_rejection_benchmark(
                 "answer_preview": answer[:200] + ("..." if len(answer) > 200 else ""),
             }
         )
+        trace_log.append(
+            {
+                "task_id": t_id,
+                "category": category,
+                "prompt": prompt,
+                "expected_action": expected_action,
+                "passed": passed,
+                "status": status,
+                "decline_category": decline_cat,
+                "tokens": tokens,
+                "duration_seconds": round(dt, 2),
+                "rationale": rationale,
+                "answer": answer,
+                "tool_trace": trace,
+            }
+        )
 
     # Summary
     print("\n" + "=" * 75)
@@ -227,6 +256,14 @@ def run_rejection_benchmark(
             json.dump(report_payload, f, indent=2)
         print(f"📄 Timestamped report saved to: {report_file}")
 
+        if save_log is not None:
+            log_path = Path(save_log)
+            log_path.mkdir(parents=True, exist_ok=True)
+            log_file = log_path / f"rejection_log_{timestamp_str}.jsonl"
+            with open(log_file, "w", encoding="utf-8") as f:
+                f.writelines(json.dumps(entry, ensure_ascii=True) + "\n" for entry in trace_log)
+            print(f"📜 Trace log saved to: {log_file}")
+
     return passed_count == len(tasks)
 
 
@@ -247,6 +284,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model", default=None, help="LLM model name (default: deepseek/deepseek-v4-flash-0731)"
     )
+    parser.add_argument(
+        "--log",
+        default="eval/logs",
+        help="Directory to save the per-task trace log (default: eval/logs/rejection_log_<timestamp>.jsonl)",
+    )
     args = parser.parse_args()
 
     run_rejection_benchmark(
@@ -255,4 +297,5 @@ if __name__ == "__main__":
         save_report=Path(args.report) if args.report else None,
         api_key=args.api_key,
         model=args.model,
+        save_log=Path(args.log) if args.log else None,
     )

@@ -9,15 +9,16 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-# Ensure portable user caching & offline environment variables before importing ML libraries
+# Ensure portable user caching & environment variables before importing ML libraries.
+# Default to ONLINE so first-run can download the embedding model; fastembed still
+# resolves from the local cache first, so subsequent runs stay offline for free.
+# Users may opt into fully-offline mode via HF_HUB_OFFLINE=1 if they wish.
 _cache_base = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache"))
 if "FASTEMBED_CACHE_DIR" not in os.environ:
     os.environ["FASTEMBED_CACHE_DIR"] = str(_cache_base / "fastembed")
 if "HF_HOME" not in os.environ:
     os.environ["HF_HOME"] = str(_cache_base / "huggingface")
 
-os.environ.setdefault("HF_HUB_OFFLINE", "1")
-os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "0")
 os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
@@ -27,7 +28,7 @@ import pyarrow as pa
 
 EMBEDDING_MODEL_NAME = os.environ.get(
     "CN_EMBEDDING_MODEL",
-    os.environ.get("CODEBASE_NAVIGATOR_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+    os.environ.get("CODEBASE_NAVIGATOR_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"),
 )
 
 # Common dimensions for known FastEmbed ONNX models, default 384 for MiniLM
@@ -44,38 +45,98 @@ _MODEL_DIMS = {
 }
 VECTOR_DIM = _MODEL_DIMS.get(EMBEDDING_MODEL_NAME, 384)
 
-DOC_SCHEMA = pa.schema([
-    pa.field("id", pa.string()),
-    pa.field("path", pa.string()),
-    pa.field("abs_path", pa.string()),
-    pa.field("doc_type", pa.string()),  # "markdown" or "code_doc"
-    pa.field("title", pa.string()),
-    pa.field("start_line", pa.int32()),
-    pa.field("end_line", pa.int32()),
-    pa.field("content", pa.string()),
-    pa.field("vector", pa.list_(pa.float32(), VECTOR_DIM)),
-])
+DOC_SCHEMA = pa.schema(
+    [
+        pa.field("id", pa.string()),
+        pa.field("path", pa.string()),
+        pa.field("abs_path", pa.string()),
+        pa.field("doc_type", pa.string()),  # "markdown" or "code_doc"
+        pa.field("title", pa.string()),
+        pa.field("start_line", pa.int32()),
+        pa.field("end_line", pa.int32()),
+        pa.field("content", pa.string()),
+        pa.field("vector", pa.list_(pa.float32(), VECTOR_DIM)),
+    ]
+)
 
 CODE_EXTENSIONS = {
-    ".py", ".rs", ".go", ".ts", ".tsx", ".js", ".jsx",
-    ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hh",
-    ".nix", ".sh", ".bash", ".zsh", ".sql", ".java",
-    ".kt", ".scala", ".rb", ".php", ".cs", ".swift",
-    ".lua", ".zig", ".nim", ".elm", ".ex", ".exs",
-    ".erl", ".hrl", ".hs", ".ml", ".mli", ".pl", ".pm",
-    ".r", ".jl", ".clj", ".cljs", ".lisp", ".scm",
+    ".py",
+    ".rs",
+    ".go",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".c",
+    ".cpp",
+    ".cc",
+    ".cxx",
+    ".h",
+    ".hpp",
+    ".hh",
+    ".nix",
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".sql",
+    ".java",
+    ".kt",
+    ".scala",
+    ".rb",
+    ".php",
+    ".cs",
+    ".swift",
+    ".lua",
+    ".zig",
+    ".nim",
+    ".elm",
+    ".ex",
+    ".exs",
+    ".erl",
+    ".hrl",
+    ".hs",
+    ".ml",
+    ".mli",
+    ".pl",
+    ".pm",
+    ".r",
+    ".jl",
+    ".clj",
+    ".cljs",
+    ".lisp",
+    ".scm",
 }
 
 DOC_EXTENSIONS = {
-    ".md", ".markdown", ".rst", ".adoc", ".org",
+    ".md",
+    ".markdown",
+    ".rst",
+    ".adoc",
+    ".org",
 }
 
 IGNORE_DIR_NAMES = {
-    ".git", ".hg", ".svn",
-    "node_modules", "target", "build", "dist",
-    ".venv", "venv", "env", ".direnv",
-    "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
-    ".cache", ".devel-index", ".devel-tools", ".codebase-navigator", ".dagster_home", "pipeline-cache",
+    ".git",
+    ".hg",
+    ".svn",
+    "node_modules",
+    "target",
+    "build",
+    "dist",
+    ".venv",
+    "venv",
+    "env",
+    ".direnv",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".cache",
+    ".devel-index",
+    ".devel-tools",
+    ".codebase-navigator",
+    ".dagster_home",
+    "pipeline-cache",
 }
 
 
@@ -220,6 +281,7 @@ def get_port_path(folder: Path, custom_index_dir: str | None = None) -> Path:
 def get_default_tcp_port(folder: Path) -> int:
     """Compute a deterministic loopback TCP port in range 10000..59999 based on directory path hash."""
     import zlib
+
     canonical_path = str(folder.resolve()).encode("utf-8")
     hash_val = zlib.crc32(canonical_path)
     return 10000 + (hash_val % 50000)

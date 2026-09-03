@@ -448,6 +448,7 @@ def run_baseline_agent(
             "output_tokens": output_tokens,
             "context_output_tokens": context_tokens + output_tokens,
             "cached_tokens": cached_tokens,
+            "net_tokens": max(0, context_tokens + output_tokens - cached_tokens),
             "tool_calls_count": tool_calls_count,
         }
         return content, stats
@@ -460,22 +461,35 @@ class ReportStream:
       1. On construction, global facts (timestamp, overhead, repo plan) are written
          with an empty ``results`` list.
       2. Each completed task is appended and the file is atomically rewritten.
+
+    If ``log_dir`` is provided, a companion JSONL trace log is written under that
+    directory with the same timestamp as the report file, containing full answers,
+    tool-call traces, and judge rationales for offline analysis.
     """
 
-    def __init__(self, save_report: Path | None, global_facts: dict[str, Any]):
+    def __init__(
+        self,
+        save_report: Path | None,
+        global_facts: dict[str, Any],
+        log_dir: Path | None = None,
+    ):
         self.data: dict[str, Any] = {**global_facts, "results": []}
         self.report_file: Path | None = None
+        self.trace_file: Path | None = None
         self._lock = threading.Lock()
+        self.timestamp_str = time.strftime("%Y%m%d_%H%M%S")
         if save_report is not None:
-            self.report_file = self._resolve_path(save_report)
+            self.report_file = self._resolve_report_path(save_report)
             self._write()
+            if log_dir is not None:
+                log_dir.mkdir(parents=True, exist_ok=True)
+                self.trace_file = log_dir / f"log_{self.timestamp_str}.jsonl"
+                self._write_trace({"type": "header", **global_facts})
 
-    @staticmethod
-    def _resolve_path(save_report: Path) -> Path:
-        timestamp_str = time.strftime("%Y%m%d_%H%M%S")
+    def _resolve_report_path(self, save_report: Path) -> Path:
         if save_report.is_dir() or not save_report.suffix:
             save_report.mkdir(parents=True, exist_ok=True)
-            return save_report / f"report_{timestamp_str}.json"
+            return save_report / f"report_{self.timestamp_str}.json"
         save_report.parent.mkdir(parents=True, exist_ok=True)
         return save_report
 
@@ -483,6 +497,22 @@ class ReportStream:
         with self._lock:
             self.data["results"].append(result)
             self._write()
+
+    def record_trace(self, entry: dict[str, Any]) -> None:
+        """Write a single task trace line. Never raises: a trace problem must not kill the run."""
+        try:
+            self._write_trace({"type": "task", **entry})
+        except Exception as e:  # noqa: BLE001 — trace logging is best-effort
+            with self._lock:
+                print(f"⚠️  Trace write failed: {e}", file=sys.stderr)
+
+    def _write_trace(self, entry: dict[str, Any]) -> None:
+        if self.trace_file is None:
+            return
+        # ensure_ascii escapes lone surrogates (from mis-decoded tool output) that
+        # would otherwise raise UnicodeEncodeError and crash the whole benchmark.
+        with self._lock, open(self.trace_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=True) + "\n")
 
     def finalize(self, summary: dict[str, Any]) -> None:
         with self._lock:
@@ -506,6 +536,7 @@ def _run_task(
     use_llm_judge: bool,
     compare_baseline: bool,
     use_spinner: bool,
+    trace_callback=None,
 ) -> dict[str, Any]:
     """Execute a single benchmark task (CN agent + judge, then optional baseline) and return its result."""
     from codebase_navigator.cli import StatusSpinner
@@ -518,6 +549,9 @@ def _run_task(
 
     _safe_print(f"\n  ▶ [{task_id}] Q: {question}")
 
+    cn_trace: list[str] = []
+    base_trace: list[str] = []
+
     spinner: StatusSpinner | None = None
 
     def _stop_spinner() -> None:
@@ -528,19 +562,24 @@ def _run_task(
 
     def _progress(label: str, line: str) -> None:
         nonlocal spinner
-        if not use_spinner:
+        if use_spinner:
+            if spinner:
+                spinner.update_message(f"{label}: {line}")
+            else:
+                spinner = StatusSpinner(f"{label}: {line}", stream=sys.stderr)
+                spinner.start()
             return
-        if spinner:
-            spinner.update_message(f"{label}: {line}")
-        else:
-            spinner = StatusSpinner(f"{label}: {line}", stream=sys.stderr)
-            spinner.start()
+        # No spinner (parallel workers): stream progress to stderr so long-running
+        # tasks still show movement instead of sitting silent for minutes.
+        _safe_print(f"    [{label}] {line}", file=sys.stderr)
 
     def handle_cn_progress(line: str) -> None:
-        _progress("CN", line)
+        cn_trace.append(line)
+        _progress(f"{task_id}·CN", line)
 
     def handle_base_progress(line: str) -> None:
-        _progress("Baseline", line)
+        base_trace.append(line)
+        _progress(f"{task_id}·Base", line)
 
     # 1. Evaluate Codebase-Navigator Agent
     t0 = time.time()
@@ -573,7 +612,7 @@ def _run_task(
 
         cn_passed = cn_judge_pass if use_llm_judge else cn_rule_pass
 
-        cn_tokens = cn_stats.get("context_output_tokens", 0)
+        cn_tokens = cn_stats.get("net_tokens", cn_stats.get("context_output_tokens", 0))
         cn_cached = cn_stats.get("cached_tokens", 0)
         cn_cached_str = f", cached: {cn_cached:,}" if cn_cached > 0 else ""
         _safe_print(
@@ -585,6 +624,8 @@ def _run_task(
         base_cached = 0
         base_dt = 0.0
         base_passed = False
+        base_answer = ""
+        base_rationale = ""
         token_savings_pct = 0.0
         time_savings_pct = 0.0
 
@@ -610,13 +651,17 @@ def _run_task(
                 )
 
                 if use_llm_judge and config.api_key:
-                    base_judge_pass, _ = llm_judge_answer(question, key, base_answer, config)
+                    base_judge_pass, base_rationale = llm_judge_answer(
+                        question, key, base_answer, config
+                    )
                 else:
                     base_judge_pass = base_rule_pass
 
                 base_passed = base_judge_pass
 
-                base_tokens = base_stats.get("context_output_tokens", 0)
+                base_tokens = base_stats.get(
+                    "net_tokens", base_stats.get("context_output_tokens", 0)
+                )
                 base_cached = base_stats.get("cached_tokens", 0)
 
                 if base_tokens > 0:
@@ -638,7 +683,7 @@ def _run_task(
                 _stop_spinner()
                 _safe_print(f"    ❌ Baseline Error: {e_base}")
 
-        return {
+        result: dict[str, Any] = {
             "task_id": task_id,
             "repo": r_name,
             "question": question,
@@ -656,16 +701,59 @@ def _run_task(
             "answer_preview": cn_answer[:300] + ("..." if len(cn_answer) > 300 else ""),
         }
 
+        if trace_callback is not None:
+            trace_entry: dict[str, Any] = {
+                "task_id": task_id,
+                "repo": r_name,
+                "question": question,
+                "expected_answer_key": key,
+                "required_keywords": req_kws,
+                "required_files": req_files,
+                "cn": {
+                    "passed": cn_passed,
+                    "answer": cn_answer,
+                    "judge_rationale": cn_rationale,
+                    "tokens": cn_tokens,
+                    "cached_tokens": cn_cached,
+                    "duration_seconds": round(cn_dt, 2),
+                    "tool_trace": cn_trace,
+                },
+            }
+            if compare_baseline:
+                trace_entry["baseline"] = {
+                    "passed": base_passed,
+                    "answer": base_answer,
+                    "judge_rationale": base_rationale,
+                    "tokens": base_tokens,
+                    "cached_tokens": base_cached,
+                    "duration_seconds": round(base_dt, 2),
+                    "tool_trace": base_trace,
+                }
+            trace_callback(trace_entry)
+
+        return result
+
     except Exception as e:  # noqa: BLE001 — isolate agent failures
         _stop_spinner()
         _safe_print(f"    ❌ Error executing task: {e}")
-        return {
+        result = {
             "task_id": task_id,
             "repo": r_name,
             "question": question,
             "passed": False,
             "error": str(e),
         }
+        if trace_callback is not None:
+            trace_callback(
+                {
+                    "task_id": task_id,
+                    "repo": r_name,
+                    "question": question,
+                    "expected_answer_key": key,
+                    "cn": {"passed": False, "error": str(e), "tool_trace": cn_trace},
+                }
+            )
+        return result
 
 
 def run_benchmark(
@@ -674,6 +762,7 @@ def run_benchmark(
     save_report: Path | None = Path("eval/reports"),
     compare_baseline: bool = False,
     workers: int = 4,
+    save_log: Path | None = None,
 ):
     """Run full evaluation suite across configured repositories with optional baseline comparison."""
     if not BENCHMARK_CONFIG.is_file():
@@ -710,7 +799,7 @@ def run_benchmark(
         "repo_plan": repo_plan,
         "workers": workers,
     }
-    report_stream = ReportStream(save_report, global_facts)
+    report_stream = ReportStream(save_report, global_facts, log_dir=save_log)
 
     # Build the flat work list, cloning repos and resolving configs up front.
     work_items: list[tuple[str, Path, Any, dict[str, Any]]] = []
@@ -746,7 +835,14 @@ def run_benchmark(
     if workers <= 1 or total_tasks <= 1:
         for r_name, r_dir, config, task in work_items:
             result = _run_task(
-                r_name, r_dir, task, config, use_llm_judge, compare_baseline, use_spinner
+                r_name,
+                r_dir,
+                task,
+                config,
+                use_llm_judge,
+                compare_baseline,
+                use_spinner,
+                trace_callback=report_stream.record_trace,
             )
             results_report.append(result)
             report_stream.add_result(result)
@@ -763,6 +859,7 @@ def run_benchmark(
                     use_llm_judge,
                     compare_baseline,
                     use_spinner,
+                    report_stream.record_trace,
                 ): (r_name, task)
                 for r_name, r_dir, config, task in work_items
             }
@@ -828,6 +925,8 @@ def run_benchmark(
     report_stream.finalize(summary)
     if report_stream.report_file is not None:
         print(f"📄 Timestamped report saved to: {report_stream.report_file}")
+    if report_stream.trace_file is not None:
+        print(f"📜 Trace log saved to: {report_stream.trace_file}")
 
     return passed_tasks == total_tasks
 
@@ -854,6 +953,11 @@ if __name__ == "__main__":
         default="eval/reports",
         help="Directory or file path to save report (default: eval/reports/report_<timestamp>.json)",
     )
+    parser.add_argument(
+        "--log",
+        default="eval/logs",
+        help="Directory to save the per-task trace log (default: eval/logs/log_<timestamp>.jsonl)",
+    )
     args = parser.parse_args()
 
     run_benchmark(
@@ -862,4 +966,5 @@ if __name__ == "__main__":
         save_report=Path(args.report) if args.report else None,
         compare_baseline=args.compare_baseline,
         workers=args.workers,
+        save_log=Path(args.log) if args.log else None,
     )
