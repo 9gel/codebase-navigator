@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -60,7 +61,7 @@ class LiveTaskProgress:
 
     def __init__(self, stream=sys.stderr):
         self.stream = stream
-        self._states: dict[str, tuple[str, str]] = {}
+        self._states: dict[str, tuple[str, str, float]] = {}
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -70,7 +71,13 @@ class LiveTaskProgress:
 
     def update(self, task_id: str, label: str, message: str) -> None:
         with _PRINT_LOCK:
-            self._states[task_id] = (label, message)
+            current = self._states.get(task_id)
+            started_at = (
+                current[2]
+                if current is not None and current[:2] == (label, message)
+                else time.monotonic()
+            )
+            self._states[task_id] = (label, message, started_at)
 
     def finish(self, task_id: str) -> None:
         with _PRINT_LOCK:
@@ -99,10 +106,11 @@ class LiveTaskProgress:
                 states = list(self._states.values())
                 if not states:
                     continue
-                label, message = states[(tick // 8) % len(states)]
+                label, message, started_at = states[(tick // 8) % len(states)]
                 frame = next(frame_cycle)
                 active = f"{len(states)} active" if len(states) > 1 else "1 active"
-                text = f"{frame} [{active}] [{label}] {message}"
+                elapsed = time.monotonic() - started_at
+                text = f"{frame} [{active}] [{label}] {message} ({elapsed:.1f}s)"
                 width = shutil.get_terminal_size((100, 20)).columns
                 if len(text) > width:
                     text = text[: max(1, width - 3)].rstrip() + "..."
@@ -830,6 +838,7 @@ def _run_task(
     compare_baseline: bool,
     use_spinner: bool,
     trace_callback=None,
+    event_callback=None,
     live_progress: LiveTaskProgress | None = None,
     cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
@@ -885,10 +894,28 @@ def _run_task(
 
     def handle_cn_progress(line: str) -> None:
         cn_trace.append(line)
+        if event_callback is not None:
+            event_callback(
+                "progress",
+                timestamp=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                repo=r_name,
+                task_id=task_id,
+                agent="cn",
+                message=line,
+            )
         _progress(f"{task_id}·CN", line)
 
     def handle_base_progress(line: str) -> None:
         base_trace.append(line)
+        if event_callback is not None:
+            event_callback(
+                "progress",
+                timestamp=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                repo=r_name,
+                task_id=task_id,
+                agent="baseline",
+                message=line,
+            )
         _progress(f"{task_id}·Base", line)
 
     # 1. Evaluate Codebase-Navigator Agent
@@ -1300,6 +1327,7 @@ def run_benchmark(
                     compare_baseline,
                     use_spinner,
                     trace_callback=report_stream.record_trace,
+                    event_callback=report_stream.record_event,
                     cancel_event=cancel_event,
                 )
                 results_report.append(result)
@@ -1322,6 +1350,7 @@ def run_benchmark(
                     compare_baseline,
                     use_spinner,
                     report_stream.record_trace,
+                    report_stream.record_event,
                     live_progress,
                     cancel_event,
                 )
@@ -1342,26 +1371,35 @@ def run_benchmark(
                 else:
                     _safe_print(f"    🧮 Progress: {completed}/{total_tasks} tasks complete")
     except KeyboardInterrupt:
-        cancel_event.set()
-        for future in futures:
-            future.cancel()
-        if pool is not None:
-            pool.shutdown(wait=False, cancel_futures=True)
-            pool = None
-        if live_progress is not None:
-            live_progress.stop()
-            live_progress = None
-        report_stream.record_event(
-            "interrupted", completed_tasks=completed, total_tasks=total_tasks
-        )
-        report_stream.finalize(
-            {
-                "status": "interrupted",
-                "total_tasks": total_tasks,
-                "completed_tasks": completed,
-            }
-        )
-        _safe_print(f"\n⏹️  Evaluation interrupted ({completed}/{total_tasks} tasks completed).")
+        # A repeated Ctrl-C must not interrupt report flushing after the first one.
+        previous_sigint_handler = None
+        if threading.current_thread() is threading.main_thread():
+            previous_sigint_handler = signal.getsignal(signal.SIGINT)
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
+        try:
+            cancel_event.set()
+            for future in futures:
+                future.cancel()
+            if pool is not None:
+                pool.shutdown(wait=False, cancel_futures=True)
+                pool = None
+            if live_progress is not None:
+                live_progress.stop()
+                live_progress = None
+            report_stream.record_event(
+                "interrupted", completed_tasks=completed, total_tasks=total_tasks
+            )
+            report_stream.finalize(
+                {
+                    "status": "interrupted",
+                    "total_tasks": total_tasks,
+                    "completed_tasks": completed,
+                }
+            )
+            _safe_print(f"\n⏹️  Evaluation interrupted ({completed}/{total_tasks} tasks completed).")
+        finally:
+            if previous_sigint_handler is not None:
+                signal.signal(signal.SIGINT, previous_sigint_handler)
         raise
     finally:
         if pool is not None:

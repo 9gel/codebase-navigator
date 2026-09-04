@@ -13,11 +13,38 @@ from codebase_navigator.ask import (
     DEFAULT_MODEL,
     LLMConfig,
     ask_codebase,
+    execute_search,
     extract_symbol_candidates,
     find_preflight_symbols,
     format_chunks_for_llm,
     load_llm_config,
 )
+
+
+def test_execute_search_reports_local_embedding_phases(tmp_path: Path):
+    phases: list[str] = []
+
+    def fake_search(_query, **kwargs):
+        kwargs["progress_callback"]("Waiting for shared embedding model...")
+        kwargs["progress_callback"]("Embedding search query...")
+        kwargs["progress_callback"]("Querying LanceDB index...")
+        return []
+
+    with (
+        patch("codebase_navigator.ask.query_socket", return_value=None),
+        patch("codebase_navigator.ask.VectorIndex") as index,
+    ):
+        index.return_value.search.side_effect = fake_search
+        results = execute_search(tmp_path, "query", progress_callback=phases.append)
+
+    assert results == []
+    assert phases == [
+        "Checking for a live index daemon...",
+        "Opening local index...",
+        "Waiting for shared embedding model...",
+        "Embedding search query...",
+        "Querying LanceDB index...",
+    ]
 
 
 def test_load_llm_config_defaults(monkeypatch, tmp_path):

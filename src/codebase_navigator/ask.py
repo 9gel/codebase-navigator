@@ -9,6 +9,7 @@ import sys
 import tomllib
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -204,15 +205,25 @@ def execute_search(
     limit: int = 5,
     doc_type: str = "all",
     custom_index_dir: str | None = None,
+    progress_callback: Callable[[str], None] | None = None,
 ) -> list[dict[str, Any]]:
     """Perform semantic vector search using socket daemon if available, else in-process."""
+    if progress_callback:
+        progress_callback("Checking for a live index daemon...")
     socket_path = get_socket_path(folder, custom_index_dir)
     results = query_socket(socket_path, query, limit=limit, doc_type=doc_type)
     if results is not None:
         return results
 
+    if progress_callback:
+        progress_callback("Opening local index...")
     idx = VectorIndex(folder, custom_index_dir)
-    return idx.search(query, limit=limit, doc_type=doc_type)
+    return idx.search(
+        query,
+        limit=limit,
+        doc_type=doc_type,
+        progress_callback=progress_callback,
+    )
 
 
 def extract_symbol_candidates(question: str) -> list[str]:
@@ -833,6 +844,7 @@ class AgentSession:
             question,
             limit=self.config.initial_limit,
             custom_index_dir=self.custom_index_dir,
+            progress_callback=lambda phase: emit(f"🔍 {phase}"),
         )
 
         # Dynamic confidence filtering: discard noisy chunks

@@ -407,9 +407,14 @@ Every invocation also creates an auditable package under
 the shared index. The report and log capture the source-repository commit,
 codebase-navigator commit, cache hit/build status, full index-tree SHA-256, and
 a post-run integrity check confirming that evaluation did not mutate the index.
-On a TTY, parallel worker states rotate on one animated line. Ctrl-C cancels
-queued work, records the interrupted run, and exits immediately without waiting
-for workers blocked in API calls.
+On a TTY, parallel worker states rotate on one animated line with phase and
+elapsed-time details. Local searches share one FastEmbed/ONNX model and
+serialize only query embedding, avoiding concurrent model-initialization stalls
+while keeping LanceDB reads parallel. Each phase transition is timestamped in
+the run's `log.jsonl`, even before a task completes. Ctrl-C cancels queued work,
+records the
+interrupted run, ignores repeated interrupts while flushing it, and exits
+immediately without waiting for workers blocked in API calls.
 
 The judge defaults to `deepseek/deepseek-v4-pro`. Override it with
 `--judge-model` or `CN_EVAL_JUDGE_MODEL`. Token totals accumulate prompt,

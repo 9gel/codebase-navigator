@@ -78,6 +78,10 @@ flowchart TD
 - **Hybrid Boosting**:
   - Semantic vector similarity combined with exact term boosting on chunk headers and symbol names.
   - Granular chunking: Markdown section headers, term definitions, Python class/function docstrings, and generic multi-line comment blocks.
+- **Concurrent Search Safety**: In-process indexes share one lazily initialized
+  FastEmbed/ONNX model. Query embedding is serialized to avoid competing ONNX
+  session initialization and inference stalls, while LanceDB reads remain
+  parallel.
 
 ### 3.2. Git-Aware Symbol Indexing (`tags.py`)
 - Uses `universal-ctags` with `-L - --fields=+n+K --sort=yes`.
@@ -180,7 +184,9 @@ benchmark task snapshot, and per-repository index metadata snapshots. Both the
 initial index hash and post-run verification hash are logged. Repository Git
 commits, embedding model, candidate model, judge model, and cumulative per-call
 token usage are recorded. Parallel TTY progress rotates active worker states in
-place; interruption cancels queued futures, records partial-run status, and the
+place, including the current local-search phase and elapsed time. Phase changes
+are appended immediately to `log.jsonl` so incomplete tasks remain diagnosable;
+interruption cancels queued futures, records partial-run status, and the
 CLI terminates without waiting on blocked network threads. The judge defaults
 to `deepseek/deepseek-v4-pro` and is independently configurable from the
 candidate model.

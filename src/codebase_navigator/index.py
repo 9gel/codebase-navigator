@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import re
+import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -45,6 +47,10 @@ COMMON_STOPWORDS = {
     "can",
 }
 
+_SHARED_MODEL: TextEmbedding | None = None
+_SHARED_MODEL_LOCK = threading.Lock()
+_EMBEDDING_INFERENCE_LOCK = threading.Lock()
+
 
 class VectorIndex:
     """LanceDB index manager with FastEmbed ONNX embeddings and hybrid re-ranking."""
@@ -61,11 +67,31 @@ class VectorIndex:
     @property
     def model(self) -> TextEmbedding:
         if self._model is None:
-            from fastembed import TextEmbedding
+            global _SHARED_MODEL
+            if _SHARED_MODEL is None:
+                with _SHARED_MODEL_LOCK:
+                    if _SHARED_MODEL is None:
+                        from fastembed import TextEmbedding
 
-            with silence_stdio():
-                self._model = TextEmbedding(model_name=EMBEDDING_MODEL_NAME)
+                        with silence_stdio():
+                            _SHARED_MODEL = TextEmbedding(model_name=EMBEDDING_MODEL_NAME)
+            self._model = _SHARED_MODEL
         return self._model
+
+    def _embed(
+        self,
+        texts: list[str],
+        batch_size: int | None = None,
+        progress_callback: Callable[[str], None] | None = None,
+    ) -> list[Any]:
+        """Run the shared ONNX model without concurrent-session contention."""
+        if progress_callback:
+            progress_callback("Waiting for shared embedding model...")
+        with _EMBEDDING_INFERENCE_LOCK:
+            if progress_callback:
+                progress_callback("Embedding search query...")
+            kwargs = {"batch_size": batch_size} if batch_size is not None else {}
+            return list(self.model.embed(texts, **kwargs))
 
     def _ensure_table(self):
         try:
@@ -164,7 +190,7 @@ class VectorIndex:
 
         if all_chunks_to_embed:
             texts = [c["content"] for c in all_chunks_to_embed]
-            embeddings = list(self.model.embed(texts, batch_size=256))
+            embeddings = self._embed(texts, batch_size=256)
             for chunk, vec in zip(all_chunks_to_embed, embeddings):
                 chunk["vector"] = vec.tolist() if hasattr(vec, "tolist") else list(vec)
 
@@ -216,7 +242,7 @@ class VectorIndex:
 
         if chunks:
             texts = [c["content"] for c in chunks]
-            embeddings = list(self.model.embed(texts, batch_size=64))
+            embeddings = self._embed(texts, batch_size=64)
             for chunk, vec in zip(chunks, embeddings):
                 chunk["vector"] = vec.tolist() if hasattr(vec, "tolist") else list(vec)
             self.table.add(chunks)
@@ -238,17 +264,20 @@ class VectorIndex:
         query: str,
         limit: int = 5,
         doc_type: str | None = None,
+        progress_callback: Callable[[str], None] | None = None,
     ) -> list[dict[str, Any]]:
         """True hybrid semantic vector + BM25 FTS search with Reciprocal Rank Fusion."""
         if len(self.table) == 0:
             return []
 
-        q_vec = list(self.model.embed([query]))[0]
+        q_vec = self._embed([query], progress_callback=progress_callback)[0]
         if hasattr(q_vec, "tolist"):
             q_vec = q_vec.tolist()
         else:
             q_vec = list(q_vec)
         fetch_limit = max(limit * 4, 25)
+        if progress_callback:
+            progress_callback("Querying LanceDB index...")
 
         # Normalize doc_type filter
         norm_type = None

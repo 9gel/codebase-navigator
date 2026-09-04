@@ -18,6 +18,7 @@ from eval.rejection_runner import run_rejection_benchmark
 from eval.runner import (
     DEFAULT_JUDGE_MODEL,
     LiveTaskProgress,
+    _run_task,
     ensure_repo_cloned,
     hash_index_tree,
     llm_judge_answer,
@@ -83,6 +84,38 @@ def test_live_progress_cycles_active_worker_states_in_place():
     assert "one·CN" in output
     assert "two·CN" in output
     assert "2 active" in output
+
+
+def test_task_progress_phases_are_logged_before_completion(tmp_path: Path):
+    events: list[tuple[str, dict]] = []
+
+    def fake_ask_codebase(**kwargs):
+        kwargs["progress_callback"]("🔍 Opening local index...")
+        kwargs["progress_callback"]("🔍 Embedding search query...")
+        return "answer", {"total_tokens": 1}
+
+    with patch("eval.runner.ask_codebase", side_effect=fake_ask_codebase):
+        result = _run_task(
+            "demo",
+            tmp_path,
+            "a" * 40,
+            tmp_path / "index",
+            {"id": "task", "question": "Question?", "expected_answer_key": "answer"},
+            SimpleNamespace(api_key="key"),
+            "judge",
+            False,
+            False,
+            False,
+            event_callback=lambda event_type, **entry: events.append((event_type, entry)),
+        )
+
+    assert result["passed"] is True
+    assert [entry[1]["message"] for entry in events] == [
+        "🔍 Opening local index...",
+        "🔍 Embedding search query...",
+    ]
+    assert all(event_type == "progress" for event_type, _entry in events)
+    assert all(entry["task_id"] == "task" for _event_type, entry in events)
 
 
 def test_eval_runner_captures_repo_commit_and_index_metadata(tmp_path: Path):
