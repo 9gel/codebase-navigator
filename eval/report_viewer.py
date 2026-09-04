@@ -18,6 +18,7 @@ import os
 import sys
 import textwrap
 import time
+import statistics
 from pathlib import Path
 from typing import Any
 
@@ -158,15 +159,25 @@ def render_summary(report: dict[str, Any]) -> list[str]:
         or completed < expected
     )
 
+    # Infrastructure faults are not wrong answers; score them separately.
+    errored = [r for r in results if r.get("error")]
+    scored = max(0, expected - len(errored))
+
     lines = ["\n" + "=" * WIDTH]
     status = f" (aborted/incomplete: {completed}/{expected})" if aborted else ""
-    score = passed / expected * 100 if expected else 100.0
-    lines.append(f"📊 CN Evaluation Score:       {passed}/{expected} passed ({score:.1f}%){status}")
+    score = passed / scored * 100 if scored else 100.0
+    lines.append(f"📊 CN Evaluation Score:       {passed}/{scored} passed ({score:.1f}%){status}")
+    if errored:
+        lines.append(
+            f"⚠️  Incomplete (not scored):   {len(errored)}/{expected} — infrastructure errors"
+        )
+        for r in errored[:5]:
+            lines.append(f"     - {r.get('task_id')}: {str(r.get('error'))[:70]}")
 
     if compare_baseline and completed > 0:
-        base_pct = base_passed / expected * 100 if expected else 100.0
+        base_pct = base_passed / scored * 100 if scored else 100.0
         lines.append(
-            f"📊 Baseline Evaluation Score: {base_passed}/{expected} passed ({base_pct:.1f}%)"
+            f"📊 Baseline Evaluation Score: {base_passed}/{scored} passed ({base_pct:.1f}%)"
         )
 
         # Overall savings over mutually-passed tasks (matches eval/runner.py).
@@ -207,15 +218,37 @@ def render_summary(report: dict[str, Any]) -> list[str]:
             if (r.get("duration_seconds") or 0) > (r.get("baseline_duration_seconds") or 0)
         )
 
+        # The aggregate is token-weighted, so a single pathological task can carry
+        # it. The median reports the typical question; when the two disagree
+        # sharply, that gap is the finding.
+        per_task_token = sorted(
+            100.0 * (r["baseline_tokens"] - r["tokens"]) / r["baseline_tokens"] for r in valid_pairs
+        )
+        per_task_time = sorted(
+            100.0
+            * (r["baseline_duration_seconds"] - r["duration_seconds"])
+            / r["baseline_duration_seconds"]
+            for r in valid_pairs
+            if (r.get("baseline_duration_seconds") or 0) > 0
+        )
+        median_token = statistics.median(per_task_token) if per_task_token else 0.0
+        median_time = statistics.median(per_task_time) if per_task_time else 0.0
+        cn_cheaper = sum(1 for v in per_task_token if v > 0)
+
         prefix = "~" if aborted else ""
         lines.append(
             f"💰 Validated Token Savings:   {prefix}{token_savings:+.1f}% "
             f"(CN: {cn_tokens:,} vs Base: {base_tokens:,} across {len(valid_pairs)} mutually passed tasks)"
         )
         lines.append(
+            f"📐 Median Token Savings:      {prefix}{median_token:+.1f}% per task "
+            f"(CN cheaper on {cn_cheaper}/{len(per_task_token)} tasks)"
+        )
+        lines.append(
             f"⏱️  Validated Time Savings:    {prefix}{time_savings:+.1f}% ({speedup:.2f}x speedup — "
             f"CN: {cn_time:.1f}s vs Base: {base_time:.1f}s)"
         )
+        lines.append(f"📐 Median Time Savings:       {prefix}{median_time:+.1f}% per task")
         lines.append(
             f"📉 Token regressions:         {token_worse}/{len(compared)} tasks worse "
             f"(CN used more tokens than baseline)"

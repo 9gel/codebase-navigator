@@ -21,6 +21,7 @@ from lancedb.index import FTS
 from .config import (
     DOC_SCHEMA,
     EMBEDDING_MODEL_NAME,
+    VECTOR_DIM,
     get_cache_dir,
     silence_stdio,
 )
@@ -86,6 +87,10 @@ def is_doc_seeking(query: str) -> bool:
 _SHARED_MODEL: TextEmbedding | None = None
 _SHARED_MODEL_LOCK = threading.Lock()
 _EMBEDDING_INFERENCE_LOCK = threading.Lock()
+
+
+class IndexModelMismatch(RuntimeError):
+    """Raised when an existing index was built with a different embedding model."""
 
 
 class VectorIndex:
@@ -294,6 +299,25 @@ class VectorIndex:
             self.table = self.db.open_table("documents")
         except Exception:
             self.table = self.db.create_table("documents", schema=DOC_SCHEMA, mode="create")
+            return
+
+        # An index built with a different embedding model has a different vector
+        # width, and LanceDB reports that as an opaque "no vector column" error at
+        # query time. Detect it here and say what actually needs to happen.
+        try:
+            field = self.table.schema.field("vector")
+            existing_dim = getattr(field.type, "list_size", None)
+        except Exception:
+            existing_dim = None
+
+        if existing_dim and existing_dim != VECTOR_DIM:
+            raise IndexModelMismatch(
+                f"Index at {self.db_dir} was built with a {existing_dim}-dimensional "
+                f"embedding model, but the configured model {EMBEDDING_MODEL_NAME} "
+                f"produces {VECTOR_DIM} dimensions.\n"
+                f"Re-index with `cn sync --force`, or pin the previous model via "
+                f"CN_EMBEDDING_MODEL."
+            )
 
     def _ensure_fts_index(self):
         """Create or update full-text search index on content column if rows exist."""

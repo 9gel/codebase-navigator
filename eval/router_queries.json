@@ -1,0 +1,1912 @@
+[
+ {
+  "question": "what does parse_config do",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "how is the FlaskApplication class initialized",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "where is DEFAULT_CONFIG defined",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "what is in routing.py",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "how does request context work",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what happens when a request comes in",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "does before_request run for static files",
+  "language": "Python",
+  "label": null
+ },
+ {
+  "question": "flask vs django routing",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "routing",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "explain the app factory pattern",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to set secret key",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to run the test suite",
+  "language": "Python",
+  "label": null
+ },
+ {
+  "question": "what is in setup.py",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "where is the API doc",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "wat does route decorator do",
+  "language": "Python",
+  "label": null
+ },
+ {
+  "question": "How to to use the Request object",
+  "language": "Python",
+  "label": null
+ },
+ {
+  "question": "I'm trying to add a custom error handler but it doesn't work for 404, can you see what's wrong with my code",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the signature of add_url_rule",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "does url_for require an app context",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "before_request vs before_first_request",
+  "language": "Python",
+  "label": null
+ },
+ {
+  "question": "middleware",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "show me how to register a blueprint",
+  "language": "Python",
+  "label": null
+ },
+ {
+  "question": "what is the WSGI app object",
+  "language": "Python",
+  "label": null
+ },
+ {
+  "question": "what does exceptions.py define",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "how does template rendering work",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the difference between debug and test mode",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "how do I mock the request",
+  "language": "Python",
+  "label": null
+ },
+ {
+  "question": "what are the dependencies",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "is there a changelog",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "how to use urlfor",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "What is the AppContext",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "I have a view function that returns a tuple but I get a TypeError, what should I return",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the purpose of make_response",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "url_for vs redirect",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "sessions",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "explain how static files are served",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what does after_request do",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "how is the app configured from env vars",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "does abort raise an exception",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "jsonify vs dumps",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "how does httpx handle redirects",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "what is the client timeout default",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "where is the retry logic implemented",
+  "language": "Python",
+  "label": null
+ },
+ {
+  "question": "how to set a proxy in httpx",
+  "language": "Python",
+  "label": null
+ },
+ {
+  "question": "what does response.raise_for_status do",
+  "language": "Python",
+  "label": null
+ },
+ {
+  "question": "difference between httpx and requests",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to stream a file upload",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the async client api",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to cancel a request with asyncio",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "what is the connection pool size",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what does the transport parameter do",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to mock httpx in tests",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what are the event hooks in httpx",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "how to use client with cookies",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the auth parameter",
+  "language": "Python",
+  "label": null
+ },
+ {
+  "question": "how to send a json post request",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what does the params argument do in get",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "how to handle retries with backoff",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the default http version",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to set custom headers",
+  "language": "Python",
+  "label": null
+ },
+ {
+  "question": "what is the timeout on the client",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to get the response headers",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what does the follow_redirects flag do",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "how to handle 404 status codes",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the difference between client and request",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to use async with httpx",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the httpcore dependency",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "how to install httpx",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "what is the user agent default",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "how to send a multipart form",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what does the stream parameter do",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to get the raw response bytes",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the keepalive behavior",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to set socks5 proxy",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the verify ssl option",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "how to enable http2",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what does the app parameter do in client",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "how to use base_url in client",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "what is the request method",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to handle connection errors",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the sync vs async performance",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "how does auth work in FastAPI",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "explain the router setup for the v2 endpoints",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what does the get_db function do",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "TLDR of main.py",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "what is the purpose of the JobScheduler class in scheduler.py?",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "Pydantic models location",
+  "language": "Python",
+  "label": null
+ },
+ {
+  "question": "how do i add a new migration",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what's up with the cache layer",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "difference between create_item and batch_create",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "where are the webhooks handled",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "SQLAlchemy async session usage",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "is there a rate limiter on the API gateway",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "explain the event handling for user signup",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what's the MRO of BaseModel",
+  "language": "Python",
+  "label": null
+ },
+ {
+  "question": "how does the dependency injection work here",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what happens when a job raises an exception",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "locate the retry logic",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what's the schema for creating a new user",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "how do i set the environment variables for local dev",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "database indexes",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "why is the process_payment function so slow",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "which file defines the websocket endpoints",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what's the exact error handling for a ValueError in core.utils",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "is there a graceful shutdown handler",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the point of the __init__.py in services",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to enable debug mode for logging",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "show me the implementation of safe_execute",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "does this use Alembic or manual SQL scripts",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "what does the @sync_to_async decorator do",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "how are user permissions enforced",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "compare build_query and filter_results",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "what if i want to use redis for the session store",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to test the background tasks",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "the User model cascade rules",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what's the entrypoint for the celery worker",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "how do i define a new route with a custom subdomain",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "explain the middleware chain",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what are the common query patterns for the audit_log table",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "how to customise the openapi schema",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the expected response format for errors",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "how to handle file uploads",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "what's the ApiError class doing",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "is there a way to gracefully shutdown",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "how does the system handle user deletion",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "the config object properties",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "what is the lifespan function for",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "find the cron job that cleans up old sessions",
+  "language": "Python",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to change the default pagination size",
+  "language": "Python",
+  "label": null
+ },
+ {
+  "question": "what are the different ways to instantiate DatabaseClient",
+  "language": "Python",
+  "label": "lookup"
+ },
+ {
+  "question": "why does process_order return None sometimes?",
+  "language": "Python",
+  "label": null
+ },
+ {
+  "question": "how does the resolver pick the latest compatible version",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "find the function that parses pyproject.toml",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "parse_config where is it",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "what is the difference between uv pip install and uv sync",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "lockfile generation algorithm",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "cache directory structure",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to specify a local package path in requirements",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "is there a way to force recompile all packages",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "what does the sync command actually execute step by step",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "editables handling",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how are dev dependencies separated from main deps",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "where does uv look for python interpreters",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "interpreter discovery order",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the role of the virtualenv creation",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "create_venv function signature",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "why is my lockfile not updating",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to ignore python version requirement",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "does uv support package aliasing",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "Reactor pattern in cache",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "show how build isolation works",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "env variable UV_HTTP_TIMEOUT usage",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how are optional dependencies indexed",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "compare resolver and install plan",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "what are the safety checks before overwriting site-packages",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to run tests",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "where are the integration tests for the installer",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "rust function to hash a wheel",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "what is the Wayfair resolver",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "tell me about the ResolutionGraph struct",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how does prerelease filtering work",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "is there a flag for no binary",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "list all subcommands of uv",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "uv run interactive mode implementation",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to add a git dependency to the project",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "what happens if the index url returns 403",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "how does uv handle package uninstallation",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "find the code that writes the lockfile",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "what is the default timeout for network requests",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "does uv have a daemon",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "where are the docs for configuration",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "what is the scheduler algorithm used",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "explain the lifecycle of a task from spawn to completion",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "where is the reactor loop implemented",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how does the timer wheel work",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the difference between current_thread and multi_thread runtime",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "how to configure the number of worker threads",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "what happens when a task panics",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how does tokio handle blocking operations",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the purpose of the block_in_place function",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "how does select! macro work internally",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "why is the JoinHandle type important",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to cancel a task",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the significance of the Tokio context",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how does the Runtime struct manage resources",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the role of the driver",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how does the io driver register events",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "explain the poll model in tokio",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the difference between spawn and spawn_blocking",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to create a custom future",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "what does the future trait require",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how does async move capture variables",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "what is the lifetime of a spawned task",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "how to share state between tasks",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the Mutex implementation in tokio",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how does the channel work in tokio",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the difference between mpsc and oneshot",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to broadcast messages to multiple receivers",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "explain the select! loop with a timeout",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to handle timeouts with tokio::time",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "what is the sleep function and how accurate is it",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how does the interval ticker work",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "how to read from stdin in async",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to perform file io without blocking",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to use tokio::fs",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "how to set up a tcp server with tokio",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to connect to a tcp client",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the purpose of the AsyncRead and AsyncWrite traits",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to implement a custom reactor",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the role of the waker in task scheduling",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how does tokio ensure fairness between tasks",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "what are the different runtime flavors",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to use the runtime builder",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "what is the difference between the threaded and current_thread schedulers",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to debug a deadlock in tokio",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to profile memory usage of the runtime",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the overhead of spawning a task",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to convert a blocking io to async",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how does the executor handle the readiness of io events",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to use the prelude module",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "what is the tokio::main macro expansion",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "how to write tests for async code",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to mock time in tokio",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to disable the time driver",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to set the thread stack size in the runtime",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "what is the purpose of the runtime shutdown",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to gracefully shutdown the runtime",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to run blocking code inside an async task",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how does tokio integrate with the future crate",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the tokio::task::yield_now function",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to use the tokio::select! macro with an async stream",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to process a stream of events",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to implement the Stream trait",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "what is the difference between stream and iterator",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to use tokio-stream",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "how to read from a tcp stream with a buffer",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to write to a tcp stream with flush",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "how to handle backpressure in channels",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to use the tokio::sync::Barrier",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "what is the Semaphore for rate limiting",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to use the RwLock in tokio",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "what is the Notify primitive",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to use the watch channel",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to use the tokio::task::LocalSet for !Send futures",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to spawn a !Send task",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the purpose of the Unconstrained wrapper",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to use the tokio::runtime::Handle",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "how to get the current runtime handle",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to block_on a future outside of the runtime",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "how to run a future from a thread that is not the runtime thread",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to create a runtime inside another runtime",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to nest runtimes",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the problem with nested runtimes",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to use the tokio::task::JoinSet to manage multiple tasks",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to abort a task",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to wait for multiple tasks to complete",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to handle errors in async code",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the Result type in tokio",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "how to use the anyhow crate with tokio",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to handle panics in async code",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the tokio::try_join macro",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to run futures in parallel with join!",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to run futures in sequence",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to cancel a future with a timeout",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the tokio::time::timeout function",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to implement a custom timeout",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to use the tokio::net::TcpListener",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to accept connections in a loop",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to handle multiple clients concurrently",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to use the tokio::net::UdpSocket",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to do dns lookups",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the tokio::net::lookup_host function",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to use the tokio::signal module",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to handle ctrl-c",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to handle unix signals",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to use the tokio::process module",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to run an external command",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to capture the output of a child process",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to use the tokio::io::AsyncBufRead",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to read lines from a tcp stream",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to use the tokio::io::split",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to share a tcp stream between tasks",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to use the tokio::io::copy",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to copy between streams",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to use the tokio::fs::File",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to open a file asynchronously",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to write to a file",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to read from a file",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to use the tokio::io::AsyncSeek",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to seek in a file",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "how to use the tokio::io::AsyncWriteExt",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to flush a writer",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to use the tokio::io::AsyncReadExt",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to read exactly n bytes",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to use the tokio::io::BufReader",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to use the tokio::io::BufWriter",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to use the tokio::io::Lines",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to use the tokio::io::split for half duplex",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to use the tokio::net::TcpStream",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to establish a connection",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to set timeouts on a tcp stream",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to use the tokio::net::TcpSocket for custom connection",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to bind a socket",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to use the tokio::net::UnixListener",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "how to use unix sockets",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to use the tokio::net::UnixStream",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to use the tokio::net::UnixDatagram",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to use the tokio::net::lookup_host for ip addresses",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to convert a std::net::TcpListener to tokio",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to convert a std::net::TcpStream to tokio",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "how to use the tokio::net::TcpListener::from_std",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to use the tokio::net::TcpStream::from_std",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to use the tokio::net::UnixListener::from_std",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to use the tokio::net::UnixStream::from_std",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to use the tokio::net::UdpSocket::from_std",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to use the tokio::runtime::Builder::new_multi_thread",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to set core threads and max threads",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "what is the difference between core and max threads",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to set the thread name prefix",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "how to set the stack size",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to enable the io driver",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "how to set the max blocking threads",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "how to set the max tasks",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to set the max threads for blocking pool",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to use the tokio::runtime::Runtime::builder",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to use the tokio::runtime::Handle::current",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to use the tokio::runtime::Handle::block_on",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to spawn a task from a non-async context",
+  "language": "Rust",
+  "label": null
+ },
+ {
+  "question": "how to use the tokio::task::spawn_local",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to use the LocalSet",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to use the tokio::task::spawn_blocking",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to use the tokio::task::block_in_place",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to yield a task",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to use the tokio::task::yield_now",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to use the tokio::task::unconstrained",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to use the tokio::task::JoinError",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to handle a JoinError",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to use the tokio::task::JoinHandle::abort",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to check if a task is finished",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to get the output of a task",
+  "language": "Rust",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to use the tokio::task::JoinSet",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how to use the tokio::task::JoinSet::join_next",
+  "language": "Rust",
+  "label": "lookup"
+ },
+ {
+  "question": "how does the router handle middleware order",
+  "language": "JavaScript",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the difference between app.use and app.get",
+  "language": "JavaScript",
+  "label": null
+ },
+ {
+  "question": "where is the request body parsed in the request lifecycle",
+  "language": "JavaScript",
+  "label": "conceptual"
+ },
+ {
+  "question": "how do i add a custom error handler",
+  "language": "JavaScript",
+  "label": "conceptual"
+ },
+ {
+  "question": "what does the next function do when called with no arguments",
+  "language": "JavaScript",
+  "label": null
+ },
+ {
+  "question": "can i use async functions as middleware",
+  "language": "JavaScript",
+  "label": "conceptual"
+ },
+ {
+  "question": "how are route parameters extracted from the url",
+  "language": "JavaScript",
+  "label": "conceptual"
+ },
+ {
+  "question": "what happens if i call next after sending a response",
+  "language": "JavaScript",
+  "label": "conceptual"
+ },
+ {
+  "question": "why is there a static folder in the project structure",
+  "language": "JavaScript",
+  "label": null
+ },
+ {
+  "question": "how does the template engine get configured",
+  "language": "JavaScript",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the role of the index.js file at the root",
+  "language": "JavaScript",
+  "label": "lookup"
+ },
+ {
+  "question": "how to serve a 404 page for unknown routes",
+  "language": "JavaScript",
+  "label": "conceptual"
+ },
+ {
+  "question": "is there a way to handle query strings automatically",
+  "language": "JavaScript",
+  "label": "conceptual"
+ },
+ {
+  "question": "what does the express.json middleware do",
+  "language": "JavaScript",
+  "label": "lookup"
+ },
+ {
+  "question": "how to set up a cookie parser",
+  "language": "JavaScript",
+  "label": "conceptual"
+ },
+ {
+  "question": "how do i access the current request url",
+  "language": "JavaScript",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the purpose of the res.locals object",
+  "language": "JavaScript",
+  "label": "lookup"
+ },
+ {
+  "question": "how to redirect to another route from within a handler",
+  "language": "JavaScript",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the difference between res.send and res.json",
+  "language": "JavaScript",
+  "label": null
+ },
+ {
+  "question": "how does the app listen method work",
+  "language": "JavaScript",
+  "label": "lookup"
+ },
+ {
+  "question": "how to mount a sub app using express.router",
+  "language": "JavaScript",
+  "label": "conceptual"
+ },
+ {
+  "question": "can middleware be defined inside a router",
+  "language": "JavaScript",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to handle file uploads in this codebase",
+  "language": "JavaScript",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the significance of the module.exports pattern",
+  "language": "JavaScript",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to debug middleware not being called",
+  "language": "JavaScript",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to set response headers globally",
+  "language": "JavaScript",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the use of the app.set method",
+  "language": "JavaScript",
+  "label": "lookup"
+ },
+ {
+  "question": "how to parse urlencoded form data",
+  "language": "JavaScript",
+  "label": "conceptual"
+ },
+ {
+  "question": "why does the server return 304 for some requests",
+  "language": "JavaScript",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to implement a simple authentication middleware",
+  "language": "JavaScript",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the difference between app.all and app.use",
+  "language": "JavaScript",
+  "label": null
+ },
+ {
+  "question": "how to get the ip address of the client",
+  "language": "JavaScript",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to handle cors in this framework",
+  "language": "JavaScript",
+  "label": "conceptual"
+ },
+ {
+  "question": "what is the purpose of the next('route') call",
+  "language": "JavaScript",
+  "label": "lookup"
+ },
+ {
+  "question": "how to make a route that matches all paths under /api",
+  "language": "JavaScript",
+  "label": null
+ },
+ {
+  "question": "how to test the middleware without starting the server",
+  "language": "JavaScript",
+  "label": null
+ },
+ {
+  "question": "what does the res.end method do",
+  "language": "JavaScript",
+  "label": null
+ },
+ {
+  "question": "how to access environment variables",
+  "language": "JavaScript",
+  "label": "conceptual"
+ },
+ {
+  "question": "how to structure a project with multiple routers",
+  "language": "JavaScript",
+  "label": "conceptual"
+ },
+ {
+  "question": "where should i put my helper functions",
+  "language": "JavaScript",
+  "label": "conceptual"
+ }
+]

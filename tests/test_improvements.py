@@ -6,13 +6,14 @@ Each test pins a defect found by measuring the A/B eval run
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
 from codebase_navigator.ask import (
     AGENT_TOOLS_SPEC,
-    classify_question,
+    route_question,
     execute_tool_call,
     format_chunks_for_llm,
 )
@@ -168,7 +169,7 @@ def test_relevance_percent_stays_in_range():
     ],
 )
 def test_identifier_lookups_skip_retrieval(question):
-    assert classify_question(question) == "lookup"
+    assert route_question(question) == "lookup"
 
 
 @pytest.mark.parametrize(
@@ -182,12 +183,12 @@ def test_identifier_lookups_skip_retrieval(question):
     ],
 )
 def test_conceptual_questions_still_retrieve(question):
-    assert classify_question(question) == "conceptual"
+    assert route_question(question) == "conceptual"
 
 
-def test_classifier_handles_empty_input():
-    assert classify_question("") == "conceptual"
-    assert classify_question("   ") == "conceptual"
+def test_router_handles_empty_input():
+    assert route_question("") == "conceptual"
+    assert route_question("   ") == "conceptual"
 
 
 # --- 5. batched reads ------------------------------------------------------
@@ -249,10 +250,14 @@ def test_counting_tokenizer_is_not_padded_or_truncated(tmp_path: Path):
     That made every oversize chunk look compliant and silently disabled the cap.
     """
     idx = VectorIndex(tmp_path, custom_index_dir=str(tmp_path / ".idx"))
+    cap = idx.embed_max_tokens
     short = idx._count_tokens("File: a.py | Language: Python")
-    long = idx._count_tokens("def f():\n" + "    x = 1\n" * 400)
+    # Size the long input relative to the window, so the test keeps its meaning
+    # whichever embedding model is configured (128 for MiniLM, 8192 for jina-code).
+    long_text = "def f():\n" + "    x = 1\n" * (cap * 2)
+    long = idx._count_tokens(long_text)
     assert short < 40, f"short header counted as {short}"
-    assert long > idx.embed_max_tokens, f"long chunk counted as {long}"
+    assert long > cap, f"long chunk counted as {long} against cap {cap}"
 
 
 def test_oversize_chunks_are_split_under_the_encoder_window(tmp_path: Path):
@@ -267,7 +272,7 @@ def test_oversize_chunks_are_split_under_the_encoder_window(tmp_path: Path):
         "start_line": 1,
         "end_line": 400,
         "content": "File: src/big.py | Language: Python\n"
-        + "\n".join(f"    value_{i} = compute_something({i})" for i in range(400)),
+        + "\n".join(f"    value_{i} = compute_something({i})" for i in range(cap * 2)),
     }
     out = idx.split_oversize_chunks([big])
     assert len(out) > 1
@@ -288,7 +293,8 @@ def test_single_giant_line_is_hard_split(tmp_path: Path):
         "title": "bundle.js",
         "start_line": 1,
         "end_line": 1,
-        "content": "File: dist/bundle.js | Language: JavaScript\n" + ("var a=1;" * 4000),
+        "content": "File: dist/bundle.js | Language: JavaScript\n"
+        + ("var a=1;" * (idx.embed_max_tokens * 4)),
     }
     out = idx.split_oversize_chunks([chunk])
     assert len(out) > 1
@@ -451,3 +457,224 @@ def test_per_turn_overhead_stays_bounded():
     tools = len(json.dumps(AGENT_TOOLS_SPEC)) // 4
     system = len(SYSTEM_PROMPT) // 4
     assert tools + system < 1100, f"per-turn overhead regressed to {tools + system}"
+
+
+# --- 11. long-context embedding model ---------------------------------------
+
+
+def test_default_embedding_model_has_a_long_window():
+    """MiniLM truncated at 128 tokens, discarding 61.3% of all indexed content.
+
+    Splitting chunks to fit was measured and made retrieval worse, so the window
+    itself had to grow. This pins the default against silently regressing to a
+    short-context model.
+    """
+    from codebase_navigator.config import DEFAULT_EMBEDDING_MODEL, VECTOR_DIM
+
+    assert DEFAULT_EMBEDDING_MODEL == "jinaai/jina-embeddings-v2-base-code"
+    assert VECTOR_DIM == 768
+
+
+def test_index_rejects_mismatched_embedding_dimensions(tmp_path: Path):
+    """Reusing a 384-dim index with a 768-dim model surfaced as an opaque
+    'no vector column' error from LanceDB at query time."""
+    import lancedb
+    import pyarrow as pa
+
+    from codebase_navigator.index import IndexModelMismatch
+
+    idx_dir = tmp_path / ".idx"
+    idx_dir.mkdir(parents=True)
+    db = lancedb.connect(str(idx_dir / "lancedb"))
+    stale = pa.schema(
+        [
+            pa.field("id", pa.string()),
+            pa.field("path", pa.string()),
+            pa.field("abs_path", pa.string()),
+            pa.field("doc_type", pa.string()),
+            pa.field("title", pa.string()),
+            pa.field("start_line", pa.int32()),
+            pa.field("end_line", pa.int32()),
+            pa.field("content", pa.string()),
+            pa.field("vector", pa.list_(pa.float32(), 384)),  # deliberately stale
+        ]
+    )
+    db.create_table("documents", schema=stale, mode="create")
+
+    with pytest.raises(IndexModelMismatch) as excinfo:
+        VectorIndex(tmp_path, custom_index_dir=str(idx_dir))
+    message = str(excinfo.value)
+    assert "384" in message and "768" in message
+    assert "cn sync --force" in message
+
+
+# --- 12. seed size ----------------------------------------------------------
+
+
+def test_seed_shows_fewer_full_chunks_with_capped_bodies():
+    """The seed was ~16.8% of all tokens because it is re-sent on every turn."""
+    from codebase_navigator.ask import SEED_CHUNK_BODY_LINES, SEED_FULL_CHUNKS
+
+    assert SEED_FULL_CHUNKS == 2
+    chunks = [
+        {
+            "path": f"src/m{i}.py",
+            "abs_path": f"/repo/src/m{i}.py",
+            "start_line": 1,
+            "end_line": 90,
+            "title": f"m{i}",
+            "doc_type": "code_doc",
+            "score": 1.0 - i * 0.1,
+            "content": "\n".join(f"line {n}" for n in range(90)),
+        }
+        for i in range(5)
+    ]
+    out = format_chunks_for_llm(
+        chunks, full_limit=SEED_FULL_CHUNKS, max_body_lines=SEED_CHUNK_BODY_LINES
+    )
+    assert "more lines — use read_code for the rest" in out
+    # Only the first two render in full; the rest collapse to candidate lines.
+    assert out.count("```") == 2 * SEED_FULL_CHUNKS
+    assert "Additional Candidate Locations" in out
+
+    uncapped = format_chunks_for_llm(chunks, full_limit=3)
+    assert len(out) < len(uncapped)
+
+
+def test_full_chunk_body_is_not_capped_when_unset():
+    chunks = [
+        {
+            "path": "a.py",
+            "abs_path": "/a.py",
+            "start_line": 1,
+            "end_line": 40,
+            "title": "a",
+            "doc_type": "code_doc",
+            "score": 1.0,
+            "content": "\n".join(f"line {n}" for n in range(40)),
+        }
+    ]
+    out = format_chunks_for_llm(chunks)
+    assert "line 39" in out
+    assert "more lines" not in out
+
+
+# --- 13. turn budget awareness ----------------------------------------------
+
+
+def test_budget_warning_fires_before_the_cliff(tmp_path: Path):
+    """Measured turn use was p50 5 / p90 11 against a budget of 15, so the hard
+    cliff almost never fired and the long tail was the agent's own choice."""
+    from unittest.mock import MagicMock, patch
+
+    from codebase_navigator.ask import BUDGET_WARNING_TURNS, AgentSession, LLMConfig
+
+    assert BUDGET_WARNING_TURNS > 0
+    cfg = LLMConfig(api_key="k", max_searches=BUDGET_WARNING_TURNS + 1, seed_mode="never")
+    (tmp_path / "a.py").write_text("x = 1\n")
+    session = AgentSession(tmp_path, cfg)
+
+    tool_turn = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "c1",
+                            "type": "function",
+                            "function": {
+                                "name": "grep_search",
+                                "arguments": json.dumps({"pattern": "x"}),
+                            },
+                        }
+                    ],
+                }
+            }
+        ]
+    }
+    final = {"choices": [{"message": {"role": "assistant", "content": "done"}}]}
+    mock_chat = MagicMock(side_effect=[tool_turn, tool_turn, final])
+
+    with patch("codebase_navigator.ask.call_chat_completions", mock_chat):
+        session.ask("where is x", verbose=False)
+
+    warnings = [
+        m
+        for m in session.messages
+        if m.get("role") == "user" and "Budget check" in str(m.get("content"))
+    ]
+    assert warnings, "expected a budget warning before the hard cutoff"
+    assert "tool turns remain" in warnings[0]["content"]
+
+
+# --- 14. API retry ----------------------------------------------------------
+
+
+def test_transient_connection_errors_are_retried():
+    """Two benchmark tasks were scored as wrong answers because a socket dropped."""
+    import http.client
+    from unittest.mock import MagicMock, patch
+
+    from codebase_navigator.ask import call_chat_completions
+
+    good = MagicMock()
+    good.read.return_value = json.dumps({"choices": [{"message": {"content": "ok"}}]}).encode()
+    good.__enter__ = MagicMock(return_value=good)
+    good.__exit__ = MagicMock(return_value=False)
+
+    attempts = []
+
+    def flaky(req, timeout=None):
+        attempts.append(1)
+        if len(attempts) < 3:
+            raise http.client.RemoteDisconnected("Remote end closed connection without response")
+        return good
+
+    with (
+        patch("urllib.request.urlopen", side_effect=flaky),
+        patch("codebase_navigator.ask.time.sleep"),
+    ):
+        out = call_chat_completions("https://x/v1", "k", {"model": "m", "messages": []})
+
+    assert out["choices"][0]["message"]["content"] == "ok"
+    assert len(attempts) == 3, "expected two retries before success"
+
+
+def test_retry_gives_up_and_raises_after_max_retries():
+    import http.client
+    from unittest.mock import patch
+
+    from codebase_navigator.ask import call_chat_completions
+
+    def always_fail(req, timeout=None):
+        raise http.client.RemoteDisconnected("Remote end closed connection without response")
+
+    with (
+        patch("urllib.request.urlopen", side_effect=always_fail),
+        patch("codebase_navigator.ask.time.sleep"),
+        pytest.raises(RuntimeError, match="Failed to connect"),
+    ):
+        call_chat_completions("https://x/v1", "k", {"model": "m", "messages": []}, max_retries=2)
+
+
+def test_non_retryable_http_error_fails_immediately():
+    import urllib.error
+    from unittest.mock import patch
+
+    from codebase_navigator.ask import call_chat_completions
+
+    attempts = []
+
+    def unauthorized(req, timeout=None):
+        attempts.append(1)
+        raise urllib.error.HTTPError("u", 401, "Unauthorized", {}, None)
+
+    with (
+        patch("urllib.request.urlopen", side_effect=unauthorized),
+        patch("codebase_navigator.ask.time.sleep"),
+        pytest.raises(RuntimeError, match="401"),
+    ):
+        call_chat_completions("https://x/v1", "k", {"model": "m", "messages": []})
+    assert len(attempts) == 1, "auth failures must not be retried"

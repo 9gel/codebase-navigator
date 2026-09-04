@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import signal
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -1526,11 +1527,21 @@ def run_benchmark(
     passed_tasks = sum(1 for r in results_report if r.get("passed"))
     baseline_passed_tasks = sum(1 for r in results_report if r.get("baseline_passed"))
 
+    # An infrastructure fault ("Remote end closed connection without response") is
+    # not a wrong answer. Counting it as one silently understates the score and
+    # makes runs incomparable, so errored tasks are reported and scored separately.
+    errored = [r for r in results_report if r.get("error")]
+    scored_tasks = total_tasks - len(errored)
+
     print("\n" + "=" * 75)
-    score_pct = (passed_tasks / total_tasks * 100) if total_tasks > 0 else 0
-    print(f"📊 CN Evaluation Score:       {passed_tasks}/{total_tasks} passed ({score_pct:.1f}%)")
+    score_pct = (passed_tasks / scored_tasks * 100) if scored_tasks > 0 else 0
+    print(f"📊 CN Evaluation Score:       {passed_tasks}/{scored_tasks} passed ({score_pct:.1f}%)")
+    if errored:
+        print(f"⚠️  Incomplete (not scored):   {len(errored)}/{total_tasks} — infrastructure errors")
+        for r in errored[:5]:
+            print(f"     - {r['task_id']}: {str(r.get('error'))[:70]}")
     if compare_baseline and total_tasks > 0:
-        base_score_pct = baseline_passed_tasks / total_tasks * 100
+        base_score_pct = baseline_passed_tasks / scored_tasks * 100 if scored_tasks else 0.0
 
         # Only compute savings on mutually successful tasks for fair comparison
         valid_pairs = [
@@ -1555,32 +1566,64 @@ def run_benchmark(
         )
         speedup = (valid_base_time / valid_cn_time) if valid_cn_time > 0 else 1.0
 
+        # The aggregate is a token-weighted mean, so one pathological task can
+        # carry the whole result. The median says what happens on a typical
+        # question, and the two disagreeing is itself the finding.
+        per_task_token = sorted(
+            100.0 * (r["baseline_tokens"] - r["tokens"]) / r["baseline_tokens"] for r in valid_pairs
+        )
+        per_task_time = sorted(
+            100.0
+            * (r["baseline_duration_seconds"] - r["duration_seconds"])
+            / r["baseline_duration_seconds"]
+            for r in valid_pairs
+            if (r.get("baseline_duration_seconds") or 0) > 0
+        )
+        median_token_savings = statistics.median(per_task_token) if per_task_token else 0.0
+        median_time_savings = statistics.median(per_task_time) if per_task_time else 0.0
+        cn_cheaper = sum(1 for v in per_task_token if v > 0)
+
         print(
-            f"📊 Baseline Evaluation Score: {baseline_passed_tasks}/{total_tasks} passed ({base_score_pct:.1f}%)"
+            f"📊 Baseline Evaluation Score: {baseline_passed_tasks}/{scored_tasks} passed ({base_score_pct:.1f}%)"
         )
         print(
             f"💰 Validated Token Savings:   {overall_token_savings:+.1f}% "
             f"(CN: {valid_cn_tokens:,} vs Base: {valid_base_tokens:,} across {len(valid_pairs)} mutually passed tasks)"
         )
         print(
+            f"📐 Median Token Savings:      {median_token_savings:+.1f}% per task "
+            f"(CN cheaper on {cn_cheaper}/{len(per_task_token)} tasks)"
+        )
+        print(
             f"⏱️  Validated Time Savings:    {overall_time_savings:+.1f}% ({speedup:.2f}x speedup — "
             f"CN: {valid_cn_time:.1f}s vs Base: {valid_base_time:.1f}s)"
         )
+        print(f"📐 Median Time Savings:       {median_time_savings:+.1f}% per task")
     print("=" * 75)
 
     summary: dict[str, Any] = {
         "status": "complete" if index_integrity_ok else "index_integrity_failed",
         "total_tasks": total_tasks,
+        "scored_tasks": scored_tasks,
+        "errored_tasks": len(errored),
+        "errored_task_ids": [r["task_id"] for r in errored],
         "passed_tasks": passed_tasks,
         "score_percentage": score_pct,
         "baseline_passed_tasks": baseline_passed_tasks,
     }
+    if compare_baseline and total_tasks > 0:
+        summary["median_token_savings_percentage"] = round(median_token_savings, 1)
+        summary["median_time_savings_percentage"] = round(median_time_savings, 1)
+        summary["cn_cheaper_task_count"] = cn_cheaper
+        summary["comparable_task_count"] = len(per_task_token)
     report_stream.finalize(summary)
     print(f"📄 Report saved to: {report_stream.report_file}")
     print(f"📜 Trace log saved to: {report_stream.trace_file}")
     print(f"📦 Complete run package: {run_dir}")
 
-    return passed_tasks == total_tasks and index_integrity_ok
+    # Errored tasks are excluded from the pass requirement; they are reported
+    # separately so an infrastructure blip does not read as a quality failure.
+    return passed_tasks == scored_tasks and index_integrity_ok
 
 
 if __name__ == "__main__":

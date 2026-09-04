@@ -26,9 +26,17 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 import pyarrow as pa
 
+# jina-embeddings-v2-base-code truncates at 8192 tokens and is trained on code.
+# The previous default, all-MiniLM-L6-v2, truncates at 128 in fastembed's build
+# (not the 256/512 its model card implies), which discarded 61.3% of all indexed
+# content before it ever reached the encoder -- 73.3% of chunks overflowed.
+# Splitting chunks to fit 128 was measured and made retrieval worse, because a
+# code chunk's head carries the identifying signal; a long window is the real fix.
+DEFAULT_EMBEDDING_MODEL = "jinaai/jina-embeddings-v2-base-code"
+
 EMBEDDING_MODEL_NAME = os.environ.get(
     "CN_EMBEDDING_MODEL",
-    os.environ.get("CODEBASE_NAVIGATOR_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"),
+    os.environ.get("CODEBASE_NAVIGATOR_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL),
 )
 
 # Common dimensions for known FastEmbed ONNX models, default 384 for MiniLM

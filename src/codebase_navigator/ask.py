@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import re
 import sys
+import time
 import tomllib
 import urllib.error
 import urllib.request
@@ -38,6 +40,22 @@ DEFAULT_INITIAL_LIMIT = 10
 #   "never"   - never inject; the agent must call `search` itself
 DEFAULT_SEED_MODE = os.environ.get("CN_SEED_MODE", "router")
 SEED_MODES = ("always", "router", "never")
+
+# How many pre-flight chunks are shown in full before falling back to one-line
+# summaries. The seed accounts for ~16.8% of all tokens spent because it lives in
+# the message history and is re-sent on every turn, while only ~2.8 of its 10
+# chunks came from a file the agent actually opened. Retrieval recall@3 is 20/25,
+# so the third full chunk is rarely the one that matters: 3 full averaged 1,586
+# tokens, 2 full averages 1,290.
+SEED_FULL_CHUNKS = 2
+
+# Longest body shown for a full seed chunk. Chunks are otherwise unbounded, and a
+# single 50-line function can dominate the seed; the head (signature + docstring)
+# carries the identifying signal.
+SEED_CHUNK_BODY_LINES = 16
+
+# Turns remaining at which the agent is reminded of its budget.
+BUDGET_WARNING_TURNS = 3
 
 
 class LLMConfig:
@@ -455,6 +473,7 @@ def find_preflight_symbols(
 def format_chunks_for_llm(
     results: list[dict[str, Any]],
     full_limit: int | None = None,
+    max_body_lines: int | None = None,
 ) -> str:
     """Format search results cleanly for LLM consumption with optional tiered summary for lower ranks."""
     if not results:
@@ -480,7 +499,15 @@ def format_chunks_for_llm(
 
         if full_limit is None or idx <= full_limit:
             header = f"[{idx}] File: {rel_p}:{s_line}-{e_line} ({doc_type}) — {title} (Relevance: {score_pct}%)\nAbsURI: file://{abs_p}#L{s_line}-L{e_line}"
-            body = f"```\n{content}\n```"
+            shown = content
+            if max_body_lines:
+                lines = content.splitlines()
+                if len(lines) > max_body_lines:
+                    trimmed = len(lines) - max_body_lines
+                    shown = "\n".join(lines[:max_body_lines]) + (
+                        f"\n… [+{trimmed} more lines — use read_code for the rest]"
+                    )
+            body = f"```\n{shown}\n```"
             chunks_text.append(f"{header}\n{body}")
         else:
             # Compact 1-line candidate summary for lower-tier matches
@@ -670,13 +697,25 @@ AGENT_TOOLS_SPEC = [
 ]
 
 
+# HTTP statuses worth retrying: rate limiting plus transient upstream faults.
+RETRYABLE_STATUS = {408, 409, 429, 500, 502, 503, 504}
+DEFAULT_MAX_RETRIES = 3
+
+
 def call_chat_completions(
     endpoint: str,
     api_key: str | None,
     payload: dict[str, Any],
     timeout: float = 90.0,
+    max_retries: int = DEFAULT_MAX_RETRIES,
 ) -> dict[str, Any]:
-    """Send a request to an OpenAI-compatible /chat/completions endpoint."""
+    """Send a request to an OpenAI-compatible /chat/completions endpoint.
+
+    Retries transient transport failures with exponential backoff. Providers drop
+    long-lived connections routinely ("Remote end closed connection without
+    response"); without a retry a single dropped socket loses an entire agent
+    session, and in the evaluation harness it was being scored as a wrong answer.
+    """
     url = endpoint.strip()
     if not url.endswith("/chat/completions"):
         url = url.rstrip("/") + "/chat/completions"
@@ -691,22 +730,39 @@ def call_chat_completions(
         headers["Authorization"] = f"Bearer {api_key}"
 
     data_bytes = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=data_bytes, headers=headers, method="POST")
 
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            resp_body = resp.read().decode("utf-8")
-            return json.loads(resp_body)
-    except urllib.error.HTTPError as e:
+    last_error: Exception | None = None
+    for attempt in range(max_retries + 1):
+        req = urllib.request.Request(url, data=data_bytes, headers=headers, method="POST")
         try:
-            error_content = e.read().decode("utf-8")
-        except (OSError, UnicodeDecodeError):
-            error_content = ""
-        raise RuntimeError(
-            f"LLM API request failed with HTTP {e.code} ({e.reason}): {error_content}"
-        ) from e
-    except urllib.error.URLError as e:
-        raise RuntimeError(f"Failed to connect to LLM endpoint ({url}): {e.reason}") from e
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            try:
+                error_content = e.read().decode("utf-8")
+            except (OSError, UnicodeDecodeError):
+                error_content = ""
+            err = RuntimeError(
+                f"LLM API request failed with HTTP {e.code} ({e.reason}): {error_content}"
+            )
+            if e.code not in RETRYABLE_STATUS or attempt >= max_retries:
+                raise err from e
+            last_error = err
+        except (urllib.error.URLError, http.client.HTTPException, OSError) as e:
+            reason = getattr(e, "reason", e)
+            err = RuntimeError(f"Failed to connect to LLM endpoint ({url}): {reason}")
+            if attempt >= max_retries:
+                raise err from e
+            last_error = err
+        except json.JSONDecodeError as e:
+            err = RuntimeError(f"LLM endpoint returned malformed JSON ({url}): {e}")
+            if attempt >= max_retries:
+                raise err from e
+            last_error = err
+
+        time.sleep(min(8.0, 0.75 * (2**attempt)))
+
+    raise last_error or RuntimeError(f"LLM API request failed ({url})")
 
 
 def build_compact_tree(folder: Path, max_depth: int = 2, max_entries: int = 50) -> str:
@@ -777,12 +833,18 @@ _LOOKUP_RE = re.compile(
 )
 
 
-def classify_question(question: str) -> str:
-    """Return "conceptual" if the question warrants pre-flight retrieval, else "lookup".
+def route_question(question: str) -> str:
+    """Route a question to "conceptual" (worth pre-flight retrieval) or "lookup".
 
-    Deterministic and free: a routing LLM call would cost an extra round trip on
-    every question, which is exactly the cost this is trying to avoid. A misroute
-    is cheap -- the agent still has `search` and self-corrects in one tool call.
+    A hand-written heuristic, not a learned model. Deterministic and free: asking
+    an LLM to route would cost an extra round trip on every question, which is
+    exactly the cost routing exists to avoid. A misroute is cheap in both
+    directions -- the agent still has `search` and self-corrects in one tool call
+    -- which is what justifies a heuristic over anything heavier.
+
+    Validated by eval/router_eval.py against an independently generated and
+    independently labelled query set, because the benchmark questions were
+    written by the same author as these rules.
     """
     q = question.strip()
     if not q:
@@ -1004,7 +1066,7 @@ class AgentSession:
         seed_mode = getattr(self.config, "seed_mode", DEFAULT_SEED_MODE)
         if seed_mode not in SEED_MODES:
             seed_mode = DEFAULT_SEED_MODE
-        question_kind = classify_question(question)
+        question_kind = route_question(question)
         should_seed = seed_mode == "always" or (
             seed_mode == "router" and question_kind == "conceptual"
         )
@@ -1057,7 +1119,9 @@ class AgentSession:
             symbols_text = "📌 Exact Symbol Definitions (.tags):\n" + "\n".join(sym_lines) + "\n\n"
 
         if initial_chunks:
-            initial_context_text = format_chunks_for_llm(initial_chunks, full_limit=3)
+            initial_context_text = format_chunks_for_llm(
+                initial_chunks, full_limit=SEED_FULL_CHUNKS, max_body_lines=SEED_CHUNK_BODY_LINES
+            )
             retrieval_text = (
                 f"The 'Pre-flight Codebase Retrieval' and 'Exact Symbol Definitions' sections "
                 f"below are ranked, relevant context retrieved for this question. "
@@ -1228,6 +1292,23 @@ class AgentSession:
                         {
                             "role": "user",
                             "content": "You have completed your tool budget. Please synthesize your complete final answer using all the evidence gathered.",
+                        }
+                    )
+                elif searches_remaining <= BUDGET_WARNING_TURNS:
+                    # The hard cliff above almost never fires: measured turn use is
+                    # p50 5, p90 11 against a budget of 15, so long sessions are the
+                    # agent's own choice rather than a cap. Give it visibility of the
+                    # remaining budget while it can still act on it -- every extra
+                    # turn re-sends the whole conversation, so the tail is where the
+                    # token cost concentrates.
+                    self.messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                f"Budget check: {searches_remaining} tool turns remain. "
+                                "If you already have the file and mechanism that answer "
+                                "the question, answer now rather than gathering more."
+                            ),
                         }
                     )
                 continue
