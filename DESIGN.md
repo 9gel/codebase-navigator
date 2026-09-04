@@ -263,28 +263,83 @@ candidate model.
 
 ## 6. Search Efficiency: Strategies and Tactics
 
-Every mechanism below exists to reduce **tokens spent per answered question**
-without losing accuracy. The measurements come from the A/B evaluation runs in
-`eval/runs/`; where a tactic was tried and rejected, the rejection is recorded
-too, so it is not silently reinvented.
+`codebase-navigator` strives to reduce **tokens spent per answered question**
+without losing accuracy. It is the central goal of this tool. Every measure below
+is the concrete means for how the goal is achieved. We took a scientific
+approach, using evaluations in `eval/` to measure against what realistic coding
+harnesses will do without code embeddings, and devise strategies and tactics to
+improve the tool. We don't just document what works: where a tactic was tried
+and rejected, the rejection is recorded too, so it is not silently reinvented.
 
-### 6.0. The cost model everything follows from
+### 6.0. What we measure, and what it told us
 
-Two facts drive every decision in this section:
+#### The instruments
+
+Every claim in this section comes from one of three measurements. Nothing here
+is reasoned from first principles; where we only have an argument and not a
+number, the text says so.
+
+**1. The A/B benchmark** (`eval/runner.py --compare-baseline`). Runs the same
+question twice over the same pinned repository checkout: once through `cn ask`,
+once through a plain agent given `read_file`, `grep`, `find_files`, `list_dir`
+and `bash`. Both arms use the same model and the same bounds. Per task we record:
+
+| field | meaning |
+|---|---|
+| `tokens` | prompt + completion, summed across every model call in the task |
+| `net_tokens` | uncached prompt + completion — what you pay for after KV caching |
+| `cached_tokens` | prompt tokens the provider served from cache |
+| `api_calls` | round trips to the model. This is the turn count |
+| `duration_seconds` | wall clock |
+| `passed` | an LLM judge verdict against a written expected-answer key, with keyword/file rules as the fallback when `--no-judge` is set |
+
+**2. Offline retrieval scoring.** Ranking changes are scored without spending a
+token: for each benchmark question we know which file holds the answer
+(`required_files`), so we can measure **recall@1/3/5/10** (is the right file in
+the top k), **MRR**, and **distinct files per 10 hits**. This is what makes it
+practical to try a dozen ranking variants in a minute rather than a night.
+
+**3. Direct instrumentation of the index and the prompt.** Chunk token lengths
+against the encoder's real window, seed size in tokens, per-turn fixed overhead
+(system prompt + tool spec), tool-call traces per task.
+
+#### How we read the results
+
+Three rules, each learned by getting it wrong first:
+
+- **Report the median per task alongside the aggregate.** They routinely
+  disagree, and the disagreement is the finding. One run: aggregate **+14.7%**
+  against a median of **−8.8%** — cn wins large on hard questions and loses
+  slightly on easy ones. Either number alone misleads.
+- **Always check the outlier-removed figure.** A reported "+15.8% token saving"
+  became **−17.5%** when one task was excluded. Its baseline arm had matched a
+  single 486,303-character generated line against a harness that capped output by
+  line count but not by bytes. One task produced the entire headline.
+- **Compare only what is comparably bounded, and score infrastructure faults
+  separately.** Both arms must cap tool output the same way, or the number
+  measures the harness rather than the tool. A dropped socket is not a wrong
+  answer; counting it as one silently understates the score.
+
+#### What the measurements told us
+
+Two findings drive every decision that follows:
 
 1. **Token cost scales with turn count, not with how much you read.** Every tool
-   call re-sends the entire conversation so far. Measured correlation between a
-   task's API-call count and its total token cost: **r = 0.887**. One avoided
-   round trip is worth far more than one trimmed tool result.
-2. **Anything placed in the first user turn is paid for on every subsequent
-   turn.** The pre-flight seed is not a one-off ~1,600-token cost; at eight turns
-   it is a ~13,000-token cost.
+   call re-sends the entire conversation so far, so cost grows superlinearly in
+   turns. Measured correlation between a task's `api_calls` and its `tokens`:
+   **r = 0.887** on one run and **0.874** on a later one, so it holds as the tool
+   changes. One avoided round trip is worth far more than one trimmed tool
+   result — which is why several tactics below spend tokens to save a turn.
+2. **Anything placed in the first user turn is paid for on every later turn.**
+   The pre-flight seed is not a one-off ~1,600-token cost; across eight turns it
+   is a ~13,000-token cost.
 
-A consequence that shapes several tactics: **context that is already in the
-history is nearly free to keep and expensive to change.** With provider KV
-caching the measured cache-hit rate is **65.2%** of prompt tokens, so editing or
-evicting earlier messages invalidates the prefix and costs more than it saves.
-Anything expensive must be made small *before* it enters the history.
+And one consequence that constrains the fixes: **context already in the history
+is nearly free to keep and expensive to change.** The measured KV cache hit rate
+is **65.2%** of prompt tokens, so editing or evicting an earlier message
+invalidates the prefix from that point on and costs more than it saves. Anything
+expensive has to be made small *before* it enters the history, never trimmed
+afterwards.
 
 ### 6.1. Stage 1 — Routing the query (before any model call)
 
