@@ -371,3 +371,83 @@ def test_doc_seeking_queries_bypass_code_first():
     assert not is_doc_seeking("what happens internally when you call register blueprint")
     assert not is_doc_seeking("what class handles client side session cookies")
     assert not is_doc_seeking("how does the click cli group loading work")
+
+
+# --- 9. symbol preflight must not look up English words ---------------------
+
+
+def test_identifier_shape_detection():
+    from codebase_navigator.ask import _is_identifier_shaped
+
+    for ident in (
+        "create_venv",
+        "SecureCookieSessionInterface",
+        "app.init",
+        "sha256",
+        "AsyncHTTPTransport",
+    ):
+        assert _is_identifier_shaped(ident), ident
+    for word in ("contains", "defined", "find", "definition", "where", "implemented"):
+        assert not _is_identifier_shaped(word), word
+
+
+def test_strong_candidates_exclude_english_words():
+    """`.tags` really does contain symbols named Contains/defined in big repos.
+
+    "which file contains create_venv?" previously spent all five symbol slots on
+    matches for `contains` and never looked up `create_venv` at all.
+    """
+    from codebase_navigator.ask import extract_strong_symbol_candidates as strong
+
+    assert strong("which file contains create_venv?") == ["create_venv"]
+    assert strong("where is RegisterReminderCron defined?") == ["RegisterReminderCron"]
+    assert strong("find the definition of AsyncHTTPTransport") == ["AsyncHTTPTransport"]
+    assert strong("where is `dispatch_request` implemented") == ["dispatch_request"]
+    assert strong("how does the click cli group loading work?") == []
+
+
+def test_preflight_prefers_identifier_over_earlier_english_word(tmp_path: Path):
+    """The identifier must win even though the English word appears first."""
+    tags = (
+        "!_TAG_FILE_FORMAT\t2\t/extended format/\n"
+        'Contains\tsrc/a.rs\t/^fn Contains() {$/;"\tf\tline:10\n'
+        'Contains\tsrc/b.rs\t/^fn Contains() {$/;"\tf\tline:20\n'
+        'Contains\tsrc/c.rs\t/^fn Contains() {$/;"\tf\tline:30\n'
+        'create_venv\tsrc/venv.rs\t/^pub fn create_venv() {$/;"\tf\tline:80\n'
+    )
+    (tmp_path / ".tags").write_text(tags, encoding="utf-8")
+
+    from codebase_navigator.ask import find_preflight_symbols
+
+    matches = find_preflight_symbols(tmp_path, "which file contains create_venv?")
+    assert matches, "expected at least the real identifier"
+    assert matches[0]["symbol"] == "create_venv", [m["symbol"] for m in matches]
+    assert matches[0]["path"] == "src/venv.rs"
+
+
+def test_preflight_resolves_dotted_names_via_last_segment(tmp_path: Path):
+    """ctags records `app.init = function init()` under the bare name."""
+    tags = (
+        "!_TAG_FILE_FORMAT\t2\t/extended format/\n"
+        'init\tlib/application.js\t/^app.init = function init() {$/;"\tf\tline:59\n'
+    )
+    (tmp_path / ".tags").write_text(tags, encoding="utf-8")
+
+    from codebase_navigator.ask import find_preflight_symbols
+
+    matches = find_preflight_symbols(tmp_path, "where is app.init defined?")
+    assert matches and matches[0]["path"] == "lib/application.js"
+
+
+# --- 10. per-turn overhead --------------------------------------------------
+
+
+def test_per_turn_overhead_stays_bounded():
+    """Fixed overhead is paid on every turn and was 2.6x the whole cn/baseline gap."""
+    import json
+
+    from codebase_navigator.ask import AGENT_TOOLS_SPEC, SYSTEM_PROMPT
+
+    tools = len(json.dumps(AGENT_TOOLS_SPEC)) // 4
+    system = len(SYSTEM_PROMPT) // 4
+    assert tools + system < 1100, f"per-turn overhead regressed to {tools + system}"
