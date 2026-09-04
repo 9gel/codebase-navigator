@@ -394,13 +394,22 @@ uv run eval/report_viewer.py eval/runs/run_YYYYMMDD_HHMMSS_ffffff
 uv run eval/report_viewer.py --diff eval/runs/run_YYYYMMDD_HHMMSS_ffffff
 ```
 
-Every invocation creates a self-contained package under
-`eval/runs/run_<UTC timestamp>/`. It contains `report.json`, the complete
-`log.jsonl` trace, a snapshot of `benchmark_tasks.json`, and isolated LanceDB
-and ctags indexes under `indexes/<repository>/`. The report and per-repository
-index metadata record the exact Git commit evaluated. Indexes are rebuilt once
-before task workers start, so a run never reuses ambient `.codebase-navigator`
-state from an exercise repository.
+Repositories live under `eval/repos/`. A missing repository is cloned, while an
+existing checkout is used exactly as-is—the evaluator never fetches, pulls, or
+changes it. Indexes are immutable shared artifacts at
+`eval/repos/_indexes/<repository>/<codebase-navigator-short-hash>/`. The first
+run on a codebase-navigator commit builds the LanceDB and ctags tree atomically;
+later runs verify its SHA-256 metadata and reuse it without indexing again.
+
+Every invocation also creates an auditable package under
+`eval/runs/run_<UTC timestamp>/` with `report.json`, `log.jsonl`, the exact
+`benchmark_tasks.json`, and an `indexes/<repository>.json` snapshot pointing to
+the shared index. The report and log capture the source-repository commit,
+codebase-navigator commit, cache hit/build status, full index-tree SHA-256, and
+a post-run integrity check confirming that evaluation did not mutate the index.
+On a TTY, parallel worker states rotate on one animated line. Ctrl-C cancels
+queued work, records the interrupted run, and exits immediately without waiting
+for workers blocked in API calls.
 
 The judge defaults to `deepseek/deepseek-v4-pro`. Override it with
 `--judge-model` or `CN_EVAL_JUDGE_MODEL`. Token totals accumulate prompt,

@@ -4,12 +4,15 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import itertools
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -33,8 +36,11 @@ from codebase_navigator.index import VectorIndex
 from codebase_navigator.sandbox_bash import bash_tool_spec, run_sandboxed_bash
 from codebase_navigator.tags import TagsManager
 
-EXERCISES_DIR = Path(__file__).parent.parent / "exercises"
-BENCHMARK_CONFIG = Path(__file__).parent / "benchmark_tasks.json"
+PROJECT_DIR = Path(__file__).parent.parent
+EVAL_DIR = Path(__file__).parent
+REPOS_DIR = EVAL_DIR / "repos"
+INDEXES_DIR = REPOS_DIR / "_indexes"
+BENCHMARK_CONFIG = EVAL_DIR / "benchmark_tasks.json"
 DEFAULT_RUNS_DIR = Path("eval/runs")
 DEFAULT_JUDGE_MODEL = "deepseek/deepseek-v4-pro"
 
@@ -47,10 +53,79 @@ def _safe_print(*args: Any, **kwargs: Any) -> None:
         print(*args, **kwargs, flush=True)
 
 
+class LiveTaskProgress:
+    """Cycle active worker states on one animated TTY line."""
+
+    FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+    def __init__(self, stream=sys.stderr):
+        self.stream = stream
+        self._states: dict[str, tuple[str, str]] = {}
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._spin, name="eval-progress", daemon=True)
+        self._thread.start()
+
+    def update(self, task_id: str, label: str, message: str) -> None:
+        with _PRINT_LOCK:
+            self._states[task_id] = (label, message)
+
+    def finish(self, task_id: str) -> None:
+        with _PRINT_LOCK:
+            self._states.pop(task_id, None)
+
+    def write(self, message: str) -> None:
+        """Print a persistent line without colliding with the live status line."""
+        with _PRINT_LOCK:
+            self.stream.write("\r\033[2K")
+            self.stream.write(message + "\n")
+            self.stream.flush()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=1.0)
+        with _PRINT_LOCK:
+            self.stream.write("\r\033[2K")
+            self.stream.flush()
+
+    def _spin(self) -> None:
+        frame_cycle = itertools.cycle(self.FRAMES)
+        tick = 0
+        while not self._stop_event.wait(0.08):
+            with _PRINT_LOCK:
+                states = list(self._states.values())
+                if not states:
+                    continue
+                label, message = states[(tick // 8) % len(states)]
+                frame = next(frame_cycle)
+                active = f"{len(states)} active" if len(states) > 1 else "1 active"
+                text = f"{frame} [{active}] [{label}] {message}"
+                width = shutil.get_terminal_size((100, 20)).columns
+                if len(text) > width:
+                    text = text[: max(1, width - 3)].rstrip() + "..."
+                self.stream.write(f"\r\033[2K{text}")
+                self.stream.flush()
+                tick += 1
+
+
+class EvaluationCancelled(Exception):
+    """Raised cooperatively by workers after an interrupted evaluation."""
+
+
 def ensure_repo_cloned(repo_name: str, git_url: str, target_dir: Path) -> bool:
-    """Ensure target repository is cloned and ready for indexing."""
+    """Clone a missing repository without fetching or updating existing checkouts."""
     if target_dir.is_dir() and (target_dir / ".git").is_dir():
         return True
+
+    if target_dir.exists():
+        print(
+            f"❌ Repository path exists but is not a Git checkout; refusing to replace it: "
+            f"{target_dir}"
+        )
+        return False
 
     print(f"📦 Cloning repository {repo_name} from {git_url}...")
     target_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -529,45 +604,155 @@ def get_git_commit(repo_dir: Path) -> str:
     return commit
 
 
+def hash_index_tree(index_dir: Path) -> str:
+    """Hash every path and byte in an immutable index directory."""
+    digest = hashlib.sha256()
+    for path in sorted(
+        index_dir.rglob("*"), key=lambda item: item.relative_to(index_dir).as_posix()
+    ):
+        relative = path.relative_to(index_dir).as_posix().encode("utf-8")
+        if path.is_symlink():
+            digest.update(b"L\0" + relative + b"\0" + os.readlink(path).encode("utf-8") + b"\0")
+        elif path.is_dir():
+            digest.update(b"D\0" + relative + b"\0")
+        elif path.is_file():
+            digest.update(b"F\0" + relative + b"\0")
+            with path.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _index_metadata_path(index_dir: Path) -> Path:
+    """Return the sidecar path kept outside the hashed immutable index tree."""
+    return index_dir.parent / f"{index_dir.name}.metadata.json"
+
+
+def _load_cached_index_metadata(
+    index_dir: Path,
+    repo_name: str,
+    repo_git_commit: str,
+    codebase_navigator_git_commit: str,
+) -> dict[str, Any]:
+    metadata_path = _index_metadata_path(index_dir)
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Cached index metadata is missing or invalid: {metadata_path}") from exc
+
+    expected = {
+        "repo": repo_name,
+        "repo_git_commit": repo_git_commit,
+        "codebase_navigator_git_commit": codebase_navigator_git_commit,
+        "embedding_model": EMBEDDING_MODEL_NAME,
+    }
+    mismatches = {
+        key: (metadata.get(key), value)
+        for key, value in expected.items()
+        if metadata.get(key) != value
+    }
+    if mismatches:
+        raise RuntimeError(f"Cached index metadata does not match its inputs: {mismatches}")
+
+    actual_hash = hash_index_tree(index_dir)
+    if metadata.get("index_tree_sha256") != actual_hash:
+        raise RuntimeError(
+            f"Cached index integrity check failed for {index_dir}: "
+            f"expected {metadata.get('index_tree_sha256')}, got {actual_hash}"
+        )
+
+    return {
+        **metadata,
+        "cache_status": "reused",
+        "metadata_path": str(metadata_path.resolve()),
+    }
+
+
 def prepare_evaluation_index(
     repo_name: str,
     repo_dir: Path,
-    run_dir: Path,
+    indexes_dir: Path,
     git_url: str,
-    git_commit: str,
+    repo_git_commit: str,
+    codebase_navigator_git_commit: str,
 ) -> tuple[Path, dict[str, Any]]:
-    """Build and describe an isolated vector/ctags index inside the run package."""
-    index_dir = run_dir / "indexes" / repo_name
-    index_dir.mkdir(parents=True, exist_ok=False)
-
-    tags_ok, tags_message = TagsManager(repo_dir, tag_file=index_dir / ".tags").generate()
-    if not tags_ok:
-        raise RuntimeError(f"Failed to build tags for {repo_name}: {tags_message}")
-
-    updated_files, indexed_chunks, pruned_files = VectorIndex(
-        repo_dir, custom_index_dir=str(index_dir)
-    ).sync(force=True)
-    if updated_files <= 0 or indexed_chunks <= 0:
-        raise RuntimeError(
-            f"Evaluation index for {repo_name} is empty "
-            f"({updated_files} files, {indexed_chunks} chunks)"
+    """Reuse or atomically build a commit-keyed immutable evaluation index."""
+    codebase_navigator_short_hash = codebase_navigator_git_commit[:12]
+    repo_index_dir = indexes_dir / repo_name
+    index_dir = repo_index_dir / codebase_navigator_short_hash
+    if index_dir.is_dir():
+        return index_dir, _load_cached_index_metadata(
+            index_dir,
+            repo_name,
+            repo_git_commit,
+            codebase_navigator_git_commit,
         )
+    if index_dir.exists():
+        raise RuntimeError(f"Index cache path exists but is not a directory: {index_dir}")
 
-    metadata: dict[str, Any] = {
-        "repo": repo_name,
-        "git_url": git_url,
-        "git_commit": git_commit,
-        "embedding_model": EMBEDDING_MODEL_NAME,
-        "indexed_files": updated_files,
-        "indexed_chunks": indexed_chunks,
-        "pruned_files": pruned_files,
-        "tags_file": ".tags",
-        "tags_status": tags_message,
-    }
-    (index_dir / "metadata.json").write_text(
-        json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
+    repo_index_dir.mkdir(parents=True, exist_ok=True)
+    build_dir = Path(
+        tempfile.mkdtemp(prefix=f".{codebase_navigator_short_hash}.building-", dir=repo_index_dir)
     )
-    return index_dir, metadata
+
+    try:
+        tags_ok, tags_message = TagsManager(repo_dir, tag_file=build_dir / ".tags").generate()
+        if not tags_ok:
+            raise RuntimeError(f"Failed to build tags for {repo_name}: {tags_message}")
+
+        updated_files, indexed_chunks, pruned_files = VectorIndex(
+            repo_dir, custom_index_dir=str(build_dir)
+        ).sync(force=True)
+        if updated_files <= 0 or indexed_chunks <= 0:
+            raise RuntimeError(
+                f"Evaluation index for {repo_name} is empty "
+                f"({updated_files} files, {indexed_chunks} chunks)"
+            )
+
+        tree_hash = hash_index_tree(build_dir)
+        metadata: dict[str, Any] = {
+            "repo": repo_name,
+            "git_url": git_url,
+            "git_commit": repo_git_commit,
+            "repo_git_commit": repo_git_commit,
+            "repo_git_short_hash": repo_git_commit[:12],
+            "codebase_navigator_git_commit": codebase_navigator_git_commit,
+            "codebase_navigator_git_short_hash": codebase_navigator_short_hash,
+            "codebase_navigator_version": __version__,
+            "embedding_model": EMBEDDING_MODEL_NAME,
+            "indexed_files": updated_files,
+            "indexed_chunks": indexed_chunks,
+            "pruned_files": pruned_files,
+            "tags_file": ".tags",
+            "tags_status": tags_message,
+            "index_tree_hash_algorithm": "sha256",
+            "index_tree_sha256": tree_hash,
+            "created_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        }
+
+        try:
+            build_dir.rename(index_dir)
+        except FileExistsError:
+            shutil.rmtree(build_dir)
+            return index_dir, _load_cached_index_metadata(
+                index_dir,
+                repo_name,
+                repo_git_commit,
+                codebase_navigator_git_commit,
+            )
+
+        metadata_path = _index_metadata_path(index_dir)
+        metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+        return index_dir, {
+            **metadata,
+            "cache_status": "built",
+            "metadata_path": str(metadata_path.resolve()),
+        }
+    except BaseException:
+        if build_dir.exists():
+            shutil.rmtree(build_dir)
+        raise
 
 
 class ReportStream:
@@ -609,6 +794,10 @@ class ReportStream:
             with self._lock:
                 print(f"⚠️  Trace write failed: {e}", file=sys.stderr)
 
+    def record_event(self, event_type: str, **entry: Any) -> None:
+        """Append non-task lifecycle and integrity metadata to the run log."""
+        self._write_trace({"type": event_type, **entry})
+
     def _write_trace(self, entry: dict[str, Any]) -> None:
         # ensure_ascii escapes lone surrogates (from mis-decoded tool output) that
         # would otherwise raise UnicodeEncodeError and crash the whole benchmark.
@@ -641,17 +830,30 @@ def _run_task(
     compare_baseline: bool,
     use_spinner: bool,
     trace_callback=None,
+    live_progress: LiveTaskProgress | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
     """Execute a single benchmark task (CN agent + judge, then optional baseline) and return its result."""
     from codebase_navigator.cli import StatusSpinner
 
     task_id = task["id"]
+    progress_key = f"{r_name}/{task_id}"
     question = task["question"]
     key = task["expected_answer_key"]
     req_kws = task.get("required_keywords", [])
     req_files = task.get("required_files", [])
 
-    _safe_print(f"\n  ▶ [{task_id}] Q: {question}")
+    def _emit(message: str) -> None:
+        if live_progress is not None:
+            live_progress.write(message)
+        else:
+            _safe_print(message)
+
+    def _raise_if_cancelled() -> None:
+        if cancel_event is not None and cancel_event.is_set():
+            raise EvaluationCancelled
+
+    _emit(f"\n  ▶ [{task_id}] Q: {question}")
 
     cn_trace: list[str] = []
     base_trace: list[str] = []
@@ -666,12 +868,16 @@ def _run_task(
 
     def _progress(label: str, line: str) -> None:
         nonlocal spinner
+        _raise_if_cancelled()
         if use_spinner:
             if spinner:
                 spinner.update_message(f"{label}: {line}")
             else:
                 spinner = StatusSpinner(f"{label}: {line}", stream=sys.stderr)
                 spinner.start()
+            return
+        if live_progress is not None:
+            live_progress.update(progress_key, label, line)
             return
         # No spinner (parallel workers): stream progress to stderr so long-running
         # tasks still show movement instead of sitting silent for minutes.
@@ -688,6 +894,7 @@ def _run_task(
     # 1. Evaluate Codebase-Navigator Agent
     t0 = time.time()
     try:
+        _raise_if_cancelled()
         if use_spinner:
             spinner = StatusSpinner("CN: 🔍 Searching codebase...", stream=sys.stderr)
             spinner.start()
@@ -702,6 +909,7 @@ def _run_task(
             progress_callback=handle_cn_progress,
         )
         _stop_spinner()
+        _raise_if_cancelled()
 
         cn_dt = time.time() - t0
         cn_kw_matches = [kw for kw in req_kws if kw.lower() in cn_answer.lower()]
@@ -716,6 +924,7 @@ def _run_task(
             cn_judge_pass, cn_rationale = llm_judge_answer(
                 question, key, cn_answer, config, judge_model=judge_model
             )
+        _raise_if_cancelled()
 
         cn_passed = cn_judge_pass if use_llm_judge else cn_rule_pass
 
@@ -725,7 +934,7 @@ def _run_task(
         cn_output_tokens = cn_stats.get("completion_tokens", cn_stats.get("output_tokens", 0))
         cn_cached = cn_stats.get("cached_tokens", 0)
         cn_cached_str = f", cached: {cn_cached:,}" if cn_cached > 0 else ""
-        _safe_print(
+        _emit(
             f"    [CN]       Status: {'✅ PASS' if cn_passed else '❌ FAIL'} (took {cn_dt:.2f}s, tokens: {cn_tokens:,}{cn_cached_str})"
         )
 
@@ -744,6 +953,7 @@ def _run_task(
         time_savings_pct = 0.0
 
         if compare_baseline:
+            _raise_if_cancelled()
             t_b0 = time.time()
             try:
                 if use_spinner:
@@ -756,6 +966,7 @@ def _run_task(
                     r_dir, question, config, progress_callback=handle_base_progress
                 )
                 _stop_spinner()
+                _raise_if_cancelled()
 
                 base_dt = time.time() - t_b0
                 base_kw_matches = [kw for kw in req_kws if kw.lower() in base_answer.lower()]
@@ -793,16 +1004,19 @@ def _run_task(
                 )
 
                 base_cached_str = f", cached: {base_cached:,}" if base_cached > 0 else ""
-                _safe_print(
+                _emit(
                     f"    [Baseline] Status: {'✅ PASS' if base_passed else '❌ FAIL'} (took {base_dt:.2f}s, tokens: {base_tokens:,}{base_cached_str})"
                 )
-                _safe_print(
+                _emit(
                     f"    ⚡ Savings: Tokens {token_savings_pct:+.1f}% ({cn_tokens:,} vs {base_tokens:,}) | "
                     f"Time {time_savings_pct:+.1f}% ({cn_dt:.2f}s vs {base_dt:.2f}s)"
                 )
+            except EvaluationCancelled:
+                _stop_spinner()
+                raise
             except Exception as e_base:  # noqa: BLE001 — isolate agent failures
                 _stop_spinner()
-                _safe_print(f"    ❌ Baseline Error: {e_base}")
+                _emit(f"    ❌ Baseline Error: {e_base}")
 
         result: dict[str, Any] = {
             "task_id": task_id,
@@ -872,9 +1086,12 @@ def _run_task(
 
         return result
 
+    except EvaluationCancelled:
+        _stop_spinner()
+        raise
     except Exception as e:  # noqa: BLE001 — isolate agent failures
         _stop_spinner()
-        _safe_print(f"    ❌ Error executing task: {e}")
+        _emit(f"    ❌ Error executing task: {e}")
         result = {
             "task_id": task_id,
             "repo": r_name,
@@ -933,6 +1150,8 @@ def run_benchmark(
     print("=" * 75)
 
     overhead = print_prompt_overhead()
+    codebase_navigator_git_commit = get_git_commit(PROJECT_DIR)
+    codebase_navigator_git_short_hash = codebase_navigator_git_commit[:12]
 
     # Write the report and log before repository preparation so even an interrupted
     # or failed index build leaves a useful, self-describing run package.
@@ -952,6 +1171,8 @@ def run_benchmark(
         "run_directory": str(run_dir.resolve()),
         "status": "preparing",
         "codebase_navigator_version": __version__,
+        "codebase_navigator_git_commit": codebase_navigator_git_commit,
+        "codebase_navigator_git_short_hash": codebase_navigator_git_short_hash,
         "embedding_model": EMBEDDING_MODEL_NAME,
         "judge_model": resolved_judge_model if use_llm_judge else None,
         "compare_baseline": compare_baseline,
@@ -969,6 +1190,7 @@ def run_benchmark(
 
     # Clone and index each repository exactly once before parallel task execution.
     repo_facts_by_name = {entry["repo"]: entry for entry in repo_plan}
+    prepared_indexes: dict[str, tuple[Path, str]] = {}
     work_items: list[tuple[str, Path, str, Path, Any, dict[str, Any]]] = []
     for repo_entry in benchmarks:
         r_name = repo_entry["repo"]
@@ -977,13 +1199,18 @@ def run_benchmark(
 
         r_url = repo_entry["git_url"]
         r_lang = repo_entry.get("language", "Unknown")
-        r_dir = EXERCISES_DIR / r_name
+        r_dir = REPOS_DIR / r_name
         repo_facts = repo_facts_by_name[r_name]
+        repo_facts["checkout_status"] = (
+            "existing" if r_dir.is_dir() and (r_dir / ".git").is_dir() else "missing"
+        )
 
         if not ensure_repo_cloned(r_name, r_url, r_dir):
             repo_facts["status"] = "clone_failed"
             report_stream.update_facts(repo_plan=repo_plan)
             continue
+        if repo_facts["checkout_status"] == "missing":
+            repo_facts["checkout_status"] = "cloned"
 
         git_commit = get_git_commit(r_dir)
         repo_facts["git_commit"] = git_commit
@@ -996,13 +1223,19 @@ def run_benchmark(
 
         print(f"\n📁 Repository: {r_name} ({r_lang}) [{r_dir}]")
         print(f"   Git commit: {git_commit}")
-        print(f"   Building isolated index in {run_dir / 'indexes' / r_name}...")
+        expected_index_dir = INDEXES_DIR / r_name / codebase_navigator_git_short_hash
+        print(f"   Preparing cached index at {expected_index_dir}...")
         repo_facts["candidate_model"] = config.model
         repo_facts["status"] = "indexing"
         report_stream.update_facts(repo_plan=repo_plan)
         try:
             index_dir, index_metadata = prepare_evaluation_index(
-                r_name, r_dir, run_dir, r_url, git_commit
+                r_name,
+                r_dir,
+                INDEXES_DIR,
+                r_url,
+                git_commit,
+                codebase_navigator_git_commit,
             )
         except Exception as exc:
             repo_facts["status"] = "index_failed"
@@ -1010,9 +1243,27 @@ def run_benchmark(
             report_stream.update_facts(repo_plan=repo_plan, status="failed")
             raise
         repo_facts["index"] = {
-            "path": str(index_dir.relative_to(run_dir)),
+            "path": os.path.relpath(index_dir, run_dir),
             **index_metadata,
         }
+        prepared_indexes[r_name] = (index_dir, index_metadata["index_tree_sha256"])
+        index_snapshot = run_dir / "indexes" / f"{r_name}.json"
+        index_snapshot.write_text(
+            json.dumps(repo_facts["index"], indent=2) + "\n", encoding="utf-8"
+        )
+        report_stream.record_event(
+            "index",
+            repo=r_name,
+            repo_git_commit=git_commit,
+            index_path=str(index_dir.resolve()),
+            cache_status=index_metadata["cache_status"],
+            index_tree_hash_algorithm="sha256",
+            index_tree_sha256=index_metadata["index_tree_sha256"],
+        )
+        print(
+            f"   Index {index_metadata['cache_status']}: "
+            f"sha256:{index_metadata['index_tree_sha256']}"
+        )
         repo_facts["status"] = "ready"
         report_stream.update_facts(repo_plan=repo_plan)
         print("-" * 60)
@@ -1027,29 +1278,38 @@ def run_benchmark(
 
     results_report: list[dict[str, Any]] = []
     completed = 0
+    cancel_event = threading.Event()
+    live_progress = LiveTaskProgress() if is_tty and workers > 1 and total_tasks > 1 else None
+    pool: ThreadPoolExecutor | None = None
+    futures = []
+    if live_progress is not None:
+        live_progress.start()
 
-    if workers <= 1 or total_tasks <= 1:
-        for r_name, r_dir, git_commit, index_dir, config, task in work_items:
-            result = _run_task(
-                r_name,
-                r_dir,
-                git_commit,
-                index_dir,
-                task,
-                config,
-                resolved_judge_model,
-                use_llm_judge,
-                compare_baseline,
-                use_spinner,
-                trace_callback=report_stream.record_trace,
-            )
-            results_report.append(result)
-            report_stream.add_result(result)
-            completed += 1
-    else:
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            future_to_task = {
-                pool.submit(
+    try:
+        if workers <= 1 or total_tasks <= 1:
+            for r_name, r_dir, git_commit, index_dir, config, task in work_items:
+                result = _run_task(
+                    r_name,
+                    r_dir,
+                    git_commit,
+                    index_dir,
+                    task,
+                    config,
+                    resolved_judge_model,
+                    use_llm_judge,
+                    compare_baseline,
+                    use_spinner,
+                    trace_callback=report_stream.record_trace,
+                    cancel_event=cancel_event,
+                )
+                results_report.append(result)
+                report_stream.add_result(result)
+                completed += 1
+        else:
+            pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="eval-worker")
+            future_to_task = {}
+            for r_name, r_dir, git_commit, index_dir, config, task in work_items:
+                future = pool.submit(
                     _run_task,
                     r_name,
                     r_dir,
@@ -1062,15 +1322,74 @@ def run_benchmark(
                     compare_baseline,
                     use_spinner,
                     report_stream.record_trace,
-                ): (r_name, task)
-                for r_name, r_dir, git_commit, index_dir, config, task in work_items
-            }
+                    live_progress,
+                    cancel_event,
+                )
+                futures.append(future)
+                future_to_task[future] = (r_name, task)
             for future in as_completed(future_to_task):
+                r_name, task = future_to_task[future]
                 result = future.result()
                 results_report.append(result)
                 report_stream.add_result(result)
                 completed += 1
-                _safe_print(f"    🧮 Progress: {completed}/{total_tasks} tasks complete")
+                if live_progress is not None:
+                    live_progress.finish(f"{r_name}/{task['id']}")
+                    live_progress.write(
+                        f"    🧮 Progress: {completed}/{total_tasks} tasks complete "
+                        f"({r_name}/{task['id']})"
+                    )
+                else:
+                    _safe_print(f"    🧮 Progress: {completed}/{total_tasks} tasks complete")
+    except KeyboardInterrupt:
+        cancel_event.set()
+        for future in futures:
+            future.cancel()
+        if pool is not None:
+            pool.shutdown(wait=False, cancel_futures=True)
+            pool = None
+        if live_progress is not None:
+            live_progress.stop()
+            live_progress = None
+        report_stream.record_event(
+            "interrupted", completed_tasks=completed, total_tasks=total_tasks
+        )
+        report_stream.finalize(
+            {
+                "status": "interrupted",
+                "total_tasks": total_tasks,
+                "completed_tasks": completed,
+            }
+        )
+        _safe_print(f"\n⏹️  Evaluation interrupted ({completed}/{total_tasks} tasks completed).")
+        raise
+    finally:
+        if pool is not None:
+            pool.shutdown(wait=True, cancel_futures=True)
+        if live_progress is not None:
+            live_progress.stop()
+
+    # Verify the shared indexes remained byte-for-byte unchanged during evaluation.
+    index_integrity_ok = True
+    for repo_name, (index_dir, expected_hash) in prepared_indexes.items():
+        actual_hash = hash_index_tree(index_dir)
+        unchanged = actual_hash == expected_hash
+        index_integrity_ok = index_integrity_ok and unchanged
+        repo_facts = repo_facts_by_name[repo_name]
+        repo_facts["index"]["verified_after_run_sha256"] = actual_hash
+        repo_facts["index"]["unchanged_during_run"] = unchanged
+        (run_dir / "indexes" / f"{repo_name}.json").write_text(
+            json.dumps(repo_facts["index"], indent=2) + "\n", encoding="utf-8"
+        )
+        report_stream.record_event(
+            "index_verification",
+            repo=repo_name,
+            index_path=str(index_dir.resolve()),
+            expected_index_tree_sha256=expected_hash,
+            actual_index_tree_sha256=actual_hash,
+            unchanged=unchanged,
+        )
+    report_stream.update_facts(repo_plan=repo_plan, index_integrity_verified=index_integrity_ok)
 
     # Summary
     passed_tasks = sum(1 for r in results_report if r.get("passed"))
@@ -1119,7 +1438,7 @@ def run_benchmark(
     print("=" * 75)
 
     summary: dict[str, Any] = {
-        "status": "complete",
+        "status": "complete" if index_integrity_ok else "index_integrity_failed",
         "total_tasks": total_tasks,
         "passed_tasks": passed_tasks,
         "score_percentage": score_pct,
@@ -1130,7 +1449,7 @@ def run_benchmark(
     print(f"📜 Trace log saved to: {report_stream.trace_file}")
     print(f"📦 Complete run package: {run_dir}")
 
-    return passed_tasks == total_tasks
+    return passed_tasks == total_tasks and index_integrity_ok
 
 
 if __name__ == "__main__":
@@ -1165,11 +1484,20 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    run_benchmark(
-        target_repo=args.repo,
-        use_llm_judge=not args.no_judge,
-        compare_baseline=args.compare_baseline,
-        workers=args.workers,
-        runs_dir=Path(args.runs_dir),
-        judge_model=args.judge_model,
-    )
+    try:
+        success = run_benchmark(
+            target_repo=args.repo,
+            use_llm_judge=not args.no_judge,
+            compare_baseline=args.compare_baseline,
+            workers=args.workers,
+            runs_dir=Path(args.runs_dir),
+            judge_model=args.judge_model,
+        )
+    except KeyboardInterrupt:
+        # ThreadPoolExecutor workers cannot be force-cancelled while blocked in a
+        # network call. The report has already been flushed, so terminate the CLI
+        # process immediately instead of waiting for its non-daemon workers.
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(130)
+    raise SystemExit(0 if success else 1)

@@ -10,7 +10,7 @@ from typing import Any
 
 from codebase_navigator.ask import ask_codebase, load_llm_config
 
-EXERCISES_DIR = Path.home() / "code" / "codebase-navigator-exercises"
+REPOS_DIR = Path(__file__).parent.parent / "eval" / "repos"
 
 EVAL_TASKS = [
     {
@@ -37,8 +37,8 @@ def run_eval(repo_name: str | None = None) -> bool:
     print("🎯 Running Codebase-Navigator Agent Evaluation Suite")
     print("=" * 70)
 
-    if not EXERCISES_DIR.exists():
-        print(f"⚠️  Exercises directory not found at: {EXERCISES_DIR}")
+    if not REPOS_DIR.exists():
+        print(f"⚠️  Evaluation repositories directory not found at: {REPOS_DIR}")
         return False
 
     all_passed = True
@@ -47,7 +47,7 @@ def run_eval(repo_name: str | None = None) -> bool:
         if repo_name and r_name != repo_name:
             continue
 
-        repo_path = EXERCISES_DIR / r_name
+        repo_path = REPOS_DIR / r_name
         if not repo_path.is_dir():
             print(f"\n⏩ Skipping {r_name}: repo directory not found at {repo_path}")
             continue

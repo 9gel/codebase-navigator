@@ -146,7 +146,14 @@ def render_summary(report: dict[str, Any]) -> list[str]:
 
     run_status = report.get("status")
     aborted = (
-        run_status in {"preparing", "running", "failed"}
+        run_status
+        in {
+            "preparing",
+            "running",
+            "failed",
+            "interrupted",
+            "index_integrity_failed",
+        }
         or "total_tasks" not in report
         or completed < expected
     )
@@ -232,10 +239,14 @@ def render(report: dict[str, Any]) -> str:
         out.append(f"📦 Run status: {report['status']}")
     if report.get("codebase_navigator_version"):
         out.append(f"🏷️  codebase-navigator: {report['codebase_navigator_version']}")
+    if report.get("codebase_navigator_git_commit"):
+        out.append(f"🧬 Indexer commit: {report['codebase_navigator_git_commit']}")
     if report.get("judge_model"):
         out.append(f"⚖️  Judge model: {report['judge_model']}")
     if report.get("embedding_model"):
         out.append(f"🧠 Embedding model: {report['embedding_model']}")
+    if report.get("index_integrity_verified") is not None:
+        out.append(f"🔐 Index integrity verified: {report['index_integrity_verified']}")
     token_metric = report.get("token_metric") or {}
     if token_metric.get("tokens"):
         out.append(f"🧮 Token metric: {token_metric['tokens']}")
@@ -250,12 +261,22 @@ def render(report: dict[str, Any]) -> str:
         for repo, plan in repo_plan.items():
             commit = plan.get("git_commit", "unknown")
             status = plan.get("status", "unknown")
-            index_path = (plan.get("index") or {}).get("path")
+            index = plan.get("index") or {}
+            index_path = index.get("path")
             index_text = f", index={index_path}" if index_path else ""
+            cache_text = f", cache={index['cache_status']}" if index.get("cache_status") else ""
+            hash_text = (
+                f", sha256={index['index_tree_sha256']}" if index.get("index_tree_sha256") else ""
+            )
+            unchanged_text = (
+                f", unchanged={index['unchanged_during_run']}"
+                if index.get("unchanged_during_run") is not None
+                else ""
+            )
             error_text = f", error={plan['error']}" if plan.get("error") else ""
             out.append(
                 f"  {repo} ({plan.get('language', 'Unknown')}) @ {commit} "
-                f"[{status}{index_text}{error_text}]"
+                f"[{status}{index_text}{cache_text}{hash_text}{unchanged_text}{error_text}]"
             )
 
     last_repo: str | None = None

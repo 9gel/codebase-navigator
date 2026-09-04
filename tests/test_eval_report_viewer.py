@@ -17,9 +17,11 @@ def test_render_shows_run_revision_index_and_cumulative_tokens():
     report = {
         "timestamp": "2026-09-04T12:00:00Z",
         "status": "complete",
-        "codebase_navigator_version": "0.3.60",
+        "codebase_navigator_version": "0.3.61",
+        "codebase_navigator_git_commit": "c" * 40,
         "judge_model": "deepseek/deepseek-v4-pro",
         "embedding_model": "test-embedding-model",
+        "index_integrity_verified": True,
         "token_metric": {"tokens": "sum of prompt and completion tokens across every model call"},
         "compare_baseline": True,
         "repo_plan": [
@@ -29,7 +31,12 @@ def test_render_shows_run_revision_index_and_cumulative_tokens():
                 "git_commit": commit,
                 "task_count": 1,
                 "status": "ready",
-                "index": {"path": "indexes/demo"},
+                "index": {
+                    "path": "../../repos/_indexes/demo/cccccccccccc",
+                    "cache_status": "reused",
+                    "index_tree_sha256": "d" * 64,
+                    "unchanged_during_run": True,
+                },
             }
         ],
         "results": [
@@ -63,9 +70,15 @@ def test_render_shows_run_revision_index_and_cumulative_tokens():
     output = render(report)
 
     assert "Run status: complete" in output
-    assert "codebase-navigator: 0.3.60" in output
+    assert "codebase-navigator: 0.3.61" in output
+    assert f"Indexer commit: {'c' * 40}" in output
     assert "Judge model: deepseek/deepseek-v4-pro" in output
-    assert f"demo (Python) @ {commit} [ready, index=indexes/demo]" in output
+    assert "Index integrity verified: True" in output
+    assert f"demo (Python) @ {commit}" in output
+    assert "index=../../repos/_indexes/demo/cccccccccccc" in output
+    assert "cache=reused" in output
+    assert f"sha256={'d' * 64}" in output
+    assert "unchanged=True" in output
     assert (
         "Tokens (cumulative): total=330, prompt=300, output=30, cached=160, net=170, calls=2"
         in output

@@ -153,7 +153,7 @@ sequenceDiagram
 
 ## 5. Evaluation & Benchmarking Strategy
 
-To ensure high-quality, hallucination-free retrieval across multiple languages, evaluation test suites are run against standard open-source repositories in `~/code/codebase-navigator-exercises/`:
+To ensure high-quality, hallucination-free retrieval across multiple languages, evaluation test suites are run against standard open-source repositories in `eval/repos/`:
 
 1. **`tiangolo/fastapi`** (Python): Dependency injection resolution and route parameter parsing.
 2. **`pallets/flask`** (Python): Request lifecycle, `before_request` hooks, and WSGI dispatch.
@@ -167,11 +167,20 @@ To ensure high-quality, hallucination-free retrieval across multiple languages, 
 - **Turn Efficiency**: Does the agent reach the correct conclusion within 1–3 tool turns?
 - **Token Economy**: Does the hybrid toolset reduce total prompt/completion tokens compared to raw file grep sweeps?
 
-Each benchmark invocation produces an immutable package under
-`eval/runs/run_<UTC timestamp>/`. The harness force-builds isolated LanceDB and
-ctags indexes for every target repository before parallel task execution, then
-stores those indexes beside `report.json`, `log.jsonl`, and the exact benchmark
-task snapshot. Repository Git commits, embedding model, candidate model, judge
-model, and cumulative per-call token usage are recorded in the package. The
-judge defaults to `deepseek/deepseek-v4-pro` and is independently configurable
-from the candidate model.
+Repositories are cloned only when missing; existing checkouts are never updated
+by the evaluator. LanceDB and ctags indexes are built atomically and cached at
+`eval/repos/_indexes/<repository>/<codebase-navigator-short-hash>/`. A sidecar
+manifest pins the full codebase-navigator and target-repository commits,
+embedding model, indexed counts, and a SHA-256 over the complete immutable index
+tree. Cache hits recompute and validate that hash before reuse.
+
+Each benchmark invocation produces an auditable package under
+`eval/runs/run_<UTC timestamp>/` containing `report.json`, `log.jsonl`, the exact
+benchmark task snapshot, and per-repository index metadata snapshots. Both the
+initial index hash and post-run verification hash are logged. Repository Git
+commits, embedding model, candidate model, judge model, and cumulative per-call
+token usage are recorded. Parallel TTY progress rotates active worker states in
+place; interruption cancels queued futures, records partial-run status, and the
+CLI terminates without waiting on blocked network threads. The judge defaults
+to `deepseek/deepseek-v4-pro` and is independently configurable from the
+candidate model.
