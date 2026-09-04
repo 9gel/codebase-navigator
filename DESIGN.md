@@ -16,20 +16,20 @@ When developers or AI coding agents explore an unfamiliar codebase, they run int
 - **Purpose-Built Agent Harness (`cn ask`)**: An autonomous agent equipped with navigation tools (`search`, `tags_lookup`, `read_code`, `grep_search`, `find_references`) and a fast heuristic router that skips semantic retrieval when looking up raw symbols.
 
 ```
-                              ┌────────────────────────────────────────────────────────┐
-                              │                    codebase-navigator                  │
-                              │                                                        │
-                              │   ┌─────────────┐   ┌──────────────┐   ┌───────────┐   │
-                              │   │ LanceDB RAG │ + │ ctags (.tags)│ + │ AST/Tools │   │
-                              │   └─────────────┘   └──────────────┘   └───────────┘   │
-                              └───────────────────────────┬────────────────────────────┘
-                                                          │
-                                         ┌────────────────┴────────────────┐
-                                         ▼                                 ▼
-                             ┌───────────────────────┐         ┌───────────────────────┐
-                             │ Human Dev Orientation │         │ Autonomous AI Agents  │
-                             │ (Fast CLI Q&A & Tags) │         │ (40-80% Token Savings)│
-                             └───────────────────────┘         └───────────────────────┘
+    ┌────────────────────────────────────────────────────────┐
+    │                    codebase-navigator                  │
+    │                                                        │
+    │   ┌─────────────┐   ┌──────────────┐   ┌───────────┐   │
+    │   │ LanceDB RAG │ + │ ctags (.tags)│ + │ AST/Tools │   │
+    │   └─────────────┘   └──────────────┘   └───────────┘   │
+    └───────────────────────────┬────────────────────────────┘
+                                │
+               ┌────────────────┴────────────────┐
+               ▼                                 ▼
+   ┌───────────────────────┐         ┌───────────────────────┐
+   │ Human Dev Orientation │         │ Autonomous AI Agents  │
+   │ (Fast CLI Q&A & Tags) │         │ (40-80% Token Savings)│
+   └───────────────────────┘         └───────────────────────┘
 ```
 
 ---
