@@ -720,3 +720,34 @@ def idx_vector_dim() -> int:
     from codebase_navigator.config import VECTOR_DIM
 
     return VECTOR_DIM
+
+
+# --- 16. embedding dimension resolution -------------------------------------
+
+
+def test_known_model_dimensions_resolve():
+    from codebase_navigator.config import resolve_vector_dim
+
+    assert resolve_vector_dim("jinaai/jina-embeddings-v2-base-code") == 768
+    assert resolve_vector_dim("jinaai/jina-embeddings-v2-small-en") == 512
+    assert resolve_vector_dim("sentence-transformers/all-MiniLM-L6-v2") == 384
+
+
+def test_unlisted_model_resolves_from_fastembed_metadata():
+    """Unlisted models previously defaulted silently to 384.
+
+    Pointing CN_EMBEDDING_MODEL at a 512-dim model then built a 384-wide table
+    and failed inside LanceDB with "Cannot cast to FixedSizeList(384): value at
+    index 0 has length 512" -- a dimension mismatch surfaced as an Arrow error.
+    """
+    from codebase_navigator.config import _MODEL_DIMS, resolve_vector_dim
+
+    assert "BAAI/bge-small-zh-v1.5" not in _MODEL_DIMS
+    assert resolve_vector_dim("BAAI/bge-small-zh-v1.5") == 512
+
+
+def test_unknown_model_raises_instead_of_guessing():
+    from codebase_navigator.config import resolve_vector_dim
+
+    with pytest.raises(ValueError, match="Unknown embedding dimension"):
+        resolve_vector_dim("made-up/not-a-real-model")

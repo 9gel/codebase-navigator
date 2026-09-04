@@ -40,6 +40,12 @@ EMBEDDING_MODEL_NAME = os.environ.get(
 )
 
 # Common dimensions for known FastEmbed ONNX models, default 384 for MiniLM
+# Fast path for models we ship or have tested. Any model not listed is resolved
+# from FastEmbed's own metadata rather than guessed: the previous code defaulted
+# silently to 384, so pointing CN_EMBEDDING_MODEL at, say,
+# jina-embeddings-v2-small-en (512 dims) built a 384-wide table and then failed
+# deep inside LanceDB with "Cannot cast to FixedSizeList(384): value at index 0
+# has length 512" -- a dimension mismatch reported as an Arrow cast error.
 _MODEL_DIMS = {
     "sentence-transformers/all-MiniLM-L6-v2": 384,
     "sentence-transformers/all-MiniLM-L12-v2": 384,
@@ -53,8 +59,44 @@ _MODEL_DIMS = {
     "nomic-ai/nomic-embed-text-v1.5-Q": 768,
     "nomic-ai/nomic-embed-text-v1": 768,
     "jinaai/jina-embeddings-v2-base-code": 768,
+    "jinaai/jina-embeddings-v2-base-en": 768,
+    "jinaai/jina-embeddings-v2-small-en": 512,
+    "snowflake/snowflake-arctic-embed-m-long": 768,
+    "snowflake/snowflake-arctic-embed-xs": 384,
+    "thenlper/gte-base": 768,
+    "mixedbread-ai/mxbai-embed-large-v1": 1024,
 }
-VECTOR_DIM = _MODEL_DIMS.get(EMBEDDING_MODEL_NAME, 384)
+
+
+def resolve_vector_dim(model_name: str) -> int:
+    """Vector width for an embedding model, from FastEmbed metadata when unlisted.
+
+    list_supported_models() reads a static catalogue and does not download
+    weights, so the lookup is cheap and only runs for models absent from the
+    table above.
+    """
+    known = _MODEL_DIMS.get(model_name)
+    if known:
+        return known
+
+    try:
+        from fastembed import TextEmbedding
+
+        for spec in TextEmbedding.list_supported_models():
+            if spec.get("model") == model_name and spec.get("dim"):
+                return int(spec["dim"])
+    except ImportError:
+        # FastEmbed absent (e.g. docs build); fall through to the explicit error.
+        pass
+
+    raise ValueError(
+        f"Unknown embedding dimension for CN_EMBEDDING_MODEL={model_name!r}. "
+        f"Add it to _MODEL_DIMS in config.py, or choose a model FastEmbed lists "
+        f"via TextEmbedding.list_supported_models()."
+    )
+
+
+VECTOR_DIM = resolve_vector_dim(EMBEDDING_MODEL_NAME)
 
 DOC_SCHEMA = pa.schema(
     [
