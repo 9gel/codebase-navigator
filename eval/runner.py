@@ -37,7 +37,7 @@ from codebase_navigator.ask import (
 from codebase_navigator.config import EMBEDDING_MODEL_NAME
 from codebase_navigator.index import VectorIndex
 from codebase_navigator.sandbox_bash import bash_tool_spec, run_sandboxed_bash
-from codebase_navigator.tags import TagsManager
+from codebase_navigator.tags import TagsManager, get_available_files
 
 PROJECT_DIR = Path(__file__).parent.parent
 EVAL_DIR = Path(__file__).parent
@@ -1227,6 +1227,45 @@ def _run_task(
         return result
 
 
+# An answer key that matches every file in the repository is not an answer key.
+# `required_files` was hand-authored and never checked: three vikunja tasks named
+# "pkg" (913 files) and three uv tasks named "crates" (729 files), so any result
+# scored as a hit and those tasks silently could not distinguish good retrieval
+# from bad. Validate at load time rather than discovering it in the numbers.
+MAX_ANSWER_KEY_MATCHES = 5
+
+
+def validate_answer_keys(benchmarks: list[dict[str, Any]]) -> list[str]:
+    """Return a warning per task whose required_files is missing or too broad."""
+    warnings: list[str] = []
+    for group in benchmarks:
+        repo_dir = REPOS_DIR / group["repo"]
+        if not repo_dir.is_dir():
+            continue
+        try:
+            code_files, doc_files = get_available_files(repo_dir)
+        except OSError:
+            # Repo not checked out yet; nothing to validate against.
+            continue
+        paths = [str(p.relative_to(repo_dir)) for p in code_files + doc_files]
+        for task in group.get("tasks", []):
+            required = task.get("required_files") or []
+            if not required:
+                warnings.append(f"{task['id']}: no required_files")
+                continue
+            matches = sum(1 for p in paths if any(r in p for r in required))
+            if matches == 0:
+                warnings.append(
+                    f"{task['id']}: required_files {required} matches no file in {group['repo']}"
+                )
+            elif matches > MAX_ANSWER_KEY_MATCHES:
+                warnings.append(
+                    f"{task['id']}: required_files {required} matches {matches} files "
+                    f"in {group['repo']} — too broad to score retrieval"
+                )
+    return warnings
+
+
 def run_benchmark(
     target_repo: str | None = None,
     use_llm_judge: bool = True,
@@ -1243,6 +1282,13 @@ def run_benchmark(
 
     with open(BENCHMARK_CONFIG, "r", encoding="utf-8") as f:
         benchmarks = json.load(f)
+
+    key_warnings = validate_answer_keys(benchmarks)
+    if key_warnings:
+        print("\n⚠️  Answer-key problems (these tasks cannot score retrieval reliably):")
+        for w in key_warnings:
+            print(f"     - {w}")
+        print()
 
     resolved_judge_model = (
         judge_model

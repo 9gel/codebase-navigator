@@ -564,3 +564,53 @@ def test_rejection_runner_saves_report_to_directory(tmp_path: Path):
     assert (tmp_path / "reports.json").exists() is False
     assert (tmp_path / "report.json").exists() is False
     assert (tmp_path / "rejection_report.json").exists() is False
+
+
+# --- answer-key validation --------------------------------------------------
+
+
+def test_validate_answer_keys_accepts_the_shipped_suite():
+    """Every required_files entry must resolve to a small set of real files."""
+    import json
+
+    from eval.runner import BENCHMARK_CONFIG, validate_answer_keys
+
+    benchmarks = json.loads(BENCHMARK_CONFIG.read_text(encoding="utf-8"))
+    assert validate_answer_keys(benchmarks) == []
+
+
+def test_validate_answer_keys_rejects_directory_wide_keys(tmp_path, monkeypatch):
+    """`required_files: ["pkg"]` matched 913 files, so every result scored as a hit.
+
+    Three vikunja and three uv tasks shipped like this and silently could not
+    distinguish good retrieval from bad.
+    """
+    from eval import runner
+
+    repo = tmp_path / "demo"
+    (repo / "pkg" / "models").mkdir(parents=True)
+    for i in range(12):
+        (repo / "pkg" / "models" / f"m{i}.go").write_text("package models\n")
+    monkeypatch.setattr(runner, "REPOS_DIR", tmp_path)
+
+    broad = [{"repo": "demo", "tasks": [{"id": "t-broad", "required_files": ["pkg"]}]}]
+    warnings = runner.validate_answer_keys(broad)
+    assert warnings and "too broad" in warnings[0]
+
+    exact = [{"repo": "demo", "tasks": [{"id": "t-exact", "required_files": ["m3.go"]}]}]
+    assert runner.validate_answer_keys(exact) == []
+
+
+def test_validate_answer_keys_rejects_missing_and_empty(tmp_path, monkeypatch):
+    from eval import runner
+
+    repo = tmp_path / "demo"
+    repo.mkdir(parents=True)
+    (repo / "real.py").write_text("x = 1\n")
+    monkeypatch.setattr(runner, "REPOS_DIR", tmp_path)
+
+    missing = [{"repo": "demo", "tasks": [{"id": "t1", "required_files": ["ghost.py"]}]}]
+    assert "matches no file" in runner.validate_answer_keys(missing)[0]
+
+    empty = [{"repo": "demo", "tasks": [{"id": "t2", "required_files": []}]}]
+    assert "no required_files" in runner.validate_answer_keys(empty)[0]

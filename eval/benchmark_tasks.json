@@ -14,7 +14,7 @@
           "app.py"
         ],
         "required_files": [
-          "app.py"
+          "flask/app.py"
         ]
       },
       {
@@ -105,7 +105,7 @@
           "solve_dependencies"
         ],
         "required_files": [
-          "utils.py"
+          "dependencies/utils.py"
         ]
       },
       {
@@ -141,7 +141,7 @@
           "utils.py"
         ],
         "required_files": [
-          "utils.py"
+          "openapi/utils.py"
         ]
       },
       {
@@ -165,7 +165,7 @@
           "utils.py"
         ],
         "required_files": [
-          "utils.py"
+          "openapi/utils.py"
         ]
       }
     ]
@@ -331,7 +331,7 @@
           "pkg"
         ],
         "required_files": [
-          "pkg"
+          "task_reminder.go"
         ]
       },
       {
@@ -343,7 +343,7 @@
           "pkg"
         ],
         "required_files": [
-          "pkg"
+          "migration.go"
         ]
       },
       {
@@ -355,7 +355,7 @@
           "pkg"
         ],
         "required_files": [
-          "pkg"
+          "auth/auth.go"
         ]
       },
       {
@@ -386,7 +386,7 @@
           "crates"
         ],
         "required_files": [
-          "crates"
+          "resolver/mod.rs"
         ]
       },
       {
@@ -398,7 +398,7 @@
           "crates"
         ],
         "required_files": [
-          "crates"
+          "uv-build-frontend/src/lib.rs"
         ]
       },
       {
@@ -410,7 +410,7 @@
           "crates"
         ],
         "required_files": [
-          "crates"
+          "virtualenv.rs"
         ]
       },
       {
@@ -422,7 +422,7 @@
           "lib.rs"
         ],
         "required_files": [
-          "lib.rs"
+          "uv-virtualenv/src/lib.rs"
         ]
       }
     ]
