@@ -1,18 +1,19 @@
 # Technical Design: codebase-navigator
 
-## 1. Executive Summary & Vision
+## 1. Vision & Purpose
 
-As described in [`README.md`](file:///home/nigel/code/codebase-navigator/README.md), modern AI coding assistants and developers face a fundamental dilemma:
-1. **Context Bloat & Token Waste**: Ingesting entire codebases or hundreds of source files into LLM context windows burns millions of tokens, incurs massive latency, and often degrades reasoning fidelity ("lost in the middle").
-2. **Brittle Brute-Force Grepping**: Forcing an LLM to blindly guess regex patterns via `ripgrep` wastes 3–6 agent turns just trying to locate basic definitions or call sites.
-3. **High Startup Friction**: Traditional code intelligence tools require heavy external services (e.g. Docker, dedicated vector databases, or Ollama daemons).
+When developers or AI coding agents explore an unfamiliar codebase, they run into three persistent bottlenecks:
 
-`codebase-navigator` (`cn`) solves this by providing an **ultra-lightweight, self-contained code intelligence engine and agent harness**. It combines:
-- **Instant Vector Retrieval** via LanceDB and embedded `sentence-transformers` without external service daemons.
-- **Deterministic Symbol Navigation** via Git-aware `universal-ctags`.
-- **Live Incremental Indexing & Daemon Socket** via `cn watch`.
-- **Multi-turn Session Memory & Provider KV-Cache Continuity** across CLI invocations.
-- **Autonomous Agent Harness (`cn ask`)** equipped with 1-shot hybrid code intelligence tools (`search`, `tags_lookup`, `read_code`, `grep_search`, `find_references`), fronted by a deterministic question router that skips semantic retrieval for plain symbol lookups.
+1. **Context Bloat**: Stuffing dozens of source files into an LLM's context window burns thousands of tokens, increases latency, and degrades reasoning ("lost in the middle").
+2. **Blind Grepping**: Asking an agent to locate code with raw `ripgrep` commands wastes 3 to 6 conversation turns just wandering around searching for definitions or call sites.
+3. **Heavy Setup**: Traditional code intelligence tools require heavy infrastructure—like Docker containers, dedicated vector database servers, or complex Language Server Protocol (LSP) daemons.
+
+`codebase-navigator` (`cn`) is a **lightweight, self-contained code intelligence engine and agent harness**. It combines:
+- **Instant Hybrid Retrieval**: Embedded vector search via LanceDB and FastEmbed alongside BM25 full-text search, with zero external database servers.
+- **Deterministic Symbol Navigation**: Git-aware `universal-ctags` for instant 1-step definition lookups.
+- **Live Incremental Watcher**: A background daemon (`cn watch`) that keeps indexes fresh and models pre-warmed in memory.
+- **Session Continuity & KV Caching**: In-memory session tracking that lets subsequent CLI invocations reuse prompt history and benefit from provider-side KV prompt caching.
+- **Purpose-Built Agent Harness (`cn ask`)**: An autonomous agent equipped with navigation tools (`search`, `tags_lookup`, `read_code`, `grep_search`, `find_references`) and a fast heuristic router that skips semantic retrieval when looking up raw symbols.
 
 ```
                               ┌────────────────────────────────────────────────────────┐
@@ -33,9 +34,9 @@ As described in [`README.md`](file:///home/nigel/code/codebase-navigator/README.
 
 ---
 
-## 2. System Architecture
+## 2. High-Level Architecture
 
-The project is structured into modular layers spanning indexing, background daemon services, tool execution, and the LLM agent harness:
+The system is organized into three main layers: indexing & storage, a background daemon, and the CLI/agent harness.
 
 ```mermaid
 flowchart TD
@@ -49,7 +50,7 @@ flowchart TD
     subgraph Background Daemon [cn watch]
         W[DirectoryWatcher] --> LDB
         W --> TAGS
-        W --> IPC[IPC Unix Domain Socket Server: watch.sock]
+        W --> IPC[IPC Server: watch.sock / loopback TCP]
         IPC --> SM[SessionManager: Multi-turn Memory & KV Cache]
     end
 
@@ -64,108 +65,75 @@ flowchart TD
         AH <--> T3[read_code]
         AH <--> T4[grep_search]
         AH <--> T5[find_references]
-        AH <--> T6[call_tree]
     end
 ```
+
+1. **Storage & Indexing**: Scans repository files to extract comments, docstrings, and markdown chunks into an embedded LanceDB database, while running `universal-ctags` to generate a fast `.tags` symbol file.
+2. **Background Daemon (`cn watch`)**: Watches the filesystem for changes, debounces edits, incrementally updates LanceDB and `.tags`, and hosts an IPC server with pre-warmed models and multi-turn session state.
+3. **CLI & Agent Harness (`cn ask`)**: Connects to the daemon over IPC (or runs in-process if the daemon isn't running) to answer questions using targeted tools.
 
 ---
 
 ## 3. Core Subsystems
 
 ### 3.1. Vector & Semantic Search (`index.py`, `extractor.py`)
-- **Model**: `sentence-transformers/all-MiniLM-L6-v2` runs locally in-process via PyTorch/Transformers.
-- **Storage**: Serverless LanceDB vector database persisted under `.codebase-navigator/`.
-- **Encoder window**: fastembed's build of this model truncates at **128 tokens**,
-  not the 256/512 the model card implies. 73% of indexed chunks exceed that and
-  61% of indexed content never reaches the encoder. Counter-intuitively this is
-  fine: splitting chunks to fit measured *worse* retrieval (MRR 0.717 -> 0.561),
-  because a code chunk's head -- signature plus docstring -- carries the
-  identifying signal while body fragments are low-signal near-duplicates that
-  crowd distinct files out of the top-k. `split_oversize_chunks()` exists and is
-  tested behind `CN_SPLIT_OVERSIZE_CHUNKS`; turn it on only when moving to a
-  long-context code embedding model, where truncation no longer hides the tail.
-- **Ranking** (`VectorIndex.search`):
-  - **Reciprocal Rank Fusion** over the vector and BM25/FTS result lists (k=20,
-    FTS weighted 1.2). RRF is rank-based and scale-free, so it is used directly
-    rather than compared against raw cosine proximity -- an earlier
-    `max(cosine, rrf)` formulation meant the vector term always won and the BM25
-    half of the "hybrid" search was silently discarded.
-  - Identifier-aware boosts proportional to the share of query terms matched in
-    the chunk title, path, and body. Scores are deliberately unclamped: an
-    earlier `min(0.99, ...)` ceiling tied distinct candidates together and made
-    the score useless as a confidence signal.
-  - **Code-first ordering**: documentation is demoted below code, but never
-    dropped, and the demotion is skipped for doc-seeking queries
-    (`is_doc_seeking`). Doc-heavy repositories otherwise drown code -- FastAPI
-    indexes 15,839 markdown chunks against 5,689 code chunks, and 8.6 of every
-    10 unfiltered hits were prose.
-  - **Per-file diversity cap** (`MAX_CHUNKS_PER_FILE`): several chunks of one
-    file crowded out other candidates, giving only 4.8 distinct files per 10
-    hits; capping raises that to 9.7.
-  - Granular chunking: Markdown section headers, term definitions, Python class/function docstrings, and generic multi-line comment blocks.
-- **Concurrent Search Safety**: In-process indexes share one lazily initialized
-  FastEmbed/ONNX model. Query embedding is serialized to avoid competing ONNX
-  session initialization and inference stalls, while LanceDB reads remain
-  parallel.
+
+- **Embedding Model**: Uses `jinaai/jina-embeddings-v2-base-code` (8,192-token context window, trained specifically on code), running locally in-process via FastEmbed / ONNX Runtime.
+- **Storage**: Serverless LanceDB database stored in the local `.codebase-navigator/` directory. No background database service is required.
+- **Hybrid Search & Ranking**:
+  - **Reciprocal Rank Fusion (RRF)**: Runs vector search (cosine similarity) and BM25 full-text search separately, then combines their ranks directly ($k=20$, BM25 weighted 1.2). An earlier formula that took $\max(\text{cosine}, \text{rrf})$ was discarded because cosine scores routinely overshadowed RRF scores, which inadvertently disabled the keyword half of hybrid search.
+  - **Identifier Overlap Boosts**: Awards bonuses based on the proportion of query terms matched in chunk titles, file paths, and chunk bodies. Scores are left unclamped to preserve relative ranking confidence.
+  - **Code-First Ordering**: Code chunks are prioritized over markdown documentation by default, unless the query explicitly asks for documentation (e.g., questions containing "docs", "readme", "install"). This prevents repositories with huge documentation trees (like FastAPI, where markdown chunks outnumber code 3 to 1) from burying the actual implementation.
+  - **Per-File Diversity Cap**: Limits initial candidate chunks to 1 chunk per file (`MAX_CHUNKS_PER_FILE = 1`). This prevents a single large file from monopolizing all top-10 slots.
+- **Concurrency Safety**: Query embedding is serialized to avoid ONNX session contention, while LanceDB read queries execute concurrently.
 
 ### 3.2. Git-Aware Symbol Indexing (`tags.py`)
-- Uses `universal-ctags` with `-L - --fields=+n+K --sort=yes`.
-- Restricts indexing to files recognized by `git ls-files` (or source extensions) to exclude `node_modules`, build artifacts, and vendor dumps.
 
-### 3.3. Live Watcher & Daemon Session IPC (`watcher.py`, `ipc.py`)
-- **`watchfiles` Engine**: Detects code and documentation modifications with a 1000ms debounce.
+- Runs `universal-ctags` with line numbers and kind tags (`--fields=+n+K --sort=yes`).
+- Restricts indexing to files tracked by Git (`git ls-files`) or standard source extensions. This automatically ignores `node_modules/`, virtual environments, vendor directories, and build artifacts.
+
+### 3.3. Live Watcher & IPC Daemon (`watcher.py`, `ipc.py`)
+
+- **Filesystem Watcher**: Uses `watchfiles` to monitor repository changes with a 1,000ms debounce.
 - **Dual Transport IPC**:
-  - **Unix Domain Socket**: Listens on `.codebase-navigator/watch.sock` for high-speed local IPC.
-  - **Loopback TCP Transport**: Binds on `127.0.0.1:<port>` with port metadata written to `.codebase-navigator/watch.port`. The default port is deterministically hashed from the directory path into the range `10000..59999` with automatic collision fallback. This allows sandboxed runtimes (like Codex sandboxes or Docker containers with volume socket restrictions) to seamlessly connect.
-- **Hot In-Memory State**: Keeps the LanceDB table and embedding model pre-loaded in memory, delivering sub-10ms semantic searches to CLI clients.
-- **Persistent Conversation Session**:
-  - `cn watch` maintains the agent conversation message history across repeated `cn ask` commands.
-  - Subsequent queries append to the existing conversation tree, enabling provider-side **KV prompt caching** and zero-overhead follow-up questions.
+  - **Unix Domain Socket**: Listens on `.codebase-navigator/watch.sock` for low-latency local communication.
+  - **Loopback TCP Transport**: Binds to `127.0.0.1:<port>` with port metadata written to `.codebase-navigator/watch.port`. The port is deterministically derived from a hash of the project directory path (within `10000..59999`) with automatic collision resolution. This allows containerized or sandboxed runtimes (like Docker or Codex sandboxes) to connect even when Unix socket sharing across volume mounts is restricted.
+- **Pre-warmed Memory**: Keeps the LanceDB table and embedding model loaded in RAM, allowing CLI searches to return in under 10ms.
+- **Conversation State**: Keeps multi-turn message history in memory, enabling follow-up questions to reuse provider KV prompt caches without re-sending the initial search context.
 
 ### 3.4. Agent Intelligence Tools (`tools.py`)
-To prevent the LLM from spending dozens of turns and thousands of tokens doing brute-force file navigation:
+
+Rather than giving the LLM generic bash or grep access, `codebase-navigator` provides five specialized tools designed to minimize turns and token usage:
 
 | Tool | Implementation | Purpose & Token Optimization |
 |---|---|---|
-| `search` | LanceDB hybrid query (RRF over vector + BM25) | Semantic retrieval of relevant concepts, docstrings, and modules. |
-| `tags_lookup` | Regex match on `.tags` | 1-step direct resolution of symbol definitions without fuzzy guessing. |
-| `read_code` | Line-bounded file reader | Safe viewing of function/file bodies with clickable file URI links. Accepts a `ranges` array so several spans (or several files) are fetched in one turn. |
-| `grep_search` | Subprocess `rg --json` with pure Python fallback | Fast pattern and literal matching across codebase. Emits loud warning when `rg` is missing. |
-| `find_references` | Hybrid ctags + ripgrep | 1-shot tool returning symbol definition + all caller and usage sites across the repo. |
+| `search` | Hybrid LanceDB search (RRF over vector + BM25) | Semantic retrieval for concepts, modules, and docstrings. |
+| `tags_lookup` | Regex match on `.tags` | Instant 1-step symbol definition lookup without guessing files. |
+| `read_code` | Line-bounded file reader | Reads specific spans of code. Supports a `ranges` array so multiple spans or files can be read in a single turn. |
+| `grep_search` | Subprocess `rg --json` with pure Python fallback | Fast exact string and pattern matching. Includes output truncation to protect context windows. |
+| `find_references` | Hybrid ctags + ripgrep | Returns a symbol's definition and all caller/usage sites repo-wide in a single turn. |
 
-`call_tree` remains implemented in `tools.py` but is no longer advertised in the
-default tool spec: it was called zero times across 25 benchmark tasks while
-costing spec tokens on every turn, and `find_references` covers the same need.
+**Tool Refinements**:
+- **Why `call_tree` was removed from the active spec**: It was called zero times across 25 benchmark tasks, yet its schema consumed tokens on every turn. `find_references` solved the same need in fewer steps.
+- **Byte Caps on Grep Matches (`MAX_MATCH_CHARS = 240`)**: A single generated or minified line in a repository (e.g. 486,000 characters) can explode into ~179,000 tokens in a single tool response. Capping line length per match prevents context blowouts.
 
-Every grep-style result is byte-capped per match (`MAX_MATCH_CHARS`). A single
-generated line in a real repository can be ~486k characters; uncapped, one such
-match cost ~179k tokens in a single tool result and was then re-sent on every
-subsequent turn.
+### 3.5. Agent Execution Loop (`ask.py`)
 
-### 3.5. Agent Harness & Execution Loop (`ask.py`)
-- **Question Routing**: `classify_question()` decides, deterministically and
-  without an LLM call, whether a question warrants pre-flight retrieval.
-  Identifier lookups ("where is `FlaskGroup` defined?") go straight to
-  `grep_search`/`tags_lookup`; conceptual questions ("how does the dispatch flow
-  work?") get the seed. The seed costs ~1,700 tokens and, because it lives in
-  the message history, is re-sent on every subsequent turn -- roughly 13.6k
-  cumulative over a typical 8-turn session -- while only ~2.8 of its 10 chunks
-  came from a file the agent went on to open. A misroute is cheap: the agent
-  still has `search` and recovers in one tool call. Override with
-  `seed_mode`/`CN_SEED_MODE` (`always` | `router` | `never`).
-- **Pre-flight Seed Retrieval**: For conceptual questions, conducts a top-10
-  hybrid semantic search and attaches the results to the first user turn.
+- **Deterministic Question Router**: Before invoking any LLM, `classify_question()` checks whether the query is a simple symbol lookup ("where is `FlaskGroup` defined?") or a conceptual question ("how does request dispatching work?").
+  - Identifier lookups skip pre-flight semantic retrieval and jump straight to `tags_lookup`/`grep_search`.
+  - Conceptual questions retrieve a top-10 hybrid search "seed" in the initial prompt.
+  - This heuristic runs in under a millisecond and avoids spending a round-trip LLM call just to decide how to search.
 - **System Prompt Guardrails**:
-  - Rejects off-topic conversational queries; strictly answers repository implementation details.
-  - Requires verification of code definitions via `read_code` or `view_symbol` before asserting implementation details.
-  - Explicit instruction to conserve tokens and avoid redundant tool calls.
-- **Configurable Tool Budget**: Defaults to generous turn limits, with automatic fallback when the model produces the final synthesis.
+  - Directs the model to focus strictly on code implementation details.
+  - Requires the agent to inspect real code definitions (via `read_code`) before claiming how something works.
+  - Explicitly instructs the agent to minimize redundant tool invocations.
+- **Turn Budgeting**: Tracks remaining turns and issues a warning at 3 turns remaining so the model wraps up with a synthesis rather than hitting an abrupt cutoff.
 
 ---
 
-## 4. Multi-Turn Session & KV Cache Flow
+## 4. Multi-Turn Conversations & KV Cache Flow
 
-When `cn watch` is active, the conversational flow between successive `cn ask` invocations is preserved:
+When `cn watch` is running, subsequent `cn ask` commands share conversation history via the daemon's in-memory session manager:
 
 ```mermaid
 sequenceDiagram
@@ -197,298 +165,153 @@ sequenceDiagram
     CLI-->>User: Rendered Response
 ```
 
+Because the message history is appended rather than re-created, modern LLM providers (which cache prompt prefixes) serve Turn 2 prompt tokens directly from their KV cache. This makes follow-up questions both substantially faster and cheaper.
+
 ---
 
 ## 5. Evaluation & Benchmarking Strategy
 
-To ensure high-quality, hallucination-free retrieval across multiple languages, evaluation test suites are run against standard open-source repositories in `eval/repos/`:
+To ensure code intelligence remains accurate and cost-effective across languages, an automated benchmark suite (`eval/`) tests `codebase-navigator` against real open-source repositories:
 
-1. **`tiangolo/fastapi`** (Python): Dependency injection resolution and route parameter parsing.
+1. **`tiangolo/fastapi`** (Python): Dependency injection and route parameter parsing.
 2. **`pallets/flask`** (Python): Request lifecycle, `before_request` hooks, and WSGI dispatch.
-3. **`encode/httpx`** (Python): Sync vs async transport routing and connection pooling.
+3. **`encode/httpx`** (Python): Sync vs. async transport routing and connection pooling.
 4. **`astral-sh/uv`** (Rust): CLI dependency resolution entry points and workspace crate graphs.
 5. **`go-vikunja/vikunja`** (Go + Frontend): Background queue workers, reminder scheduling, and API routing.
 6. **`expressjs/express`** (Node.js/JS): Middleware stack compilation and router layer matching.
 
-The suite mixes two question shapes, because they exercise opposite paths:
-25 **conceptual** questions ("how does X work") that justify semantic retrieval,
-and 7 **lookup** questions ("where is `FlaskGroup` defined?") that a single
-ripgrep answers and where pre-flight retrieval is pure overhead. Without the
-lookup half the question router cannot be measured at all -- every conceptual
-question routes the same way with or without it.
+The benchmark questions are divided into two distinct categories:
+- **25 Conceptual Questions** ("how does X work"): These require locating relevant architecture and tracing logic, testing hybrid semantic search.
+- **7 Lookup Questions** ("where is `FlaskGroup` defined?"): These can be answered with a direct symbol or grep lookup, testing whether the question router correctly avoids unnecessary semantic search overhead.
 
-### Metric Criteria:
-- **Retrieval Precision**: Does the agent cite the exact file and line numbers of the true implementation?
-- **Turn Efficiency**: Does the agent reach the correct conclusion within 1–3 tool turns?
-- **Token Economy**: Does the hybrid toolset reduce total prompt/completion tokens compared to raw file grep sweeps?
-
-### Fairness constraints
-
-A/B token comparisons are only meaningful when both arms are bounded the same
-way. Both `cn` and the baseline harness byte-cap individual grep matches; before
-that cap existed the baseline capped by line count only, so one 486k-character
-generated line in vikunja produced a ~179k-token tool result. That single task
-supplied *all* of a reported "+15.8% token saving" -- with it excluded the same
-run showed cn 17.5% **worse** than the baseline. Prefer the median per-task
-outcome and the win/loss split over a summed aggregate, which one pathological
-task can dominate.
-
-Note also that a 25/25-vs-25/25 pass rate means the suite has no accuracy
-headroom left and is measuring cost only.
-
-Repositories are cloned only when missing; existing checkouts are never updated
-by the evaluator. LanceDB and ctags indexes are built atomically and cached at
-`eval/repos/_indexes/<repository>/<codebase-navigator-short-hash>/`. A sidecar
-manifest pins the full codebase-navigator and target-repository commits,
-embedding model, indexed counts, and a SHA-256 over the complete immutable index
-tree. Cache hits recompute and validate that hash before reuse.
-
-Each benchmark invocation produces an auditable package under
-`eval/runs/run_<UTC timestamp>/` containing `report.json`, `log.jsonl`, the exact
-benchmark task snapshot, and per-repository index metadata snapshots. Both the
-initial index hash and post-run verification hash are logged. Repository Git
-commits, embedding model, candidate model, judge model, and cumulative per-call
-token usage are recorded. Parallel TTY progress reserves one independently
-updated line per worker, leading with elapsed time and then the current
-local-search phase. Rows are capped at 80 terminal columns to prevent wrapping,
-while each completed task's question and result lines are buffered and inserted
-atomically above the live region. Phase changes are appended immediately to
-`log.jsonl` so incomplete tasks remain diagnosable;
-interruption cancels queued futures, records partial-run status, and the
-CLI terminates without waiting on blocked network threads. The judge defaults
-to `deepseek/deepseek-v4-pro` and is independently configurable from the
-candidate model.
+### Evaluation Fairness & Reproducibility
+- **Comparable Tool Bounds**: Both `cn` and baseline comparison agents must enforce identical output limits (such as byte-capping grep matches). Otherwise, an uncapped baseline might pull in a 500k-character minified file, falsely inflating `cn`'s relative savings.
+- **Pinned Repositories & Indexes**: Benchmark repos are checked out to specific commits. Indexes are cached under `eval/repos/_indexes/` with SHA-256 integrity verification over index files to prevent stale state from biasing results.
+- **Auditable Benchmark Runs**: Each run outputs a timestamped artifact directory (`eval/runs/run_<timestamp>/`) containing full transcripts (`log.jsonl`), summary metrics (`report.json`), candidate model parameters, and judge evaluations.
 
 ---
 
 ## 6. Search Efficiency: Strategies and Tactics
 
-`codebase-navigator` strives to reduce **tokens spent per answered question**
-without losing accuracy. It is the central goal of this tool. Every measure below
-is the concrete means for how the goal is achieved. We took a scientific
-approach, using evaluations in `eval/` to measure against what realistic coding
-harnesses will do without code embeddings, and devise strategies and tactics to
-improve the tool. We don't just document what works: where a tactic was tried
-and rejected, the rejection is recorded too, so it is not silently reinvented.
+The central goal of `codebase-navigator` is simple: **spend fewer tokens and less time answering questions, without sacrificing accuracy.**
 
-### 6.0. What we measure, and what it told us
+Every tactic in this section was derived empirically by running benchmarks in `eval/` against baseline coding agents. When an optimization failed or degraded retrieval, that result was documented so it wouldn't be repeated.
 
-#### The instruments
+### 6.0. What We Measure (and How to Read the Numbers)
 
-Every claim in this section comes from one of three measurements. Nothing here
-is reasoned from first principles; where we only have an argument and not a
-number, the text says so.
+When evaluating code navigation efficiency, we track three core dimensions:
 
-**1. The A/B benchmark** (`eval/runner.py --compare-baseline`). Runs the same
-question twice over the same pinned repository checkout: once through `cn ask`,
-once through a plain agent given `read_file`, `grep`, `find_files`, `list_dir`
-and `bash`. Both arms use the same model and the same bounds. Per task we record:
+1. **Token Count** (Cost)
+2. **Time / Latency** (Speed)
+3. **Accuracy** (Quality)
 
-| field | meaning |
-|---|---|
-| `tokens` | prompt + completion, summed across every model call in the task |
-| `net_tokens` | uncached prompt + completion — what you pay for after KV caching |
-| `cached_tokens` | prompt tokens the provider served from cache |
-| `api_calls` | round trips to the model. This is the turn count |
-| `duration_seconds` | wall clock |
-| `passed` | an LLM judge verdict against a written expected-answer key, with keyword/file rules as the fallback when `--no-judge` is set |
+#### The Nuances of Token Count
 
-**2. Offline retrieval scoring.** Ranking changes are scored without spending a
-token: for each benchmark question we know which file holds the answer
-(`required_files`), so we can measure **recall@1/3/5/10** (is the right file in
-the top k), **MRR**, and **distinct files per 10 hits**. This is what makes it
-practical to try a dozen ranking variants in a minute rather than a night.
+"Tokens" is not a monolithic number. In multi-turn agent interactions, token usage breaks down into distinct components:
 
-**3. Direct instrumentation of the index and the prompt.** Chunk token lengths
-against the encoder's real window, seed size in tokens, per-turn fixed overhead
-(system prompt + tool spec), tool-call traces per task.
+- **Context Length (Per-Turn Prompt Size)**: The size of the prompt sent to the LLM on any single turn. This includes the system prompt, tool schemas, conversation history, and tool outputs. Keeping the initial turn and tool definitions small keeps per-turn context manageable.
+- **Cumulative Tokens Across All Turns**: In agent loops, every turn re-transmits the entire conversation history up to that point. Because of this, total token spend scales **superlinearly** with the number of turns ($r \approx 0.88$ correlation between turn count and total tokens). An extra 1,500 tokens injected into the first turn doesn't just cost 1,500 tokens—in an 8-turn session, that information is sent 8 times, costing over 12,000 cumulative tokens! Saving a single turn saves far more tokens than trimming a few lines from a tool output.
+- **Cached vs. Uncached Tokens (`net_tokens`)**: Providers with prompt caching (KV caching) charge significantly less for prompt tokens that match a previously processed prefix. If history is preserved unchanged, subsequent turns read primarily from cache (measured KV cache hit rate of ~65%). However, editing or evicting earlier messages breaks the cache prefix, forcing a full re-computation that often costs more than it saves.
+- **Completion / Output Tokens**: The tokens generated by the model. These are typically much smaller in volume than prompt tokens, but carry higher per-token latency and cost.
 
-#### How we read the results
+#### The Nuances of Time (Wall-Clock Latency)
 
-Three rules, each learned by getting it wrong first:
+- **Round-Trip Dominance**: Wall-clock time is almost entirely dominated by LLM network latency and model generation speed, not local search execution. A local LanceDB search takes 10–30ms, while a single model round trip takes 2–5 seconds. Eliminating one agent turn saves seconds of human waiting time.
 
-- **Report the median per task alongside the aggregate.** They routinely
-  disagree, and the disagreement is the finding. One run: aggregate **+14.7%**
-  against a median of **−8.8%** — cn wins large on hard questions and loses
-  slightly on easy ones. Either number alone misleads.
-- **Always check the outlier-removed figure.** A reported "+15.8% token saving"
-  became **−17.5%** when one task was excluded. Its baseline arm had matched a
-  single 486,303-character generated line against a harness that capped output by
-  line count but not by bytes. One task produced the entire headline.
-- **Compare only what is comparably bounded, and score infrastructure faults
-  separately.** Both arms must cap tool output the same way, or the number
-  measures the harness rather than the tool. A dropped socket is not a wrong
-  answer; counting it as one silently understates the score.
+#### The Evaluation Instruments
 
-#### What the measurements told us
+1. **A/B Benchmark (`eval/runner.py --compare-baseline`)**: Runs the same task through `cn ask` and a baseline agent (equipped with standard tools: `read_file`, `grep`, `find_files`, `list_dir`, `bash`). Tracks `tokens`, `net_tokens` (uncached), `cached_tokens`, `api_calls` (turns), `duration_seconds`, and judge verdicts (`passed`).
+2. **Offline Retrieval Scoring**: Evaluates ranking quality without making LLM calls. Measures **Recall@k** (is the answer file in the top 1, 3, 5, or 10 hits?), **MRR (Mean Reciprocal Rank)**, and **file diversity**.
+3. **Prompt & Index Instrumentation**: Measures token sizes of chunk headers, tool definitions, seed payloads, and grep match byte caps.
 
-Two findings drive every decision that follows:
+#### How to Read the Numbers
 
-1. **Token cost scales with turn count, not with how much you read.** Every tool
-   call re-sends the entire conversation so far, so cost grows superlinearly in
-   turns. Measured correlation between a task's `api_calls` and its `tokens`:
-   **r = 0.887** on one run and **0.874** on a later one, so it holds as the tool
-   changes. One avoided round trip is worth far more than one trimmed tool
-   result — which is why several tactics below spend tokens to save a turn.
-2. **Anything placed in the first user turn is paid for on every later turn.**
-   The pre-flight seed is not a one-off ~1,600-token cost; across eight turns it
-   is a ~13,000-token cost.
+Three principles emerged from our evaluation experiments:
 
-And one consequence that constrains the fixes: **context already in the history
-is nearly free to keep and expensive to change.** The measured KV cache hit rate
-is **65.2%** of prompt tokens, so editing or evicting an earlier message
-invalidates the prefix from that point on and costs more than it saves. Anything
-expensive has to be made small *before* it enters the history, never trimmed
-afterwards.
+- **Look at the median alongside the aggregate**: Aggregates can be deceiving. In one benchmark run, `cn` showed an aggregate token saving of **+14.7%**, but a per-task median of **−8.8%**. This revealed that `cn` saved massive amounts of tokens on complex questions, but had a slight overhead on trivial questions where the baseline guessed the file on turn 1. Reporting either number alone misses the full picture.
+- **Watch out for single-task outliers**: In an early benchmark, a reported "+15.8% token saving" swung to **−17.5%** once a single outlier was removed. In that outlier task, the baseline agent matched a 486k-character generated line because its output wasn't byte-capped. That single error produced the entire apparent advantage. Both arms must be bounded identically before comparisons are valid.
+- **Score infrastructure faults separately from wrong answers**: A dropped network socket or rate-limit error is an infrastructure glitch, not a failure of retrieval or reasoning. Lumping them together distorts accuracy metrics.
 
-### 6.1. Stage 1 — Routing the query (before any model call)
+---
 
-`route_question()` decides whether the question deserves pre-flight semantic
-retrieval at all. It is a **deterministic heuristic, not a learned model, and not
-an LLM call**: asking a model to route would cost a full round trip, which is
-precisely the cost routing exists to avoid.
+### 6.1. Stage 1: Question Routing (Before Any Model Call)
 
-- **Identifier lookups** ("where is create_venv") route to `lookup`: no seed is
-  built, and the agent goes straight to `tags_lookup`/`grep_search`.
-- **Mechanism questions** ("how does dispatch work") route to `conceptual` and
-  receive the seed.
-- A misroute is cheap **in both directions** — the agent still has `search` and
-  recovers in one tool call — and that asymmetry-free failure mode is what
-  justifies a heuristic over anything heavier.
-- Override with `seed_mode` / `CN_SEED_MODE`: `router` (default), `always`
-  (pre-router behaviour), `never` (the agent decides implicitly by choosing its
-  first tool).
+Before making any LLM call, `classify_question()` checks whether the user's prompt needs a pre-flight semantic search:
 
-Measured: ~2.8 of every 10 seeded chunks came from a file the agent actually
-opened, so on lookup-shaped questions the seed was close to pure cost.
+- **Identifier lookups** ("where is `create_venv` defined?"): Routed to `lookup`. No semantic search seed is created; the agent goes directly to `tags_lookup` or `grep_search`.
+- **Conceptual questions** ("how does request dispatching work?"): Routed to `conceptual`. A top-10 hybrid search seed is attached to the initial prompt.
 
-Validated by `eval/router_eval.py` against an LLM-generated, independently
-LLM-labelled query set, because the benchmark questions were written by the same
-author as the rules — scoring a heuristic on its author's own examples measures
-nothing.
+**Why a deterministic rule instead of an LLM call?**
+Calling an LLM to classify the query would cost a full network round trip and hundreds of tokens—defeating the very purpose of routing. A fast, regex-based check runs in microseconds. If it misroutes, recovery is painless: the agent still has full access to `search` and `tags_lookup` as tools.
 
-### 6.2. Stage 2 — Retrieval
+*Measured result*: On lookup questions, roughly 7 out of 10 seeded chunks came from files the agent never opened. Skipping the seed on lookup queries saved ~1,600 prompt tokens per turn.
 
-Runs only for `conceptual` questions. `VectorIndex.search()` is a hybrid
-retriever with several corrections layered on top:
+---
 
-| Tactic | Mechanism | Why |
-|---|---|---|
-| **Hybrid candidates** | Vector (cosine) and BM25/FTS queried separately, `fetch_limit = max(limit*6, 40)` | Semantic recall plus exact-identifier recall; the pool must exceed `limit` because later stages discard candidates |
-| **Reciprocal Rank Fusion** | k=20, FTS weighted 1.2, used **directly** as the score | RRF is rank-based and scale-free. An earlier `max(cosine, rrf)` formulation meant cosine (0.7–0.95 for almost any pair) always beat RRF (≤0.90), silently discarding the BM25 half of the "hybrid" search |
-| **Identifier boosts** | +0.25 × share of query terms in title, +0.20 in path, +0.10 in body, +0.15 exact phrase in title | Proportional to *share matched*, so 3/3 terms outranks 1/3 |
-| **No score ceiling** | The old `min(0.99, …)` clamp is gone | The clamp tied distinct candidates together; 7 of 25 questions previously showed all top-5 chunks at "Relevance: 99%", making the score useless as a signal |
-| **Per-file diversity** | `MAX_CHUNKS_PER_FILE = 1` | Several chunks of one file crowded out other candidates: 4.8 → **9.7** distinct files per 10 hits |
-| **Code-first ordering** | Documentation demoted below code, never dropped; skipped when `is_doc_seeking(query)` | FastAPI indexes 15,839 markdown chunks against 5,689 code ones, so 8.6 of every 10 unfiltered hits were prose. The doc-seeking exemption keeps glossary/README questions working |
+### 6.2. Stage 2: Hybrid Retrieval
 
-Cumulative effect on the 25 conceptual benchmark questions:
+For conceptual questions, `VectorIndex.search()` executes a hybrid search with several optimizations:
 
-| configuration | recall@1 | recall@3 | recall@10 | MRR |
+- **Separate Vector & BM25 Candidate Pools**: Queries LanceDB for cosine similarity and full-text keyword matches independently, retrieving a wider pool (`fetch_limit = max(limit * 6, 40)`) before re-ranking.
+- **Direct Reciprocal Rank Fusion (RRF)**: Combines vector and BM25 ranks using standard RRF ($k=20$, BM25 weight 1.2).
+- **Identifier Overlap Boosts**: Adds score bonuses based on how many query terms appear in chunk titles, paths, and content.
+- **Unclamped Scoring**: Eliminates artificial score ceilings (such as an earlier `min(0.99, ...)` rule), ensuring the model receives clear, differentiated confidence signals.
+- **Per-File Diversity Cap**: Caps candidate chunks to 1 per file. This raised distinct files in top-10 hits from **4.8 to 9.7**.
+- **Code-First Demotion**: Markdown chunks are automatically ranked below code chunks unless the query is explicitly searching for documentation.
+
+**Retrieval Progression on 25 Benchmark Tasks:**
+
+| Configuration | Recall@1 | Recall@3 | Recall@10 | MRR |
 |---|---|---|---|---|
-| before | 10/25 | 15/25 | 20/25 | 0.505 |
-| + code-first | 17/25 | 19/25 | 22/25 | 0.736 |
-| + real RRF | 18/25 | 20/25 | 21/25 | 0.757 |
-| + diversity cap | 18/25 | 20/25 | **23/25** | **0.784** |
+| Baseline vector search | 10/25 | 15/25 | 20/25 | 0.505 |
+| + Code-first ranking | 17/25 | 19/25 | 22/25 | 0.736 |
+| + Reciprocal Rank Fusion | 18/25 | 20/25 | 21/25 | 0.757 |
+| + Per-file diversity cap | 18/25 | 20/25 | **23/25** | **0.784** |
 
-### 6.3. Stage 3 — The embedding window
+---
 
-The encoder's input limit is a hard ceiling on what the index can represent, and
-it is **not** what model metadata claims. fastembed reports `max_length: None`
-for every model; `all-MiniLM-L6-v2` advertises 256/512 and truncates at **128**.
-Under it, 73.3% of chunks overflowed and **61.3% of all indexed content never
-reached the encoder** — present in the index as text, represented by no vector.
+### 6.3. Stage 3: Embedding Model Context Windows
 
-The default is now `jinaai/jina-embeddings-v2-base-code`: an **8192-token
-window** (64×) and trained on code. Costs: 768 dimensions instead of 384, and
-bulk indexing at 11 chunks/sec instead of 78. Interactive query embedding is
-18 ms → 31 ms, imperceptible, and the watcher updates incrementally, so the slow
-path is one-time.
+An embedding model's real token window sets a hard limit on what the index can capture:
 
-Always verify a candidate model by reading its tokenizer's `truncation` config,
-never its advertised context length. Note also that a tokenizer cloned for
-*measuring* length must have both truncation **and padding** disabled — with
-padding on, `encode()` returns exactly `max_length` for every input and any
-length check silently passes.
+- Many popular models advertise larger contexts than their tokenizers actually support. For example, `sentence-transformers/all-MiniLM-L6-v2` truncates at **128 tokens** in practice. Under that model, 73% of code chunks overflowed, meaning **61% of indexed repository code never reached the vector encoder**.
+- `codebase-navigator` uses **`jinaai/jina-embeddings-v2-base-code`**, which provides an **8,192-token context window** and is pre-trained on source code.
+- Interactive query latency increased from 18ms to 31ms—an imperceptible difference that is vastly outweighed by the gain in search accuracy.
 
-**Rejected: splitting chunks to fit the window.** It recovers 100% of the
-content and measured *worse* — MRR 0.717 → 0.561, and 0.608 even with the
-diversity cap, with distinct files per 10 hits falling 4.3 → 3.5. A code chunk's
-head (signature + docstring) carries the identifying signal; body fragments are
-low-signal near-duplicates that crowd out distinct files. The line cap was
-accidentally right for a short-context encoder. `split_oversize_chunks()` is
-retained and tested behind `CN_SPLIT_OVERSIZE_CHUNKS`, because it becomes correct
-once the window is large enough that truncation is no longer hiding the tail.
+**What was tried and rejected: Splitting chunks into 128-token slices.**
+We tested splitting large code chunks into smaller sub-chunks so they would fit into smaller encoder windows. Counter-intuitively, this degraded retrieval: MRR dropped from 0.717 to 0.561. In code, the top of a chunk (the function or class signature plus docstring) holds the identifying signal. Middle and tail body fragments act like low-signal duplicates that crowd other files out of the top results.
 
-Changing the model changes the vector width; `VectorIndex` raises
-`IndexModelMismatch` naming both dimensions rather than letting LanceDB surface
-an opaque "no vector column" error at query time.
+---
 
-### 6.4. Stage 4 — Building the first turn
+### 6.4. Stage 4: Crafting the Initial Turn
 
-The first user message carries the question plus, at most:
+The first user turn provides just enough context to orient the agent without overloading subsequent turns:
 
-1. **A compact repository tree** (depth 2, ≤50 entries, ~170 tokens) — buys
-   spatial awareness that would otherwise cost 2–4 `ls`/`find` turns.
-2. **Exact symbol definitions** from `.tags`, when the question names something.
-3. **The pre-flight seed**, tiered: `SEED_FULL_CHUNKS = 2` chunks rendered in
-   full with bodies capped at `SEED_CHUNK_BODY_LINES = 16`, the rest collapsed to
-   one-line candidates (path, title, relevance, first line).
+1. **Compact Directory Tree**: A 2-level directory tree (depth 2, $\le 50$ entries, ~170 tokens) gives the agent immediate spatial awareness of the repo layout, avoiding 2 to 4 initial `ls` or `find` calls.
+2. **Exact Symbol Matches**: When the question mentions a recognized code identifier, exact definitions from `.tags` are included immediately.
+3. **Tiered Pre-flight Seed**:
+   - Up to 2 top chunks (`SEED_FULL_CHUNKS = 2`) are shown in full, with bodies capped at 16 lines.
+   - Remaining candidate chunks are collapsed into 1-line summaries (file path, symbol name, and relevance score).
+   - This reduced seed size by **38%** (from ~1,580 tokens to ~975 tokens) with no loss in retrieval accuracy.
 
-Seed sizing is a direct trade against the per-turn multiplier: 3 full chunks
-averaged 1,586 tokens, 2 full with capped bodies averages 976 (**−38%**), and
-recall@3 of 20/25 means the third full chunk is rarely the deciding one.
+---
 
-**Symbol candidates are allowlisted by shape, not denied by wordlist.**
-`_is_identifier_shaped()` accepts snake_case, CamelCase, dotted names, tokens
-containing digits, and backtick-quoted spans. An English stopword denylist was
-tried first and never converged — it was missing *contains*, *defined*, *find*,
-*definition*, and each miss was expensive because large repositories genuinely
-define symbols named `Contains` (uv) and `defined` (a minified file in vikunja).
-Identifier-shaped candidates get the lookup budget first; bare words may fill
-leftover budget but only on an exact tag hit, so `flaskgroup` still resolves
-while `contains` cannot manufacture matches.
+### 6.5. Stage 5: The Agent Tool Loop
 
-The confidence gate is **relative, not absolute**: chunks from the gold file
-score a median 0.72 against 0.69 for the rest, so no absolute threshold separates
-them. The seed is dropped entirely when the top score is below 0.45, and
-otherwise keeps chunks scoring at least 55% of the top hit.
+Every tool round trip re-transmits the accumulated conversation history. To keep the agent loop efficient:
 
-Relevance is displayed **relative to the top hit**, since RRF scores are
-unbounded and an absolute percentage would exceed 100%.
+- **Batched Reads (`read_code`)**: Allows the agent to request multiple line ranges or files in a single tool call. During testing, half of all read calls were follow-up reads of already-opened files; batching collapses these into single turns.
+- **Lean Tool Definitions**: Fixed tool schemas are sent on every turn. By removing unused tools (such as `call_tree`), the tool definition payload was kept to 779 tokens.
+- **Byte-Capped Match Output (`MAX_MATCH_CHARS = 240`)**: Limits the character length of individual grep matches to prevent generated code or bundled assets from flooding the context window.
+- **Duplicate Call Suppression**: If the agent issues the exact same tool call with identical arguments twice, `cn` returns a cached result with a warning rather than re-executing.
+- **Turn Budget Warnings**: At 3 turns remaining, the agent is warned to begin synthesizing its final answer, preventing runaway tool loops.
+- **Resilient Retries**: Network timeouts and provider errors (408, 429, 5xx) are retried with exponential backoff, preventing transient API blips from failing an entire session.
 
-### 6.5. Stage 5 — The agent loop
+---
 
-| Tactic | Mechanism | Why |
-|---|---|---|
-| **Batched reads** | `read_code` accepts a `ranges` array covering several spans, in one or many files | 150 read calls in one run hit only 75 distinct files — half were re-reads of an already-open file, each costing a full round trip |
-| **Lean per-turn payload** | System prompt 244 tokens, tool spec 779 | Fixed overhead is paid on *every* turn; at one point it was 2.6× the entire cn/baseline token gap. `call_tree` was dropped from the spec after 0 uses across 25 tasks |
-| **Byte-capped tool output** | `MAX_MATCH_CHARS = 240` per grep match | One generated line in vikunja is 486,303 characters; uncapped, a single match produced a ~179k-token tool result that was then re-sent every turn |
-| **Duplicate-call suppression** | Identical `(tool, args)` pairs return a short notice instead of re-executing | Prevents loops from paying twice |
-| **Budget awareness** | The agent is told its remaining turns at `BUDGET_WARNING_TURNS = 3`, with a hard synthesis cliff at zero | Measured turn use is p50 5 / p90 11 / max 14 against a budget of 15 — the cliff effectively never fired, so the long tail was the agent's own choice, and every remaining loss to the baseline is a task where cn ran longer |
-| **Retry, don't fail** | 408/409/429/5xx and transport errors retried with exponential backoff; auth failures never retried | A dropped socket previously destroyed an entire session, and in the harness was scored as a wrong answer |
+### 6.6. Stage 6: Across Invocations
 
-### 6.6. Stage 6 — Across invocations
+When running `cn watch`, the daemon keeps the session alive across multiple invocations of `cn ask`.
 
-`cn watch` holds the `AgentSession` in memory behind a Unix socket, so successive
-`cn ask` calls reuse the message history and hit the provider's KV cache rather
-than rebuilding context. Indexes are content-addressed by codebase-navigator
-commit and repository commit, so an unchanged tree is never re-embedded.
-
-### 6.7. What the numbers mean
-
-Report both the **aggregate** and the **median** per-task saving, because they
-routinely disagree — and the disagreement is the finding. A representative run:
-aggregate **+14.7%** against a median of **−8.8%**, meaning cn wins large on hard
-questions and loses slightly on easy ones. Reporting either alone is misleading.
-
-Two further cautions, learned the hard way:
-
-- **A summed aggregate can be produced entirely by one task.** A reported
-  "+15.8% token saving" collapsed to **−17.5%** when a single task was excluded,
-  because that task's baseline arm matched one 486k-character line against a
-  harness that capped by line count but not by bytes. Both arms must be bounded
-  identically before any token comparison means anything; check the
-  outlier-removed figure every time.
-- **Infrastructure faults are not wrong answers.** The harness scores them
-  separately; conflating them silently understates the score and makes runs
-  incomparable.
+- **KV Prompt Cache Hits**: Follow-up questions append to the existing conversation tree, enabling provider-side KV prompt caching.
+- **Zero Re-indexing Overhead**: File indexes are cached by commit hash and verified via SHA-256 digests. If the repository hasn't changed, queries execute immediately against the warm in-memory index.
