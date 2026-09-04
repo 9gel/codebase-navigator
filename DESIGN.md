@@ -258,3 +258,182 @@ interruption cancels queued futures, records partial-run status, and the
 CLI terminates without waiting on blocked network threads. The judge defaults
 to `deepseek/deepseek-v4-pro` and is independently configurable from the
 candidate model.
+
+---
+
+## 6. Search Efficiency: Strategies and Tactics
+
+Every mechanism below exists to reduce **tokens spent per answered question**
+without losing accuracy. The measurements come from the A/B evaluation runs in
+`eval/runs/`; where a tactic was tried and rejected, the rejection is recorded
+too, so it is not silently reinvented.
+
+### 6.0. The cost model everything follows from
+
+Two facts drive every decision in this section:
+
+1. **Token cost scales with turn count, not with how much you read.** Every tool
+   call re-sends the entire conversation so far. Measured correlation between a
+   task's API-call count and its total token cost: **r = 0.887**. One avoided
+   round trip is worth far more than one trimmed tool result.
+2. **Anything placed in the first user turn is paid for on every subsequent
+   turn.** The pre-flight seed is not a one-off ~1,600-token cost; at eight turns
+   it is a ~13,000-token cost.
+
+A consequence that shapes several tactics: **context that is already in the
+history is nearly free to keep and expensive to change.** With provider KV
+caching the measured cache-hit rate is **65.2%** of prompt tokens, so editing or
+evicting earlier messages invalidates the prefix and costs more than it saves.
+Anything expensive must be made small *before* it enters the history.
+
+### 6.1. Stage 1 — Routing the query (before any model call)
+
+`route_question()` decides whether the question deserves pre-flight semantic
+retrieval at all. It is a **deterministic heuristic, not a learned model, and not
+an LLM call**: asking a model to route would cost a full round trip, which is
+precisely the cost routing exists to avoid.
+
+- **Identifier lookups** ("where is create_venv") route to `lookup`: no seed is
+  built, and the agent goes straight to `tags_lookup`/`grep_search`.
+- **Mechanism questions** ("how does dispatch work") route to `conceptual` and
+  receive the seed.
+- A misroute is cheap **in both directions** — the agent still has `search` and
+  recovers in one tool call — and that asymmetry-free failure mode is what
+  justifies a heuristic over anything heavier.
+- Override with `seed_mode` / `CN_SEED_MODE`: `router` (default), `always`
+  (pre-router behaviour), `never` (the agent decides implicitly by choosing its
+  first tool).
+
+Measured: ~2.8 of every 10 seeded chunks came from a file the agent actually
+opened, so on lookup-shaped questions the seed was close to pure cost.
+
+Validated by `eval/router_eval.py` against an LLM-generated, independently
+LLM-labelled query set, because the benchmark questions were written by the same
+author as the rules — scoring a heuristic on its author's own examples measures
+nothing.
+
+### 6.2. Stage 2 — Retrieval
+
+Runs only for `conceptual` questions. `VectorIndex.search()` is a hybrid
+retriever with several corrections layered on top:
+
+| Tactic | Mechanism | Why |
+|---|---|---|
+| **Hybrid candidates** | Vector (cosine) and BM25/FTS queried separately, `fetch_limit = max(limit*6, 40)` | Semantic recall plus exact-identifier recall; the pool must exceed `limit` because later stages discard candidates |
+| **Reciprocal Rank Fusion** | k=20, FTS weighted 1.2, used **directly** as the score | RRF is rank-based and scale-free. An earlier `max(cosine, rrf)` formulation meant cosine (0.7–0.95 for almost any pair) always beat RRF (≤0.90), silently discarding the BM25 half of the "hybrid" search |
+| **Identifier boosts** | +0.25 × share of query terms in title, +0.20 in path, +0.10 in body, +0.15 exact phrase in title | Proportional to *share matched*, so 3/3 terms outranks 1/3 |
+| **No score ceiling** | The old `min(0.99, …)` clamp is gone | The clamp tied distinct candidates together; 7 of 25 questions previously showed all top-5 chunks at "Relevance: 99%", making the score useless as a signal |
+| **Per-file diversity** | `MAX_CHUNKS_PER_FILE = 1` | Several chunks of one file crowded out other candidates: 4.8 → **9.7** distinct files per 10 hits |
+| **Code-first ordering** | Documentation demoted below code, never dropped; skipped when `is_doc_seeking(query)` | FastAPI indexes 15,839 markdown chunks against 5,689 code ones, so 8.6 of every 10 unfiltered hits were prose. The doc-seeking exemption keeps glossary/README questions working |
+
+Cumulative effect on the 25 conceptual benchmark questions:
+
+| configuration | recall@1 | recall@3 | recall@10 | MRR |
+|---|---|---|---|---|
+| before | 10/25 | 15/25 | 20/25 | 0.505 |
+| + code-first | 17/25 | 19/25 | 22/25 | 0.736 |
+| + real RRF | 18/25 | 20/25 | 21/25 | 0.757 |
+| + diversity cap | 18/25 | 20/25 | **23/25** | **0.784** |
+
+### 6.3. Stage 3 — The embedding window
+
+The encoder's input limit is a hard ceiling on what the index can represent, and
+it is **not** what model metadata claims. fastembed reports `max_length: None`
+for every model; `all-MiniLM-L6-v2` advertises 256/512 and truncates at **128**.
+Under it, 73.3% of chunks overflowed and **61.3% of all indexed content never
+reached the encoder** — present in the index as text, represented by no vector.
+
+The default is now `jinaai/jina-embeddings-v2-base-code`: an **8192-token
+window** (64×) and trained on code. Costs: 768 dimensions instead of 384, and
+bulk indexing at 11 chunks/sec instead of 78. Interactive query embedding is
+18 ms → 31 ms, imperceptible, and the watcher updates incrementally, so the slow
+path is one-time.
+
+Always verify a candidate model by reading its tokenizer's `truncation` config,
+never its advertised context length. Note also that a tokenizer cloned for
+*measuring* length must have both truncation **and padding** disabled — with
+padding on, `encode()` returns exactly `max_length` for every input and any
+length check silently passes.
+
+**Rejected: splitting chunks to fit the window.** It recovers 100% of the
+content and measured *worse* — MRR 0.717 → 0.561, and 0.608 even with the
+diversity cap, with distinct files per 10 hits falling 4.3 → 3.5. A code chunk's
+head (signature + docstring) carries the identifying signal; body fragments are
+low-signal near-duplicates that crowd out distinct files. The line cap was
+accidentally right for a short-context encoder. `split_oversize_chunks()` is
+retained and tested behind `CN_SPLIT_OVERSIZE_CHUNKS`, because it becomes correct
+once the window is large enough that truncation is no longer hiding the tail.
+
+Changing the model changes the vector width; `VectorIndex` raises
+`IndexModelMismatch` naming both dimensions rather than letting LanceDB surface
+an opaque "no vector column" error at query time.
+
+### 6.4. Stage 4 — Building the first turn
+
+The first user message carries the question plus, at most:
+
+1. **A compact repository tree** (depth 2, ≤50 entries, ~170 tokens) — buys
+   spatial awareness that would otherwise cost 2–4 `ls`/`find` turns.
+2. **Exact symbol definitions** from `.tags`, when the question names something.
+3. **The pre-flight seed**, tiered: `SEED_FULL_CHUNKS = 2` chunks rendered in
+   full with bodies capped at `SEED_CHUNK_BODY_LINES = 16`, the rest collapsed to
+   one-line candidates (path, title, relevance, first line).
+
+Seed sizing is a direct trade against the per-turn multiplier: 3 full chunks
+averaged 1,586 tokens, 2 full with capped bodies averages 976 (**−38%**), and
+recall@3 of 20/25 means the third full chunk is rarely the deciding one.
+
+**Symbol candidates are allowlisted by shape, not denied by wordlist.**
+`_is_identifier_shaped()` accepts snake_case, CamelCase, dotted names, tokens
+containing digits, and backtick-quoted spans. An English stopword denylist was
+tried first and never converged — it was missing *contains*, *defined*, *find*,
+*definition*, and each miss was expensive because large repositories genuinely
+define symbols named `Contains` (uv) and `defined` (a minified file in vikunja).
+Identifier-shaped candidates get the lookup budget first; bare words may fill
+leftover budget but only on an exact tag hit, so `flaskgroup` still resolves
+while `contains` cannot manufacture matches.
+
+The confidence gate is **relative, not absolute**: chunks from the gold file
+score a median 0.72 against 0.69 for the rest, so no absolute threshold separates
+them. The seed is dropped entirely when the top score is below 0.45, and
+otherwise keeps chunks scoring at least 55% of the top hit.
+
+Relevance is displayed **relative to the top hit**, since RRF scores are
+unbounded and an absolute percentage would exceed 100%.
+
+### 6.5. Stage 5 — The agent loop
+
+| Tactic | Mechanism | Why |
+|---|---|---|
+| **Batched reads** | `read_code` accepts a `ranges` array covering several spans, in one or many files | 150 read calls in one run hit only 75 distinct files — half were re-reads of an already-open file, each costing a full round trip |
+| **Lean per-turn payload** | System prompt 244 tokens, tool spec 779 | Fixed overhead is paid on *every* turn; at one point it was 2.6× the entire cn/baseline token gap. `call_tree` was dropped from the spec after 0 uses across 25 tasks |
+| **Byte-capped tool output** | `MAX_MATCH_CHARS = 240` per grep match | One generated line in vikunja is 486,303 characters; uncapped, a single match produced a ~179k-token tool result that was then re-sent every turn |
+| **Duplicate-call suppression** | Identical `(tool, args)` pairs return a short notice instead of re-executing | Prevents loops from paying twice |
+| **Budget awareness** | The agent is told its remaining turns at `BUDGET_WARNING_TURNS = 3`, with a hard synthesis cliff at zero | Measured turn use is p50 5 / p90 11 / max 14 against a budget of 15 — the cliff effectively never fired, so the long tail was the agent's own choice, and every remaining loss to the baseline is a task where cn ran longer |
+| **Retry, don't fail** | 408/409/429/5xx and transport errors retried with exponential backoff; auth failures never retried | A dropped socket previously destroyed an entire session, and in the harness was scored as a wrong answer |
+
+### 6.6. Stage 6 — Across invocations
+
+`cn watch` holds the `AgentSession` in memory behind a Unix socket, so successive
+`cn ask` calls reuse the message history and hit the provider's KV cache rather
+than rebuilding context. Indexes are content-addressed by codebase-navigator
+commit and repository commit, so an unchanged tree is never re-embedded.
+
+### 6.7. What the numbers mean
+
+Report both the **aggregate** and the **median** per-task saving, because they
+routinely disagree — and the disagreement is the finding. A representative run:
+aggregate **+14.7%** against a median of **−8.8%**, meaning cn wins large on hard
+questions and loses slightly on easy ones. Reporting either alone is misleading.
+
+Two further cautions, learned the hard way:
+
+- **A summed aggregate can be produced entirely by one task.** A reported
+  "+15.8% token saving" collapsed to **−17.5%** when a single task was excluded,
+  because that task's baseline arm matched one 486k-character line against a
+  harness that capped by line count but not by bytes. Both arms must be bounded
+  identically before any token comparison means anything; check the
+  outlier-removed figure every time.
+- **Infrastructure faults are not wrong answers.** The harness scores them
+  separately; conflating them silently understates the score and makes runs
+  incomparable.
