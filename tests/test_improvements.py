@@ -17,7 +17,7 @@ from codebase_navigator.ask import (
     execute_tool_call,
     format_chunks_for_llm,
 )
-from codebase_navigator.index import VectorIndex
+from codebase_navigator.index import _EMBEDDING_INFERENCE_LOCK, VectorIndex
 from codebase_navigator.tools import MAX_MATCH_CHARS, grep_search, read_code_ranges
 
 # --- 1. grep byte cap -------------------------------------------------------
@@ -678,3 +678,45 @@ def test_non_retryable_http_error_fails_immediately():
     ):
         call_chat_completions("https://x/v1", "k", {"model": "m", "messages": []})
     assert len(attempts) == 1, "auth failures must not be retried"
+
+
+# --- 15. embedding batch efficiency -----------------------------------------
+
+
+def test_length_sorted_batching_preserves_vectors_and_order(tmp_path: Path):
+    """The tokenizer pads to the longest sequence in each batch.
+
+    With a long-context encoder one 8k-token chunk drags every other chunk in its
+    batch up to 8k. Sorting by length groups similar sizes together; the caller's
+    order must be restored exactly and the vectors must be unchanged.
+    """
+    idx = VectorIndex(tmp_path, custom_index_dir=str(tmp_path / ".idx"))
+    texts = [
+        "short",
+        "a much longer chunk " * 40,
+        "medium length chunk here",
+        "x" * 5,
+        "another fairly long stretch of text " * 20,
+    ]
+    sorted_vecs = idx._embed(texts, batch_size=2)
+    with _EMBEDDING_INFERENCE_LOCK:
+        raw = list(idx.model.embed(texts, batch_size=2))
+
+    assert len(sorted_vecs) == len(texts)
+    for got, want in zip(sorted_vecs, raw):
+        assert len(got) == len(want)
+        assert max(abs(float(a) - float(b)) for a, b in zip(got, want)) < 1e-6
+
+
+def test_single_text_embed_still_works(tmp_path: Path):
+    """The query path embeds one string; it must skip the sort entirely."""
+    idx = VectorIndex(tmp_path, custom_index_dir=str(tmp_path / ".idx"))
+    out = idx._embed(["where is the router"])
+    assert len(out) == 1
+    assert len(list(out[0])) == idx_vector_dim()
+
+
+def idx_vector_dim() -> int:
+    from codebase_navigator.config import VECTOR_DIM
+
+    return VECTOR_DIM

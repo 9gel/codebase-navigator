@@ -285,14 +285,38 @@ class VectorIndex:
         batch_size: int | None = None,
         progress_callback: Callable[[str], None] | None = None,
     ) -> list[Any]:
-        """Run the shared ONNX model without concurrent-session contention."""
+        """Run the shared ONNX model without concurrent-session contention.
+
+        Batches are formed from length-sorted input. The tokenizer pads to the
+        longest sequence *in each batch*, so with a long-context encoder a single
+        8k-token chunk forces every other chunk in its batch to be padded to 8k
+        and burns compute on padding. Sorting groups similar lengths together;
+        results are restored to the caller's order, and embeddings are per-item
+        so the reordering cannot change them.
+        """
         if progress_callback:
             progress_callback("Waiting for shared embedding model...")
+
+        if len(texts) < 2:
+            with _EMBEDDING_INFERENCE_LOCK:
+                if progress_callback:
+                    progress_callback("Embedding search query...")
+                kwargs = {"batch_size": batch_size} if batch_size is not None else {}
+                return list(self.model.embed(texts, **kwargs))
+
+        order = sorted(range(len(texts)), key=lambda i: len(texts[i]))
+        ordered = [texts[i] for i in order]
+
         with _EMBEDDING_INFERENCE_LOCK:
             if progress_callback:
                 progress_callback("Embedding search query...")
             kwargs = {"batch_size": batch_size} if batch_size is not None else {}
-            return list(self.model.embed(texts, **kwargs))
+            embedded = list(self.model.embed(ordered, **kwargs))
+
+        restored: list[Any] = [None] * len(texts)
+        for slot, vec in zip(order, embedded):
+            restored[slot] = vec
+        return restored
 
     def _ensure_table(self):
         try:
