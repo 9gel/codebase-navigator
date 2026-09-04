@@ -236,6 +236,15 @@ limit = 10
 # Optional custom system prompt / persona
 system_prompt = "You are an expert security and performance auditor."
 
+# When to run pre-flight semantic retrieval before the first LLM turn:
+#   "router" (default) - only for conceptual questions; identifier lookups
+#                        such as "where is FlaskGroup defined?" go straight to
+#                        grep/tags, saving ~1,700 tokens that would otherwise be
+#                        re-sent on every turn of the session
+#   "always"           - seed every question
+#   "never"            - never seed; the agent calls `search` itself
+seed_mode = "router"
+
 [display]
 # Maximum width for terminal text wrapping and dividers (e.g. 80, 100, or terminal width)
 width = 80
@@ -262,6 +271,8 @@ Environment variables take precedence over config files:
 | `CN_SYSTEM_PROMPT` | Additional custom system prompt | `None` |
 | `CN_MAX_SEARCHES` | Max tool calls allowed by the LLM | `15` |
 | `CN_ASK_LIMIT` | Initial search result count | `5` |
+| `CN_SEED_MODE` | Pre-flight retrieval policy (`router`, `always`, `never`) | `router` |
+| `CN_SPLIT_OVERSIZE_CHUNKS` | Split chunks to fit the encoder window. Off by default: it measures *worse* with a 128-token encoder. Enable only with a long-context embedding model. | `false` |
 | `CN_EMBEDDING_MODEL` | FastEmbed ONNX embeddings model | `sentence-transformers/all-MiniLM-L6-v2` |
 | `CN_WIDTH` / `CN_MAX_WIDTH` | Maximum terminal wrap width | `terminal width or 100` |
 | `CN_THEME` | Terminal theme (`auto`, `dark`, `light`) | `auto` |
