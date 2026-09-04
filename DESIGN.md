@@ -272,14 +272,33 @@ For conceptual questions, `VectorIndex.search()` executes a hybrid search with s
 
 ### 6.3. Stage 3: Embedding Model Context Windows
 
-An embedding model's real token window sets a hard limit on what the index can capture:
+An embedding model's real token window sets a hard limit on what the index can capture — but a bigger window turns out not to be worth paying for.
 
-- Many popular models advertise larger contexts than their tokenizers actually support. For example, `sentence-transformers/all-MiniLM-L6-v2` truncates at **128 tokens** in practice. Under that model, 73% of code chunks overflowed, meaning **61% of indexed repository code never reached the vector encoder**.
-- `codebase-navigator` uses **`jinaai/jina-embeddings-v2-base-code`**, which provides an **8,192-token context window** and is pre-trained on source code.
-- Interactive query latency increased from 18ms to 31ms—an imperceptible difference that is vastly outweighed by the gain in search accuracy.
+- Models routinely advertise larger contexts than their tokenizers actually enforce. `sentence-transformers/all-MiniLM-L6-v2` claims 256/512 and truncates at **128 tokens**; FastEmbed reports `max_length: None` for every model it ships. Always read the tokenizer's `truncation` config, never the model card.
+- Under MiniLM, 73% of code chunks overflow, so **61% of indexed repository content never reaches the encoder**. That number is real. The obvious conclusion drawn from it was wrong.
+- A tokenizer cloned to *measure* chunk length must have both truncation **and padding** disabled. With padding on, `encode()` returns exactly `max_length` for every input, and every length check silently passes.
 
-**What was tried and rejected: Splitting chunks into 128-token slices.**
-We tested splitting large code chunks into smaller sub-chunks so they would fit into smaller encoder windows. Counter-intuitively, this degraded retrieval: MRR dropped from 0.717 to 0.561. In code, the top of a chunk (the function or class signature plus docstring) holds the identifying signal. Middle and tail body fragments act like low-signal duplicates that crowd other files out of the top results.
+**The measurement that settled it.** Three encoders, identical chunks, 26 benchmark tasks across Python, JavaScript, Go and Rust:
+
+| Model | Window | Dim | Recall@1 | Recall@3 | Recall@10 | MRR | Chunks/sec |
+|---|---|---|---|---|---|---|---|
+| **all-MiniLM-L6-v2** | 128 | 384 | **20** | 23 | **26** | **0.842** | **82.9** |
+| jina-embeddings-v2-base-code | 8,192 | 768 | 19 | 24 | 25 | 0.822 | 2.9 |
+| jina-embeddings-v2-small-en | 8,192 | 512 | 17 | 20 | 25 | 0.741 | 8.9 |
+
+The 128-token model wins recall@1, is the only one with perfect recall@10, and has the best MRR — at **29× the indexing throughput** of the code-trained long-context model. It is also the only one of the three that retrieves `express-view-rendering` at all. By language it ties or beats jina-code on Python, Go and Rust; jina-code's only edge is JavaScript (4/5 vs 3/5).
+
+Against jina-code, 6 of 26 tasks differ — MiniLM better on 4, worse on 2, a two-tailed sign test giving **p = 0.69**. Indistinguishable on quality, decisive on cost. At a measured 47.6 chunks per 1k LOC, a 200,000-line repository indexes in **~1 minute** with MiniLM against **~27 minutes** with jina-code. `codebase-navigator` therefore ships MiniLM as the default; `CN_EMBEDDING_MODEL` remains available for anyone who wants to trade indexing time for the JavaScript difference.
+
+**Why losing 61% of the content costs so little.** What survives a 128-token cut is the *head* of each chunk — the signature, decorators and docstring. That is where a symbol's identity lives. The body below it is largely boilerplate that resembles every other function in the repository. Truncation is not discarding 61% of the signal; it is discarding 61% of the noise.
+
+**What was tried and rejected: splitting chunks to fit the window.** Splitting recovers 100% of the content and made retrieval *worse* — MRR fell from 0.717 to 0.561, and only reached 0.608 with the per-file diversity cap applied, while distinct files per 10 hits dropped from 4.3 to 3.5. Body fragments act as low-signal near-duplicates that crowd other files out of the top results. This experiment and the encoder comparison above are the same finding seen twice. `split_oversize_chunks()` is retained and tested behind `CN_SPLIT_OVERSIZE_CHUNKS` in case a future encoder changes the economics; on present evidence it should stay off.
+
+**Batching matters more than the model.** The tokenizer pads to the longest sequence *in each batch*, so a single long chunk drags its whole batch up to its length. `_embed()` sorts inputs by length before batching and restores caller order afterwards: **1.68× faster** on real chunks, with vectors bit-identical to the unsorted path. MiniLM masked this problem entirely — truncating everything to 128 tokens made batches uniform by accident.
+
+**Guardrails for changing models.** The vector width changes with the model, so `VectorIndex` raises `IndexModelMismatch` naming both dimensions rather than letting LanceDB surface an opaque "no vector column" error at query time. Dimensions resolve from FastEmbed's catalogue instead of a silent 384 default, which previously produced `Cannot cast to FixedSizeList(384): value at index 0 has length 512` from a stack frame that never mentions embeddings.
+
+**The lesson worth keeping.** A measured *quantity* is not a measured *outcome*. "61% of content is discarded" was accurate, and the inference from it — that retrieval must therefore be suffering — was backwards. A 29× indexing regression shipped on the strength of that inference before anyone scored the alternative. Where an argument and an experiment are both available, the experiment decides; here the experiment cost nothing, since recall@k over the benchmark needs no LLM tokens at all.
 
 ---
 

@@ -26,13 +26,23 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 import pyarrow as pa
 
-# jina-embeddings-v2-base-code truncates at 8192 tokens and is trained on code.
-# The previous default, all-MiniLM-L6-v2, truncates at 128 in fastembed's build
-# (not the 256/512 its model card implies), which discarded 61.3% of all indexed
-# content before it ever reached the encoder -- 73.3% of chunks overflowed.
-# Splitting chunks to fit 128 was measured and made retrieval worse, because a
-# code chunk's head carries the identifying signal; a long window is the real fix.
-DEFAULT_EMBEDDING_MODEL = "jinaai/jina-embeddings-v2-base-code"
+# Measured, not assumed. all-MiniLM-L6-v2 truncates at 128 tokens and therefore
+# never sees 61.3% of indexed content -- which turns out not to matter, because
+# what survives truncation is the head of each chunk (signature plus docstring),
+# and that is where the identifying signal lives. Scored on 26 benchmark tasks
+# across Python, JavaScript, Go and Rust:
+#
+#   model                          R@1  R@3  R@5  R@10    MRR    chunks/sec
+#   all-MiniLM-L6-v2                20   23   25    26   0.842        82.9
+#   jina-embeddings-v2-base-code    19   24   25    25   0.822         2.9
+#   jina-embeddings-v2-small-en     17   20   23    25   0.741         8.9
+#
+# MiniLM takes the best recall@1, the only perfect recall@10, and the best MRR,
+# at 29x the indexing throughput of the 8192-token code-trained model. Against
+# jina-code, 6 of 26 tasks differ, MiniLM better on 4 and worse on 2 (two-tailed
+# sign test p = 0.69): indistinguishable on quality, decisive on speed. For a
+# 200k-line repository that is ~1 minute of indexing rather than ~27.
+DEFAULT_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 EMBEDDING_MODEL_NAME = os.environ.get(
     "CN_EMBEDDING_MODEL",

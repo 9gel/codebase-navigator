@@ -279,7 +279,7 @@ Environment variables take precedence over config files:
 | `CN_ASK_LIMIT` | Initial search result count | `5` |
 | `CN_SEED_MODE` | Pre-flight retrieval policy (`router`, `always`, `never`) | `router` |
 | `CN_SPLIT_OVERSIZE_CHUNKS` | Split chunks to fit the encoder window. Off by default: it measures *worse* with a 128-token encoder. Enable only with a long-context embedding model. | `false` |
-| `CN_EMBEDDING_MODEL` | FastEmbed ONNX embeddings model. Changing it requires `cn sync --force`. | `jinaai/jina-embeddings-v2-base-code` |
+| `CN_EMBEDDING_MODEL` | FastEmbed ONNX embeddings model. Changing it requires `cn sync --force`. Larger long-context models were measured and are **slower without being more accurate** — see DESIGN.md §6.3. | `sentence-transformers/all-MiniLM-L6-v2` |
 | `CN_WIDTH` / `CN_MAX_WIDTH` | Maximum terminal wrap width | `terminal width or 100` |
 | `CN_THEME` | Terminal theme (`auto`, `dark`, `light`) | `auto` |
 | `CN_LINKS` | Link mode (`auto`, `osc8`, `terminal`, `markdown`) | `auto` |

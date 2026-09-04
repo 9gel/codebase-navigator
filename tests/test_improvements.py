@@ -462,17 +462,24 @@ def test_per_turn_overhead_stays_bounded():
 # --- 11. long-context embedding model ---------------------------------------
 
 
-def test_default_embedding_model_has_a_long_window():
-    """MiniLM truncated at 128 tokens, discarding 61.3% of all indexed content.
+def test_default_embedding_model_is_the_measured_winner():
+    """MiniLM truncates at 128 tokens and discards 61.3% of indexed content --
+    and still wins.
 
-    Splitting chunks to fit was measured and made retrieval worse, so the window
-    itself had to grow. This pins the default against silently regressing to a
-    short-context model.
+    Scored on 26 tasks across Python, JavaScript, Go and Rust it takes the best
+    recall@1 (20), the only perfect recall@10 (26) and the best MRR (0.842),
+    against jina-embeddings-v2-base-code's 19/25/0.822, at 82.9 chunks/sec
+    versus 2.9. Six tasks differ, MiniLM better on four (sign test p = 0.69):
+    indistinguishable on quality, 29x cheaper to index.
+
+    What survives truncation is the chunk head -- signature plus docstring --
+    which is where the identifying signal lives. This pins the default against
+    a repeat of the long-context migration that was reverted.
     """
     from codebase_navigator.config import DEFAULT_EMBEDDING_MODEL, VECTOR_DIM
 
-    assert DEFAULT_EMBEDDING_MODEL == "jinaai/jina-embeddings-v2-base-code"
-    assert VECTOR_DIM == 768
+    assert DEFAULT_EMBEDDING_MODEL == "sentence-transformers/all-MiniLM-L6-v2"
+    assert VECTOR_DIM == 384
 
 
 def test_index_rejects_mismatched_embedding_dimensions(tmp_path: Path):
@@ -482,6 +489,12 @@ def test_index_rejects_mismatched_embedding_dimensions(tmp_path: Path):
     import pyarrow as pa
 
     from codebase_navigator.index import IndexModelMismatch
+
+    from codebase_navigator.config import VECTOR_DIM
+
+    # Derive the stale width from whatever is configured, so the test keeps its
+    # meaning whichever model is the default.
+    stale_dim = 768 if VECTOR_DIM != 768 else 384
 
     idx_dir = tmp_path / ".idx"
     idx_dir.mkdir(parents=True)
@@ -496,7 +509,7 @@ def test_index_rejects_mismatched_embedding_dimensions(tmp_path: Path):
             pa.field("start_line", pa.int32()),
             pa.field("end_line", pa.int32()),
             pa.field("content", pa.string()),
-            pa.field("vector", pa.list_(pa.float32(), 384)),  # deliberately stale
+            pa.field("vector", pa.list_(pa.float32(), stale_dim)),
         ]
     )
     db.create_table("documents", schema=stale, mode="create")
@@ -504,7 +517,7 @@ def test_index_rejects_mismatched_embedding_dimensions(tmp_path: Path):
     with pytest.raises(IndexModelMismatch) as excinfo:
         VectorIndex(tmp_path, custom_index_dir=str(idx_dir))
     message = str(excinfo.value)
-    assert "384" in message and "768" in message
+    assert str(stale_dim) in message and str(VECTOR_DIM) in message
     assert "cn sync --force" in message
 
 
