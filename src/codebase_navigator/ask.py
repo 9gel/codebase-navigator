@@ -129,6 +129,7 @@ def load_llm_config(
             "initial_limit",
             "limit",
             "system_prompt",
+            "seed_mode",
         ]:
             if k in src:
                 merged_toml[k] = src[k]
@@ -200,6 +201,15 @@ def load_llm_config(
         cli.get("system_prompt") or env_system_prompt or merged_toml.get("system_prompt")
     )
 
+    seed_mode = (
+        cli.get("seed_mode")
+        or os.environ.get("CN_SEED_MODE")
+        or merged_toml.get("seed_mode")
+        or DEFAULT_SEED_MODE
+    )
+    if seed_mode not in SEED_MODES:
+        seed_mode = DEFAULT_SEED_MODE
+
     return LLMConfig(
         endpoint=endpoint,
         api_key=api_key,
@@ -207,6 +217,7 @@ def load_llm_config(
         max_searches=max_searches,
         initial_limit=initial_limit,
         system_prompt=system_prompt,
+        seed_mode=seed_mode,
     )
 
 

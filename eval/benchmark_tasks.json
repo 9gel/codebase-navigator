@@ -64,6 +64,30 @@
         "required_files": [
           "globals.py"
         ]
+      },
+      {
+        "id": "flask-lookup-session-iface",
+        "question": "where is SecureCookieSessionInterface defined?",
+        "expected_answer_key": "class SecureCookieSessionInterface is defined in src/flask/sessions.py.",
+        "required_keywords": [
+          "SecureCookieSessionInterface",
+          "sessions.py"
+        ],
+        "required_files": [
+          "sessions.py"
+        ]
+      },
+      {
+        "id": "flask-lookup-flaskgroup",
+        "question": "which file contains FlaskGroup?",
+        "expected_answer_key": "class FlaskGroup is defined in src/flask/cli.py around line 531.",
+        "required_keywords": [
+          "FlaskGroup",
+          "cli.py"
+        ],
+        "required_files": [
+          "cli.py"
+        ]
       }
     ]
   },
@@ -130,6 +154,18 @@
         ],
         "required_files": [
           "exception_handlers.py"
+        ]
+      },
+      {
+        "id": "fastapi-lookup-get-openapi",
+        "question": "where is get_openapi defined?",
+        "expected_answer_key": "def get_openapi is defined in fastapi/openapi/utils.py.",
+        "required_keywords": [
+          "get_openapi",
+          "utils.py"
+        ],
+        "required_files": [
+          "utils.py"
         ]
       }
     ]
@@ -199,6 +235,18 @@
         "required_files": [
           "_models.py"
         ]
+      },
+      {
+        "id": "httpx-lookup-async-transport",
+        "question": "find the definition of AsyncHTTPTransport",
+        "expected_answer_key": "class AsyncHTTPTransport is defined in httpx/_transports/default.py.",
+        "required_keywords": [
+          "AsyncHTTPTransport",
+          "default.py"
+        ],
+        "required_files": [
+          "default.py"
+        ]
       }
     ]
   },
@@ -254,6 +302,18 @@
         "required_files": [
           "express.js"
         ]
+      },
+      {
+        "id": "express-lookup-app-init",
+        "question": "where is app.init defined?",
+        "expected_answer_key": "app.init is defined in lib/application.js.",
+        "required_keywords": [
+          "init",
+          "application.js"
+        ],
+        "required_files": [
+          "application.js"
+        ]
       }
     ]
   },
@@ -297,6 +357,18 @@
         "required_files": [
           "pkg"
         ]
+      },
+      {
+        "id": "vikunja-lookup-reminder-cron",
+        "question": "where is RegisterReminderCron defined?",
+        "expected_answer_key": "func RegisterReminderCron is defined in pkg/models/task_reminder.go.",
+        "required_keywords": [
+          "RegisterReminderCron",
+          "task_reminder.go"
+        ],
+        "required_files": [
+          "task_reminder.go"
+        ]
       }
     ]
   },
@@ -339,6 +411,18 @@
         ],
         "required_files": [
           "crates"
+        ]
+      },
+      {
+        "id": "uv-lookup-create-venv",
+        "question": "which file contains create_venv?",
+        "expected_answer_key": "pub fn create_venv is defined in crates/uv-virtualenv/src/lib.rs.",
+        "required_keywords": [
+          "create_venv",
+          "lib.rs"
+        ],
+        "required_files": [
+          "lib.rs"
         ]
       }
     ]

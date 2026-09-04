@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from codebase_navigator import __version__
 from codebase_navigator.ask import (
     AGENT_TOOLS_SPEC,
+    DEFAULT_SEED_MODE,
     SYSTEM_PROMPT,
     ask_codebase,
     call_chat_completions,
@@ -1232,6 +1233,7 @@ def run_benchmark(
     workers: int = 4,
     runs_dir: Path = DEFAULT_RUNS_DIR,
     judge_model: str | None = None,
+    seed_mode: str | None = None,
 ):
     """Run benchmarks in a timestamped, self-contained artifact directory."""
     if not BENCHMARK_CONFIG.is_file():
@@ -1287,6 +1289,7 @@ def run_benchmark(
         "embedding_model": EMBEDDING_MODEL_NAME,
         "judge_model": resolved_judge_model if use_llm_judge else None,
         "compare_baseline": compare_baseline,
+        "seed_mode": seed_mode or DEFAULT_SEED_MODE,
         "token_metric": {
             "tokens": "sum of prompt and completion tokens across every model call",
             "cached_tokens": "sum of cached prompt tokens across every model call",
@@ -1326,6 +1329,8 @@ def run_benchmark(
         git_commit = get_git_commit(r_dir)
         repo_facts["git_commit"] = git_commit
         config = load_llm_config(folder=r_dir)
+        if seed_mode:
+            config.seed_mode = seed_mode
         if not config.api_key:
             print(f"\n⚠️  No API key found. Skipping live queries for {r_name}.")
             repo_facts["status"] = "skipped_no_api_key"
@@ -1601,6 +1606,16 @@ if __name__ == "__main__":
         help="Parent directory for timestamped run packages (default: eval/runs)",
     )
     parser.add_argument(
+        "--seed-mode",
+        default=None,
+        choices=["always", "router", "never"],
+        help=(
+            "Pre-flight retrieval policy for the cn arm: 'always' seeds every question "
+            "(pre-router behaviour), 'router' seeds only conceptual questions, 'never' "
+            "makes the agent call `search` itself. Default: cn's own config."
+        ),
+    )
+    parser.add_argument(
         "--judge-model",
         default=None,
         help=(
@@ -1618,6 +1633,7 @@ if __name__ == "__main__":
             workers=args.workers,
             runs_dir=Path(args.runs_dir),
             judge_model=args.judge_model,
+            seed_mode=args.seed_mode,
         )
     except KeyboardInterrupt:
         # ThreadPoolExecutor workers cannot be force-cancelled while blocked in a
