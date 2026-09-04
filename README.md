@@ -407,8 +407,10 @@ Every invocation also creates an auditable package under
 the shared index. The report and log capture the source-repository commit,
 codebase-navigator commit, cache hit/build status, full index-tree SHA-256, and
 a post-run integrity check confirming that evaluation did not mutate the index.
-On a TTY, parallel worker states rotate on one animated line with phase and
-elapsed-time details. Local searches share one FastEmbed/ONNX model and
+On a TTY, parallel evaluation uses one animated line per active worker (four
+lines with the default `--workers 4`), each with phase and elapsed-time details.
+Completed output is written above this fixed live region. Local searches share
+one FastEmbed/ONNX model and
 serialize only query embedding, avoiding concurrent model-initialization stalls
 while keeping LanceDB reads parallel. Each phase transition is timestamped in
 the run's `log.jsonl`, even before a task completes. Ctrl-C cancels queued work,

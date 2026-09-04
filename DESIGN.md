@@ -183,8 +183,9 @@ Each benchmark invocation produces an auditable package under
 benchmark task snapshot, and per-repository index metadata snapshots. Both the
 initial index hash and post-run verification hash are logged. Repository Git
 commits, embedding model, candidate model, judge model, and cumulative per-call
-token usage are recorded. Parallel TTY progress rotates active worker states in
-place, including the current local-search phase and elapsed time. Phase changes
+token usage are recorded. Parallel TTY progress reserves one independently
+updated line per worker, including the current local-search phase and elapsed
+time, while completed output is inserted above the live region. Phase changes
 are appended immediately to `log.jsonl` so incomplete tasks remain diagnosable;
 interruption cancels queued futures, records partial-run status, and the
 CLI terminates without waiting on blocked network threads. The judge defaults

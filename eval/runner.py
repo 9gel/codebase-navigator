@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import itertools
 import json
 import os
 import re
@@ -55,17 +54,24 @@ def _safe_print(*args: Any, **kwargs: Any) -> None:
 
 
 class LiveTaskProgress:
-    """Cycle active worker states on one animated TTY line."""
+    """Render one independently updating TTY row per active worker."""
 
     FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
-    def __init__(self, stream=sys.stderr):
+    def __init__(self, stream=sys.stderr, max_lines: int = 4):
         self.stream = stream
+        self.max_lines = max(1, max_lines)
         self._states: dict[str, tuple[str, str, float]] = {}
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+        self._initialized = False
 
     def start(self) -> None:
+        with _PRINT_LOCK:
+            if not self._initialized:
+                self.stream.write("\n" * self.max_lines)
+                self._initialized = True
+                self._render_locked(0)
         self._thread = threading.Thread(target=self._spin, name="eval-progress", daemon=True)
         self._thread.start()
 
@@ -84,10 +90,16 @@ class LiveTaskProgress:
             self._states.pop(task_id, None)
 
     def write(self, message: str) -> None:
-        """Print a persistent line without colliding with the live status line."""
+        """Insert persistent output above the live worker region."""
         with _PRINT_LOCK:
-            self.stream.write("\r\033[2K")
-            self.stream.write(message + "\n")
+            if not self._initialized:
+                self.stream.write(message + "\n")
+                self.stream.flush()
+                return
+            self.stream.write(f"\033[{self.max_lines}A")
+            for line in message.split("\n"):
+                self.stream.write(f"\r\033[2K{line}\n")
+            self._write_rows_locked(0)
             self.stream.flush()
 
     def stop(self) -> None:
@@ -95,28 +107,42 @@ class LiveTaskProgress:
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=1.0)
         with _PRINT_LOCK:
-            self.stream.write("\r\033[2K")
+            if self._initialized:
+                self.stream.write(f"\033[{self.max_lines}A")
+                for _ in range(self.max_lines):
+                    self.stream.write("\r\033[2K\033[M")
+                self._initialized = False
             self.stream.flush()
 
     def _spin(self) -> None:
-        frame_cycle = itertools.cycle(self.FRAMES)
         tick = 0
         while not self._stop_event.wait(0.08):
             with _PRINT_LOCK:
-                states = list(self._states.values())
-                if not states:
-                    continue
-                label, message, started_at = states[(tick // 8) % len(states)]
-                frame = next(frame_cycle)
-                active = f"{len(states)} active" if len(states) > 1 else "1 active"
+                self._render_locked(tick)
+            tick += 1
+
+    def _render_locked(self, tick: int) -> None:
+        """Redraw the fixed-height region from the cursor below it."""
+        if not self._initialized:
+            return
+        self.stream.write(f"\033[{self.max_lines}A")
+        self._write_rows_locked(tick)
+        self.stream.flush()
+
+    def _write_rows_locked(self, tick: int) -> None:
+        """Write all progress rows from the region's top-left cursor position."""
+        states = list(self._states.values())[: self.max_lines]
+        width = shutil.get_terminal_size((100, 20)).columns
+        for row in range(self.max_lines):
+            text = ""
+            if row < len(states):
+                label, message, started_at = states[row]
+                frame = self.FRAMES[(tick + row) % len(self.FRAMES)]
                 elapsed = time.monotonic() - started_at
-                text = f"{frame} [{active}] [{label}] {message} ({elapsed:.1f}s)"
-                width = shutil.get_terminal_size((100, 20)).columns
+                text = f"{frame} [{label}] {message} ({elapsed:.1f}s)"
                 if len(text) > width:
                     text = text[: max(1, width - 3)].rstrip() + "..."
-                self.stream.write(f"\r\033[2K{text}")
-                self.stream.flush()
-                tick += 1
+            self.stream.write(f"\r\033[2K{text}\n")
 
 
 class EvaluationCancelled(Exception):
@@ -1306,7 +1332,11 @@ def run_benchmark(
     results_report: list[dict[str, Any]] = []
     completed = 0
     cancel_event = threading.Event()
-    live_progress = LiveTaskProgress() if is_tty and workers > 1 and total_tasks > 1 else None
+    live_progress = (
+        LiveTaskProgress(max_lines=min(workers, total_tasks))
+        if is_tty and workers > 1 and total_tasks > 1
+        else None
+    )
     pool: ThreadPoolExecutor | None = None
     futures = []
     if live_progress is not None:

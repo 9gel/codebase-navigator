@@ -70,20 +70,23 @@ def test_existing_non_git_repo_is_not_replaced(tmp_path: Path):
     run.assert_not_called()
 
 
-def test_live_progress_cycles_active_worker_states_in_place():
+def test_live_progress_renders_one_in_place_line_per_worker():
     stream = io.StringIO()
-    progress = LiveTaskProgress(stream=stream)
-    progress.update("one", "one·CN", "Searching codebase...")
-    progress.update("two", "two·CN", "Reasoning with agent...")
+    progress = LiveTaskProgress(stream=stream, max_lines=4)
+    for number in range(4):
+        progress.update(str(number), f"task-{number}·CN", f"Worker phase {number}...")
     progress.start()
-    time.sleep(0.8)
+    time.sleep(0.12)
+    progress.write("one task completed")
     progress.stop()
 
     output = stream.getvalue()
     assert "\r\033[2K" in output
-    assert "one·CN" in output
-    assert "two·CN" in output
-    assert "2 active" in output
+    assert "\033[4A" in output
+    for number in range(4):
+        assert f"task-{number}·CN" in output
+    assert output.rfind("task-0·CN") > output.find("one task completed")
+    assert "\033[M" in output
 
 
 def test_task_progress_phases_are_logged_before_completion(tmp_path: Path):
