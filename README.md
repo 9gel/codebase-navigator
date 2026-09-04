@@ -1,16 +1,21 @@
 # codebase-navigator
 
-Ultra-fast semantic codebase navigation for humans and AI agents, Git-aware
-ctags indexing, live watchers, and [LanceDB](https://github.com/lancedb/lancedb)
-semantic search. Self-contained runtime, no additional servers (e.g. Ollama) to
-run for embeddings.
+Token-efficient, fast semantic codebase navigation for humans and AI agents.
+Because humans need to understand the code too.
 
-Cut 40%-80% token use by having your LLM search precisely, instead of ingesting
-entire code bases or searching incorrectly using blind ripgreps.
+[LanceDB](https://github.com/lancedb/lancedb) semantic search in a purpose-built
+TUI for human code navigation that doubles as a live watcher. Tools, a skill and
+an MCP for agents. git-aware ctags indexing and call tree tooling complements
+the sementic index. Self-contained runtime, no additional servers (e.g. Ollama)
+to run for embeddings.
 
-For the human: get oriented to a codebase quickly by asking natural language
+## Benefits
+
+- For the human: get oriented to a codebase quickly by asking natural language
 questions, instead of wasting time switching between files and losing your train
 of thought.
+- Cut 40%-80% token use by having your LLM search precisely, instead of ingesting
+entire code files or searching incorrectly using blind ripgreps.
 
 ## How it works
 
@@ -75,7 +80,7 @@ find code quickly and token-efficiently.
 
 ## Features
 
-- 💬 **Autonomous Agent Harness (`cn ask`)**: Ask architectural and
+- 💬 **Agent Harness (`cn ask`)**: Ask architectural and
   implementation questions in natural language. Powered by an iterative LLM
   reasoning loop with 1-shot hybrid code intelligence tools.
 - 🧠 **LanceDB Semantic & Hybrid Search (`cn search`)**: Vector search powered
@@ -84,9 +89,10 @@ find code quickly and token-efficiently.
 - 🏷️ **Git-Aware `.tags` Generation** (`cn tags`): Uses `universal-ctags` to
   index genuine source code while ignoring huge data dumps, JSON caches, `.git`,
   `node_modules`, and build artifacts.
-- 👀 **Live File Watcher** (`cn watch`): Automatically re-indexes `.tags` and
+- 👀 **TUI and Live File Watcher** (`cn watch`): Automatically re-indexes `.tags` and
   incrementally updates LanceDB embeddings on every save with sub-second
-  debounce.
+  debounce. While it runs, doubles as a live file watcher and an in-memory index
+  for agents to search quickly and efficiently.
 - 🔌 **Model Context Protocol (MCP) Server (`cn mcp`)**: Exposes code
   intelligence tools for AI assistants and coding harnesses and IDEs to find
   code quickly and efficiently.
