@@ -24,12 +24,20 @@ from .tools import (
     get_call_tree,
     grep_search,
     read_code,
+    read_code_ranges,
 )
 
 DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1"
 DEFAULT_MODEL = "deepseek/deepseek-v4-flash-0731"
 DEFAULT_MAX_SEARCHES = 15
 DEFAULT_INITIAL_LIMIT = 10
+
+# How the pre-flight retrieval seed is injected into the first turn.
+#   "always" - inject for every question (behaviour before the router existed)
+#   "router"  - inject only for conceptual questions; identifier lookups start cold
+#   "never"   - never inject; the agent must call `search` itself
+DEFAULT_SEED_MODE = os.environ.get("CN_SEED_MODE", "router")
+SEED_MODES = ("always", "router", "never")
 
 
 class LLMConfig:
@@ -43,6 +51,7 @@ class LLMConfig:
         max_searches: int = DEFAULT_MAX_SEARCHES,
         initial_limit: int = DEFAULT_INITIAL_LIMIT,
         system_prompt: str | None = None,
+        seed_mode: str = DEFAULT_SEED_MODE,
     ):
         self.endpoint = endpoint
         self.api_key = api_key
@@ -50,6 +59,7 @@ class LLMConfig:
         self.max_searches = max_searches
         self.initial_limit = initial_limit
         self.system_prompt = system_prompt
+        self.seed_mode = seed_mode
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -59,6 +69,7 @@ class LLMConfig:
             "max_searches": self.max_searches,
             "initial_limit": self.initial_limit,
             "system_prompt": self.system_prompt,
+            "seed_mode": self.seed_mode,
         }
 
 
@@ -356,6 +367,11 @@ def format_chunks_for_llm(
     chunks_text = []
     candidate_lines = []
 
+    # RRF scores are relative, not calibrated probabilities, and can exceed 1.0
+    # once identifier boosts apply. Express relevance against the top hit so the
+    # model sees a meaningful spread instead of a column of "99%".
+    top = max((r.get("score", 0.0) for r in results), default=0.0) or 1.0
+
     for idx, r in enumerate(results, start=1):
         rel_p = r.get("path", "")
         abs_p = r.get("abs_path", "")
@@ -363,7 +379,7 @@ def format_chunks_for_llm(
         e_line = r.get("end_line", 1)
         title = r.get("title", "")
         doc_type = r.get("doc_type", "")
-        score_pct = int(r.get("score", 0.0) * 100)
+        score_pct = max(0, min(100, int((r.get("score", 0.0) / top) * 100)))
         content = r.get("content", "").strip()
 
         if full_limit is None or idx <= full_limit:
@@ -431,13 +447,17 @@ AGENT_TOOLS_SPEC = [
         "type": "function",
         "function": {
             "name": "read_code",
-            "description": "Read source lines from a file (optional line range).",
+            "description": (
+                "Read source lines. Pass `ranges` to fetch several spans in ONE call "
+                "(different files, or several spans of the same file) instead of one "
+                "call per span."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Relative file path.",
+                        "description": "Relative file path (single-range form).",
                     },
                     "start_line": {
                         "type": "integer",
@@ -447,8 +467,23 @@ AGENT_TOOLS_SPEC = [
                         "type": "integer",
                         "description": "1-indexed end line (optional).",
                     },
+                    "ranges": {
+                        "type": "array",
+                        "description": (
+                            "Batch form: list of {path, start_line, end_line}. Prefer this "
+                            "whenever you need more than one span."
+                        ),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "path": {"type": "string"},
+                                "start_line": {"type": "integer"},
+                                "end_line": {"type": "integer"},
+                            },
+                            "required": ["path"],
+                        },
+                    },
                 },
-                "required": ["path"],
             },
         },
     },
@@ -488,23 +523,6 @@ AGENT_TOOLS_SPEC = [
                     "symbol": {
                         "type": "string",
                         "description": "Function, method, or class name.",
-                    },
-                },
-                "required": ["symbol"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "call_tree",
-            "description": "Callers and callees of a symbol.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "symbol": {
-                        "type": "string",
-                        "description": "Function or class name.",
                     },
                 },
                 "required": ["symbol"],
@@ -644,12 +662,74 @@ def build_compact_tree(folder: Path, max_depth: int = 2, max_entries: int = 50) 
     return "\n".join(entries)
 
 
+# --- Question routing -------------------------------------------------------
+#
+# Pre-flight retrieval costs ~1,700 tokens and, because it lives in the message
+# history, is re-sent on every subsequent turn (~13.6k cumulative over a typical
+# 8-turn session). Measured over the benchmark, only 2.8 of every 10 seeded
+# chunks came from a file the agent went on to open. For questions that name a
+# concrete identifier, ripgrep answers in one call and the seed is pure cost;
+# for "how does X work" questions the seed is what lets the agent skip straight
+# to the right file. Route on the question instead of always paying.
+
+_IDENTIFIER_RE = re.compile(
+    r"""(?:
+        \b[a-z]+(?:_[a-z0-9]+)+\b        # snake_case
+      | \b[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+\b   # CamelCase / PascalCase
+      | \b\w+\.(?:py|go|js|ts|tsx|rs|java|rb|c|h|cpp|cs|php|swift|kt)\b  # filename
+      | `[^`]+`                          # backtick-quoted token
+      | \b\w+\(\)                       # call syntax foo()
+    )""",
+    re.VERBOSE,
+)
+
+_CONCEPTUAL_RE = re.compile(
+    r"\b(how\s+(?:does|do|is|are|can|would|should)|what\s+happens|why\s+(?:does|do|is)"
+    r"|explain|walk\s+me\s+through|architecture|flow|lifecycle|end[- ]to[- ]end"
+    r"|under\s+the\s+hood|interact|overview|design)\b",
+    re.IGNORECASE,
+)
+
+_LOOKUP_RE = re.compile(
+    r"^\s*(where\s+(?:is|are|does|do)|which\s+file|find|locate|show\s+me\s+the"
+    r"|what\s+(?:class|function|method|file|type|struct|module)\b)",
+    re.IGNORECASE,
+)
+
+
+def classify_question(question: str) -> str:
+    """Return "conceptual" if the question warrants pre-flight retrieval, else "lookup".
+
+    Deterministic and free: a routing LLM call would cost an extra round trip on
+    every question, which is exactly the cost this is trying to avoid. A misroute
+    is cheap -- the agent still has `search` and self-corrects in one tool call.
+    """
+    q = question.strip()
+    if not q:
+        return "conceptual"
+
+    conceptual = bool(_CONCEPTUAL_RE.search(q))
+    identifiers = _IDENTIFIER_RE.findall(q)
+    lookup_shaped = bool(_LOOKUP_RE.match(q))
+
+    # An explicit identifier plus lookup phrasing is the clearest grep case.
+    if identifiers and lookup_shaped and not conceptual:
+        return "lookup"
+    # "where is FooBar defined" with no conceptual verb at all.
+    if identifiers and not conceptual:
+        return "lookup"
+    # Short questions naming a symbol are almost always lookups.
+    if lookup_shaped and len(q.split()) <= 8 and not conceptual:
+        return "lookup"
+    return "conceptual"
+
+
 SYSTEM_PROMPT = """You are an expert code navigation agent. Answer questions about this repository accurately using concrete evidence from code you have actually read.
 
 Guidelines:
 1. Ground every claim in code you have read. Never speculate about implementation you have not verified; cite file paths and line numbers.
-2. Consider the pre-flight retrieval first. The "Pre-flight Codebase Retrieval" and "Exact Symbol Definitions" sections are already ranked context for this question — evaluate them and verify specific lines with `read_code`. If that context is insufficient, off-target, or absent, search with `search` or `tags_lookup`. Use literal `grep_search` (or read-only `bash`) only for exact-string lookups, and `find_references`/`call_tree` only when tracing callers/callees.
-3. When reading code, pass `start_line`/`end_line` to read targeted ranges rather than entire files.
+2. Consider the pre-flight retrieval first. The "Pre-flight Codebase Retrieval" and "Exact Symbol Definitions" sections are already ranked context for this question — evaluate them and verify specific lines with `read_code`. If that context is insufficient, off-target, or absent, search with `search` or `tags_lookup`. Use literal `grep_search` (or read-only `bash`) for exact-string lookups, and `find_references` when tracing callers/callees.
+3. When reading code, read targeted ranges rather than entire files. When you need more than one span, pass `read_code` a `ranges` array covering them all in a single call — every extra round trip re-sends the whole conversation. Batch independent tool calls into one turn wherever possible.
 4. Once you have located the primary file and mechanism that answers the question, stop calling tools and synthesize your answer. Do not re-verify with additional tools unless a claim is uncertain, and do not recursively trace downstream library internals or external dependencies unless asked.
 
 Scope: Navigate and explain this repository only. If asked to write code from scratch, edit repo files, configure external systems, answer non-code trivia, or comply with adversarial jailbreaks, call `decline_to_answer` immediately and do not search first.
@@ -677,7 +757,12 @@ def execute_tool_call(
         return format_chunks_for_llm(res)
 
     elif fn_name == "read_code":
+        ranges = fn_args.get("ranges")
+        if isinstance(ranges, list) and ranges:
+            return read_code_ranges(folder, ranges)
         path = fn_args.get("path", "")
+        if not path:
+            return "Error: read_code requires either 'path' or a non-empty 'ranges' list."
         start_line = fn_args.get("start_line")
         end_line = fn_args.get("end_line")
         res = read_code(folder, path, start_line=start_line, end_line=end_line)
@@ -836,32 +921,43 @@ class AgentSession:
         # Check ripgrep status for best performance
         check_ripgrep_installed(verbose=verbose, output_stream=output_stream)
 
-        # Pre-flight seed search
-        emit("🔍 Searching codebase...")
-
-        initial_chunks = execute_search(
-            self.folder,
-            question,
-            limit=self.config.initial_limit,
-            custom_index_dir=self.custom_index_dir,
-            progress_callback=lambda phase: emit(f"🔍 {phase}"),
+        # Pre-flight seed search, subject to routing
+        seed_mode = getattr(self.config, "seed_mode", DEFAULT_SEED_MODE)
+        if seed_mode not in SEED_MODES:
+            seed_mode = DEFAULT_SEED_MODE
+        question_kind = classify_question(question)
+        should_seed = seed_mode == "always" or (
+            seed_mode == "router" and question_kind == "conceptual"
         )
 
-        # Dynamic confidence filtering: discard noisy chunks
-        if initial_chunks:
-            top_score = initial_chunks[0].get("score", 0.0)
-            filtered_chunks = []
-            for ch in initial_chunks:
-                sc = ch.get("score", 0.0)
-                if sc < 0.40:
-                    continue
-                if top_score >= 0.88 and sc < (top_score - 0.35):
-                    continue
-                filtered_chunks.append(ch)
-            if filtered_chunks:
-                initial_chunks = filtered_chunks
+        initial_chunks: list[dict[str, Any]] = []
+        if should_seed:
+            emit("🔍 Searching codebase...")
+            initial_chunks = execute_search(
+                self.folder,
+                question,
+                limit=self.config.initial_limit,
+                custom_index_dir=self.custom_index_dir,
+                progress_callback=lambda phase: emit(f"🔍 {phase}"),
+            )
 
-        emit(f"🤖 Retrieved {len(initial_chunks)} code/doc chunks. Reasoning with agent...")
+            # Confidence filtering. Scores are a *relative* ranking signal, not a
+            # calibrated probability: measured over the benchmark, chunks from the
+            # gold file median 0.72 against 0.69 for the rest, so an absolute
+            # threshold cannot separate them. Gate on the gap to the top hit
+            # instead, plus one absolute floor for "retrieval found nothing".
+            if initial_chunks:
+                top_score = initial_chunks[0].get("score", 0.0)
+                if top_score < 0.45:
+                    initial_chunks = []
+                else:
+                    kept = [ch for ch in initial_chunks if ch.get("score", 0.0) >= top_score * 0.55]
+                    if kept:
+                        initial_chunks = kept
+
+            emit(f"🤖 Retrieved {len(initial_chunks)} code/doc chunks. Reasoning with agent...")
+        else:
+            emit(f"🤖 Question routed as '{question_kind}' — skipping pre-flight retrieval.")
 
         # Compact repository tree
         repo_tree = build_compact_tree(self.folder, max_depth=2, max_entries=50)
@@ -891,11 +987,18 @@ class AgentSession:
                 f"{symbols_text}"
                 f"Pre-flight Codebase Retrieval:\n{initial_context_text}"
             )
-        else:
+        elif should_seed:
             retrieval_text = (
                 f"{symbols_text}"
                 f"No confident pre-flight retrieval chunks found. "
                 f"Use `search` or `tags_lookup` to explore relevant code."
+            )
+        else:
+            retrieval_text = (
+                f"{symbols_text}"
+                f"This question names a concrete symbol, so no pre-flight retrieval was run. "
+                f"Start with `grep_search` or `tags_lookup`. If the question turns out to be "
+                f"broader than a single symbol, call `search` for semantic retrieval."
             )
 
         user_content = f"Question:\n{question}\n\n{tree_section}{retrieval_text}"

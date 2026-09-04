@@ -287,6 +287,10 @@ Respond in pure JSON format:
     return False, error_msg
 
 
+# Mirror of codebase_navigator.tools.MAX_MATCH_CHARS so both arms are capped
+# identically; without this the baseline's uncapped lines dominate the token metric.
+BASELINE_MAX_MATCH_CHARS = 240
+
 BASELINE_SYSTEM_PROMPT = (
     "You are an expert AI coding assistant answering questions about a codebase.\n"
     "Guidelines:\n"
@@ -470,8 +474,20 @@ def execute_baseline_tool(folder: Path, name: str, args: dict[str, Any]) -> str:
             if not out and res.stderr:
                 out = res.stderr
             lines = out.splitlines()
+            # Cap per-line bytes as well as line count: a single matched line in
+            # generated/minified sources can be hundreds of KB, which floods the
+            # agent context and makes the arm's token cost meaningless.
+            lines = [
+                ln
+                if len(ln) <= BASELINE_MAX_MATCH_CHARS
+                else ln[:BASELINE_MAX_MATCH_CHARS]
+                + f"... [+{len(ln) - BASELINE_MAX_MATCH_CHARS} chars truncated]"
+                for ln in lines
+            ]
             if len(lines) > 200:
                 out = "\n".join(lines[:200]) + f"\n... [{len(lines) - 200} lines truncated]"
+            else:
+                out = "\n".join(lines)
             return out or "No matches found."
         except FileNotFoundError:
             # Fallback pure-python grep if rg missing

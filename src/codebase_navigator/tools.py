@@ -17,6 +17,19 @@ from .tags import TagsManager
 _WARNED_MISSING_RIPGREP = False
 
 
+# A single matched line can be enormous in generated/minified sources (one line in
+# vikunja is 486k chars). Cap per-match content so one grep cannot flood the context.
+MAX_MATCH_CHARS = 240
+
+
+def _truncate_match(text: str, limit: int = MAX_MATCH_CHARS) -> str:
+    """Clamp a single grep match line so pathological long lines cannot blow up context."""
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"… [+{len(text) - limit} chars truncated]"
+
+
 def check_ripgrep_installed(verbose: bool = True, output_stream=sys.stderr) -> bool:
     """Check if ripgrep (rg) is installed on PATH. Warn loudly if missing."""
     global _WARNED_MISSING_RIPGREP
@@ -97,6 +110,50 @@ def read_code(
     }
 
 
+def read_code_ranges(
+    folder: Path,
+    ranges: list[dict[str, Any]],
+    max_lines: int = 2000,
+) -> str:
+    """Read several line ranges in one call and concatenate the formatted results.
+
+    Half of all read_code calls in the benchmark re-opened a file the agent had
+    already read, each costing a full round trip (system prompt + tool spec +
+    the whole growing history) to return a few dozen lines. Batching lets one
+    turn cover every range the agent needs.
+    """
+    if not ranges:
+        return "Error: no ranges supplied."
+
+    budget = max_lines
+    parts: list[str] = []
+    for spec in ranges:
+        if budget <= 0:
+            parts.append("[Line budget exhausted; request the remaining ranges in a new call.]")
+            break
+        path = spec.get("path", "")
+        if not path:
+            parts.append("Error: a range is missing 'path'.")
+            continue
+        start_line = spec.get("start_line")
+        end_line = spec.get("end_line")
+        res = read_code(
+            folder,
+            path,
+            start_line=start_line,
+            end_line=end_line,
+            max_lines=budget,
+        )
+        if "error" in res:
+            parts.append(f"Error reading {path}: {res['error']}")
+            continue
+        consumed = (res.get("end_line", 1) - res.get("start_line", 1)) + 1
+        budget -= max(0, consumed)
+        parts.append(res.get("content", ""))
+
+    return "\n\n".join(p for p in parts if p)
+
+
 def grep_search(
     folder: Path,
     pattern: str,
@@ -136,6 +193,7 @@ def grep_search(
                         rel_path = match_data.get("path", {}).get("text", "")
                         line_no = match_data.get("line_number", 1)
                         line_text = match_data.get("lines", {}).get("text", "").rstrip("\r\n")
+                        line_text = _truncate_match(line_text)
                         abs_p = (folder / rel_path).resolve()
 
                         matches.append(
@@ -143,7 +201,7 @@ def grep_search(
                                 "path": rel_path,
                                 "abs_path": str(abs_p),
                                 "line": line_no,
-                                "content": line_text.strip(),
+                                "content": line_text,
                                 "uri": f"file://{abs_p}#L{line_no}",
                             }
                         )
@@ -194,7 +252,7 @@ def grep_search(
                                     "path": rel_p,
                                     "abs_path": str(abs_p),
                                     "line": idx,
-                                    "content": line.strip(),
+                                    "content": _truncate_match(line),
                                     "uri": f"file://{abs_p}#L{idx}",
                                 }
                             )
@@ -301,7 +359,7 @@ def analyze_python_calls(fpath: Path, target_symbol: str) -> dict[str, Any]:
                         if fn_name and fn_name != target_symbol:
                             line_no = getattr(sub, "lineno", node.lineno)
                             line_preview = (
-                                lines[line_no - 1].strip() if line_no <= len(lines) else ""
+                                _truncate_match(lines[line_no - 1]) if line_no <= len(lines) else ""
                             )
                             callees.append(
                                 {
@@ -322,7 +380,7 @@ def analyze_python_calls(fpath: Path, target_symbol: str) -> dict[str, Any]:
                         if fn_name == target_symbol:
                             line_no = getattr(sub, "lineno", node.lineno)
                             line_preview = (
-                                lines[line_no - 1].strip() if line_no <= len(lines) else ""
+                                _truncate_match(lines[line_no - 1]) if line_no <= len(lines) else ""
                             )
                             callers.append(
                                 {

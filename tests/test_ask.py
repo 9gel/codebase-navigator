@@ -146,7 +146,9 @@ def test_format_chunks_for_llm_populated():
     formatted = format_chunks_for_llm(results)
     assert "[1] File: src/ipc.py:10-25" in formatted
     assert "file:///repo/src/ipc.py#L10-L25" in formatted
-    assert "Relevance: 92%" in formatted
+    # Relevance is expressed relative to the top hit, not as an absolute score:
+    # RRF values are unbounded and were previously all clamped to 99%.
+    assert "Relevance: 100%" in formatted
     assert "class IPCServer:" in formatted
 
 
@@ -330,8 +332,10 @@ def test_ask_codebase_with_tool_calling_loop(tmp_path: Path):
         patch("codebase_navigator.ask.execute_search", mock_search),
         patch("codebase_navigator.ask.call_chat_completions", mock_chat),
     ):
+        # A conceptual question still gets pre-flight retrieval, so execute_search
+        # runs twice: once for the seed and once for the agent's own `search` call.
         answer, _stats = ask_codebase(
-            tmp_path, "Where is the IPCServer defined?", cfg, verbose=False
+            tmp_path, "How does the IPCServer handle socket lifecycle?", cfg, verbose=False
         )
         assert answer == "IPCServer is implemented in `src/ipc.py`."
         assert mock_search.call_count == 2
@@ -452,10 +456,60 @@ def test_ask_empty_seed_skips_preflight_framing(tmp_path: Path):
         patch("codebase_navigator.ask.execute_search", mock_search),
         patch("codebase_navigator.ask.call_chat_completions", mock_chat),
     ):
-        ans, _ = session.ask("Where is foo?", verbose=False)
+        ans, _ = session.ask("How does the foo subsystem work end to end?", verbose=False)
         assert ans == "Done"
         # Verify user message structure
         user_msg = session.messages[1]["content"]
         assert "Repository Structure:" in user_msg
         assert "No confident pre-flight retrieval chunks found." in user_msg
         assert "Pre-flight Codebase Retrieval:" not in user_msg
+
+
+def test_ask_lookup_question_skips_seed_search(tmp_path: Path):
+    """Identifier lookups must not pay for pre-flight retrieval at all."""
+    from unittest.mock import MagicMock, patch
+
+    from codebase_navigator.ask import AgentSession, LLMConfig
+
+    cfg = LLMConfig(api_key="test-key")
+    (tmp_path / "main.py").write_text("print(1)")
+    session = AgentSession(tmp_path, cfg)
+
+    mock_search = MagicMock(return_value=[])
+    mock_chat = MagicMock(
+        return_value={"choices": [{"message": {"role": "assistant", "content": "Done"}}]}
+    )
+
+    with (
+        patch("codebase_navigator.ask.execute_search", mock_search),
+        patch("codebase_navigator.ask.call_chat_completions", mock_chat),
+    ):
+        ans, _ = session.ask("Where is SecureCookieSessionInterface defined?", verbose=False)
+        assert ans == "Done"
+        assert mock_search.call_count == 0, "lookup questions must skip the seed entirely"
+        user_msg = session.messages[1]["content"]
+        assert "Repository Structure:" in user_msg
+        assert "no pre-flight retrieval was run" in user_msg
+
+
+def test_ask_seed_mode_always_overrides_the_router(tmp_path: Path):
+    """seed_mode='always' restores pre-router behaviour for A/B comparison."""
+    from unittest.mock import MagicMock, patch
+
+    from codebase_navigator.ask import AgentSession, LLMConfig
+
+    cfg = LLMConfig(api_key="test-key", seed_mode="always")
+    (tmp_path / "main.py").write_text("print(1)")
+    session = AgentSession(tmp_path, cfg)
+
+    mock_search = MagicMock(return_value=[])
+    mock_chat = MagicMock(
+        return_value={"choices": [{"message": {"role": "assistant", "content": "Done"}}]}
+    )
+
+    with (
+        patch("codebase_navigator.ask.execute_search", mock_search),
+        patch("codebase_navigator.ask.call_chat_completions", mock_chat),
+    ):
+        session.ask("Where is SecureCookieSessionInterface defined?", verbose=False)
+        assert mock_search.call_count == 1

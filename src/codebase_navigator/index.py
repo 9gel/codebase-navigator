@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
 import threading
 from collections.abc import Callable
@@ -47,6 +49,40 @@ COMMON_STOPWORDS = {
     "can",
 }
 
+# Queries that are genuinely asking about prose -- a glossary term, a guide, a
+# README section. Code-first ordering must not demote documentation for these,
+# or "what is a Retail Destination" returns retail.py instead of GLOSSARY.md.
+DOC_SEEKING_RE = re.compile(
+    r"\b(what\s+(?:is|are)\s+(?:a|an|the)\b"
+    r"|what\s+does\s+\w+\s+mean"
+    r"|definition\s+of|define\b|glossary|terminology|nomenclature"
+    r"|documentation|readme|changelog|release\s+notes"
+    r"|contributing|licence|license"
+    r"|getting\s+started|tutorial|guide\b)",
+    re.IGNORECASE,
+)
+
+
+# See VectorIndex.split_oversize_chunks: splitting to fit the encoder window is
+# a measured regression with a 128-token model, and a prerequisite with a
+# long-context one.
+SPLIT_OVERSIZE_CHUNKS = os.environ.get("CN_SPLIT_OVERSIZE_CHUNKS", "").lower() in {
+    "1",
+    "true",
+    "yes",
+}
+
+# Retrieval returned 4.8 distinct files per 10 hits because several chunks of one
+# file monopolised the list. Capping chunks-per-file raised that to 9.7 and lifted
+# MRR 0.757 -> 0.784 (recall@10 21 -> 23 of 25) at no cost.
+MAX_CHUNKS_PER_FILE = 1
+
+
+def is_doc_seeking(query: str) -> bool:
+    """True when the query asks about documentation rather than implementation."""
+    return bool(DOC_SEEKING_RE.search(query or ""))
+
+
 _SHARED_MODEL: TextEmbedding | None = None
 _SHARED_MODEL_LOCK = threading.Lock()
 _EMBEDDING_INFERENCE_LOCK = threading.Lock()
@@ -62,6 +98,8 @@ class VectorIndex:
         self.meta_file = self.cache_dir / "files_meta.json"
         self.db = lancedb.connect(str(self.db_dir))
         self._model: TextEmbedding | None = None
+        self._max_tokens: int | None = None
+        self._count_tok: Any = None
         self._ensure_table()
 
     @property
@@ -77,6 +115,164 @@ class VectorIndex:
                             _SHARED_MODEL = TextEmbedding(model_name=EMBEDDING_MODEL_NAME)
             self._model = _SHARED_MODEL
         return self._model
+
+    @property
+    def embed_max_tokens(self) -> int:
+        """Hard token ceiling the embedding model truncates at.
+
+        fastembed's all-MiniLM-L6-v2 build truncates at 128 tokens, not the 256
+        or 512 the model card implies. Chunks were capped by *line count* only
+        (50 lines Python, 35 generic), so 73% of indexed chunks overflowed and
+        61% of all indexed content never reached the encoder at all.
+        """
+        if self._max_tokens is None:
+            limit = 128
+            try:
+                trunc = getattr(self.model.model.tokenizer, "truncation", None)
+                if isinstance(trunc, dict) and trunc.get("max_length"):
+                    limit = int(trunc["max_length"])
+            except Exception:
+                pass
+            self._max_tokens = limit
+        return self._max_tokens
+
+    @property
+    def _counting_tokenizer(self):
+        """A truncation-free clone of the encoder's tokenizer, for measuring length.
+
+        The live tokenizer has truncation enabled at max_length, so encoding a
+        3,000-token chunk with it returns 128 and every chunk looks compliant.
+        Clone it and disable truncation on the copy -- mutating the shared one
+        would change what the ONNX model actually receives.
+        """
+        if self._count_tok is not None:
+            return self._count_tok
+        try:
+            from tokenizers import Tokenizer
+
+            src = self.model.model.tokenizer
+            clone = Tokenizer.from_str(src.to_str())
+            # Both must go: truncation clamps long chunks to max_length, and
+            # padding inflates every short chunk to max_length. With either left
+            # on, encode() returns exactly max_length for all input and the
+            # length check is meaningless.
+            clone.no_truncation()
+            clone.no_padding()
+            self._count_tok = clone
+        except Exception:
+            self._count_tok = False
+        return self._count_tok
+
+    def _count_tokens(self, text: str) -> int:
+        tok = self._counting_tokenizer
+        if tok:
+            try:
+                return len(tok.encode(text).ids)
+            except Exception:
+                pass
+        # WordPiece averages ~2.75 chars/token on code (measured across the
+        # six benchmark repos); 2.6 keeps the estimate slightly conservative.
+        return int(len(text) / 2.6) + 1
+
+    def split_oversize_chunks(self, chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Split chunks that exceed the encoder window into line-aligned windows.
+
+        OFF by default -- enable with CN_SPLIT_OVERSIZE_CHUNKS=1.
+
+        all-MiniLM-L6-v2 truncates at 128 tokens, so 73% of indexed chunks
+        overflow and 61% of indexed content never reaches the encoder. Splitting
+        recovers 100% of that content, but measured on the benchmark it makes
+        retrieval *worse*: MRR fell 0.717 -> 0.561 over flask/express/httpx, and
+        stayed behind (0.608) even with the per-file diversity cap applied. The
+        reason is that a code chunk's head -- signature plus docstring, which is
+        exactly what survives truncation today -- carries most of the identifying
+        signal, while body fragments are low-signal near-duplicates that crowd
+        distinct files out of the top-k.
+
+        So the line cap is accidentally right for a 128-token encoder. This
+        becomes the correct behaviour when swapping in a long-context code
+        embedding model (nomic-embed-code and similar allow 8k), where there is
+        no truncation to hide behind; hence it is kept and tested, not deleted.
+        """
+        cap = max(32, int(self.embed_max_tokens * 0.85))  # headroom for special tokens
+        out: list[dict[str, Any]] = []
+        tok = self._counting_tokenizer
+
+        def count(text: str) -> int:
+            if tok:
+                try:
+                    return max(1, len(tok.encode(text).ids))
+                except Exception:
+                    pass
+            return max(1, int(len(text) / 2.6) + 1)
+
+        for ch in chunks:
+            content = ch.get("content", "")
+            # Fast path: at >=1 char per token this cannot overflow.
+            if len(content) <= cap or self._count_tokens(content) <= cap:
+                out.append(ch)
+                continue
+
+            lines = content.split("\n")
+            has_header = bool(lines and (lines[0].startswith("File:") or lines[0].startswith("#")))
+            header = lines[0] if has_header else ""
+            body = lines[1:] if has_header else lines
+            header_t = self._count_tokens(header) if header else 0
+            budget = max(16, cap - header_t)
+
+            # A single minified line can exceed the whole budget on its own, so
+            # hard-split any such line on character boundaries before windowing.
+            units: list[tuple[str, int]] = []
+            for ln in body:
+                lt = count(ln)
+                if lt <= budget:
+                    units.append((ln, lt))
+                    continue
+                approx_chars = max(1, int(len(ln) * budget / lt))
+                for i in range(0, len(ln), approx_chars):
+                    piece = ln[i : i + approx_chars]
+                    units.append((piece, count(piece)))
+
+            windows: list[list[str]] = []
+            cur: list[str] = []
+            cur_t = 0
+            for text, lt in units:
+                if cur and cur_t + lt > budget:
+                    windows.append(cur)
+                    # Carry a little context forward, but only while it leaves
+                    # room for real content -- an oversized carry would flush
+                    # immediately and spin out empty windows.
+                    carry: list[str] = []
+                    carry_t = 0
+                    for prev in reversed(cur):
+                        pt = count(prev)
+                        if carry_t + pt > budget // 4:
+                            break
+                        carry.insert(0, prev)
+                        carry_t += pt
+                    cur = carry
+                    cur_t = carry_t
+                cur.append(text)
+                cur_t += lt
+            if cur:
+                windows.append(cur)
+
+            if len(windows) <= 1:
+                out.append(ch)
+                continue
+
+            for i, win in enumerate(windows):
+                sub = dict(ch)
+                sub["content"] = "\n".join(([header] + win) if header else win)
+                sub["title"] = (
+                    ch.get("title", "") if i == 0 else f"{ch.get('title', '')} (part {i + 1})"
+                )
+                sub["id"] = hashlib.sha256(
+                    f"{ch.get('path')}:{ch.get('start_line')}:{ch.get('title')}:{i}".encode()
+                ).hexdigest()[:16]
+                out.append(sub)
+
+        return out
 
     def _embed(
         self,
@@ -156,6 +352,8 @@ class VectorIndex:
                 chunks = extractor.extract_code_doc(fpath)
 
             if chunks:
+                if SPLIT_OVERSIZE_CHUNKS:
+                    chunks = self.split_oversize_chunks(chunks)
                 files_to_index.append((fpath, chunks))
                 all_chunks_to_embed.extend(chunks)
 
@@ -241,6 +439,8 @@ class VectorIndex:
             chunks = extractor.extract_code_doc(fpath)
 
         if chunks:
+            if SPLIT_OVERSIZE_CHUNKS:
+                chunks = self.split_oversize_chunks(chunks)
             texts = [c["content"] for c in chunks]
             embeddings = self._embed(texts, batch_size=64)
             for chunk, vec in zip(chunks, embeddings):
@@ -265,6 +465,8 @@ class VectorIndex:
         limit: int = 5,
         doc_type: str | None = None,
         progress_callback: Callable[[str], None] | None = None,
+        code_first: bool = True,
+        max_per_file: int | None = MAX_CHUNKS_PER_FILE,
     ) -> list[dict[str, Any]]:
         """True hybrid semantic vector + BM25 FTS search with Reciprocal Rank Fusion."""
         if len(self.table) == 0:
@@ -275,7 +477,9 @@ class VectorIndex:
             q_vec = q_vec.tolist()
         else:
             q_vec = list(q_vec)
-        fetch_limit = max(limit * 4, 25)
+        # The per-file diversity cap discards candidates, so the pool must be
+        # deeper than `limit` or the tail of the result list comes up short.
+        fetch_limit = max(limit * 6, 40)
         if progress_callback:
             progress_callback("Querying LanceDB index...")
 
@@ -319,8 +523,12 @@ class VectorIndex:
             except Exception:
                 fts_results = []
 
-        # 3. Reciprocal Rank Fusion (RRF, k=60)
-        k_rrf = 60
+        # 3. Reciprocal Rank Fusion. k=20 rather than the textbook 60: with only a few
+        # dozen candidates a large k flattens the rank curve so the top hit barely
+        # outscores the tail. FTS is weighted slightly higher because code questions
+        # usually name a real identifier.
+        k_rrf = 20
+        w_fts = 1.2
         merged_candidates: dict[str, dict[str, Any]] = {}
         rrf_scores: dict[str, float] = {}
 
@@ -333,47 +541,51 @@ class VectorIndex:
             cid = r.get("id") or f"{r.get('path')}:{r.get('start_line')}"
             if cid not in merged_candidates:
                 merged_candidates[cid] = r
-            rrf_scores[cid] = rrf_scores.get(cid, 0.0) + (1.0 / (k_rrf + rank + 1))
+            rrf_scores[cid] = rrf_scores.get(cid, 0.0) + (w_fts / (k_rrf + rank + 1))
 
         if not merged_candidates:
             return []
 
-        # Normalization factor for RRF: max theoretical score with rank 0 in both is 2 / (k_rrf + 1)
-        max_rrf = 2.0 / (k_rrf + 1)
+        # Normalization factor: best possible score is rank 0 in both result lists.
+        max_rrf = (1.0 + w_fts) / (k_rrf + 1)
+
+        # Identifier-aware boosts are proportional to the share of query terms matched,
+        # so a chunk matching 3/3 terms outranks one matching 1/3 instead of both
+        # colliding at the old 0.99 ceiling.
+        n_terms = len(clean_terms) or 1
 
         scored_results: list[dict[str, Any]] = []
         for cid, r in merged_candidates.items():
-            dist = r.get("_distance", None)
-            if dist is not None:
-                vec_base = max(0.0, min(1.0, 1.0 - (dist / 2.0)))
-            else:
-                vec_base = 0.50
-
-            # Base score combining vector proximity and RRF rank
-            norm_rrf = rrf_scores.get(cid, 0.0) / max_rrf
-            base_score = max(vec_base, norm_rrf * 0.90)
-            score = base_score
+            # Rank fusion is the ranking signal. The old code took
+            # max(vec_base, norm_rrf * 0.90); because raw cosine proximity sits at
+            # 0.7-0.95 for almost any pair while norm_rrf tops out at 0.90, the
+            # vector term always won and the BM25 half of the "hybrid" search was
+            # silently discarded. RRF is rank-based and scale-free -- use it directly.
+            score = rrf_scores.get(cid, 0.0) / max_rrf
 
             title_lower = r.get("title", "").lower()
             content_lower = r.get("content", "").lower()
+            path_lower = r.get("path", "").lower()
+
+            title_hits = sum(1 for t in clean_terms if t in title_lower)
+            path_hits = sum(1 for t in clean_terms if t in path_lower)
+            content_hits = sum(1 for t in clean_terms if t in content_lower)
+
+            score += 0.25 * (title_hits / n_terms)
+            score += 0.20 * (path_hits / n_terms)
+            score += 0.10 * (content_hits / n_terms)
 
             # Exact phrase match in title
             if clean_phrase and clean_phrase in title_lower:
-                score += 0.12
-            # Individual term matches in title
-            for term in clean_terms:
-                if term in title_lower:
-                    score += 0.04
-                # Content keyword match boost (+0.02 per term)
-                elif term in content_lower:
-                    score += 0.02
+                score += 0.15
 
-            score = min(0.99, score)
+            # No min(0.99, ...) clamp: saturating at the cap collapsed distinct
+            # candidates into ties and made the score useless as a confidence signal.
 
             scored_results.append(
                 {
                     "score": round(score, 3),
-                    "base_score": round(base_score, 3),
+                    "base_score": round(rrf_scores.get(cid, 0.0) / max_rrf, 3),
                     "path": r["path"],
                     "abs_path": r["abs_path"],
                     "doc_type": r["doc_type"],
@@ -385,4 +597,28 @@ class VectorIndex:
             )
 
         scored_results.sort(key=lambda x: x["score"], reverse=True)
+
+        if max_per_file and max_per_file > 0:
+            # Diversify before truncating to `limit`: several chunks of the same
+            # file crowd out other candidate files, and the agent only needs one
+            # anchor per file to decide whether to open it.
+            seen: dict[str, int] = {}
+            diversified = []
+            for r in scored_results:
+                n = seen.get(r["path"], 0)
+                if n >= max_per_file:
+                    continue
+                seen[r["path"]] = n + 1
+                diversified.append(r)
+            scored_results = diversified
+
+        if code_first and not norm_type and not is_doc_seeking(query):
+            # Doc-heavy repos drown code in prose: FastAPI indexes 15,839 markdown
+            # chunks against 5,689 code chunks, so 8.6 of every 10 unfiltered hits
+            # were documentation. Float code above markdown while keeping the prose
+            # as a tail rather than dropping it, so doc questions still resolve.
+            code = [r for r in scored_results if r.get("doc_type") == "code_doc"]
+            other = [r for r in scored_results if r.get("doc_type") != "code_doc"]
+            scored_results = code + other
+
         return scored_results[:limit]
