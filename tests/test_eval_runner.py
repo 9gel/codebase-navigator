@@ -131,6 +131,49 @@ def test_task_progress_phases_are_logged_before_completion(tmp_path: Path):
     assert all(entry["task_id"] == "task" for _event_type, entry in events)
 
 
+def test_parallel_task_output_is_flushed_as_one_block_after_live_updates(tmp_path: Path):
+    events: list[tuple[str, str]] = []
+    live_progress = MagicMock()
+    live_progress.update.side_effect = lambda _key, label, message: events.append(
+        ("update", f"{label}: {message}")
+    )
+    live_progress.write.side_effect = lambda message: events.append(("write", message))
+
+    def fake_ask_codebase(**kwargs):
+        kwargs["progress_callback"]("🔍 Searching codebase...")
+        return "CN answer", {"total_tokens": 100}
+
+    def fake_baseline(_repo_dir, _question, _config, progress_callback):
+        progress_callback("🔎 Reading files...")
+        return "Baseline answer", {"total_tokens": 120}
+
+    with (
+        patch("eval.runner.ask_codebase", side_effect=fake_ask_codebase),
+        patch("eval.runner.run_baseline_agent", side_effect=fake_baseline),
+    ):
+        result = _run_task(
+            "demo",
+            tmp_path,
+            "a" * 40,
+            tmp_path / "index",
+            {"id": "task", "question": "Question?", "expected_answer_key": "answer"},
+            SimpleNamespace(api_key="key"),
+            "judge",
+            False,
+            True,
+            False,
+            live_progress=live_progress,
+        )
+
+    assert result["passed"] is True
+    assert [event_type for event_type, _message in events] == ["update", "update", "write"]
+    completed_block = events[-1][1]
+    assert completed_block.count("▶ [task] Q: Question?") == 1
+    assert completed_block.count("[CN]       Status:") == 1
+    assert completed_block.count("[Baseline] Status:") == 1
+    assert completed_block.count("⚡ Savings:") == 1
+
+
 def test_eval_runner_captures_repo_commit_and_index_metadata(tmp_path: Path):
     benchmark_file = tmp_path / "benchmarks.json"
     benchmark_file.write_text(

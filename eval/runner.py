@@ -910,12 +910,19 @@ def _run_task(
     key = task["expected_answer_key"]
     req_kws = task.get("required_keywords", [])
     req_files = task.get("required_files", [])
+    buffered_output: list[str] = []
 
     def _emit(message: str) -> None:
         if live_progress is not None:
-            live_progress.write(message)
+            buffered_output.append(message)
         else:
             _safe_print(message)
+
+    def _flush_output() -> None:
+        """Write one completed task block without interleaving parallel results."""
+        if live_progress is not None and buffered_output:
+            live_progress.write("\n".join(buffered_output))
+            buffered_output.clear()
 
     def _raise_if_cancelled() -> None:
         if cancel_event is not None and cancel_event.is_set():
@@ -1170,6 +1177,7 @@ def _run_task(
                 }
             trace_callback(trace_entry)
 
+        _flush_output()
         return result
 
     except EvaluationCancelled:
@@ -1197,6 +1205,7 @@ def _run_task(
                     "cn": {"passed": False, "error": str(e), "tool_trace": cn_trace},
                 }
             )
+        _flush_output()
         return result
 
 

@@ -410,8 +410,9 @@ a post-run integrity check confirming that evaluation did not mutate the index.
 On a TTY, parallel evaluation uses one animated line per active worker (four
 lines with the default `--workers 4`), each beginning with elapsed time and
 showing the current phase. Live rows are capped at 80 terminal columns to avoid
-wrapping. Completed output is written above this fixed live region. Local searches share
-one FastEmbed/ONNX model and
+wrapping. When a task finishes, its question, CN result, baseline result, and
+savings are written as one non-interleaved block above this fixed live region.
+Local searches share one FastEmbed/ONNX model and
 serialize only query embedding, avoiding concurrent model-initialization stalls
 while keeping LanceDB reads parallel. Each phase transition is timestamped in
 the run's `log.jsonl`, even before a task completes. Ctrl-C cancels queued work,

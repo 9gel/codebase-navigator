@@ -186,8 +186,9 @@ commits, embedding model, candidate model, judge model, and cumulative per-call
 token usage are recorded. Parallel TTY progress reserves one independently
 updated line per worker, leading with elapsed time and then the current
 local-search phase. Rows are capped at 80 terminal columns to prevent wrapping,
-while completed output is inserted above the live region. Phase changes
-are appended immediately to `log.jsonl` so incomplete tasks remain diagnosable;
+while each completed task's question and result lines are buffered and inserted
+atomically above the live region. Phase changes are appended immediately to
+`log.jsonl` so incomplete tasks remain diagnosable;
 interruption cancels queued futures, records partial-run status, and the
 CLI terminates without waiting on blocked network threads. The judge defaults
 to `deepseek/deepseek-v4-pro` and is independently configurable from the
