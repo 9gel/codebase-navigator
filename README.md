@@ -386,6 +386,12 @@ uv run eval/runner.py --judge-model openai/gpt-5.2
 
 # Store timestamped run packages under a different parent directory:
 uv run eval/runner.py --runs-dir /tmp/cn-eval-runs
+
+# View a run package (report.json is selected automatically):
+uv run eval/report_viewer.py eval/runs/run_YYYYMMDD_HHMMSS_ffffff
+
+# Compare full CN and baseline answers using the package's log.jsonl:
+uv run eval/report_viewer.py --diff eval/runs/run_YYYYMMDD_HHMMSS_ffffff
 ```
 
 Every invocation creates a self-contained package under

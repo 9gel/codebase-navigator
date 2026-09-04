@@ -2,8 +2,9 @@
 """Render a codebase-navigator benchmark report JSON as TTY-like human-readable output.
 
 Usage:
-    uv run eval/report_viewer.py eval/runs/run_YYYYMMDD_HHMMSSffffff/report.json
-    uv run eval/report_viewer.py --watch eval/runs/run_YYYYMMDD_HHMMSSffffff/report.json
+    uv run eval/report_viewer.py eval/runs/run_YYYYMMDD_HHMMSS_ffffff
+    uv run eval/report_viewer.py --watch eval/runs/run_YYYYMMDD_HHMMSS_ffffff
+    uv run eval/report_viewer.py --diff eval/runs/run_YYYYMMDD_HHMMSS_ffffff
 
 The report is streamed by ``eval/runner.py`` as tasks complete, so ``--watch``
 re-renders the file in place as new results are appended.
@@ -89,28 +90,41 @@ def render_result(r: dict[str, Any], compare_baseline: bool) -> list[str]:
         return lines
 
     cn_status = "✅ PASS" if r.get("passed") else "❌ FAIL"
-    cn_cached = r.get("cached_tokens") or 0
-    cn_cached_str = f", cached: {cn_cached:,}" if cn_cached else ""
-    lines.append(
-        f"    [CN]       Status: {cn_status} (took {r.get('duration_seconds', 0):.2f}s, "
-        f"tokens: {r.get('tokens', 0):,}{cn_cached_str})"
-    )
+    lines.append(f"    [CN]       Status: {cn_status} (took {r.get('duration_seconds', 0):.2f}s)")
+    lines.append(_render_tokens(r, "    [CN]      "))
 
     if compare_baseline and r.get("baseline_passed") is not None:
         base_status = "✅ PASS" if r.get("baseline_passed") else "❌ FAIL"
-        base_cached = r.get("baseline_cached_tokens") or 0
-        base_cached_str = f", cached: {base_cached:,}" if base_cached else ""
         lines.append(
-            f"    [Baseline] Status: {base_status} (took {r.get('baseline_duration_seconds', 0):.2f}s, "
-            f"tokens: {r.get('baseline_tokens', 0):,}{base_cached_str})"
+            f"    [Baseline] Status: {base_status} "
+            f"(took {r.get('baseline_duration_seconds', 0):.2f}s)"
         )
+        lines.append(_render_tokens(r, "    [Baseline]", field_prefix="baseline_"))
         lines.append(
-            f"    ⚡ Savings: Tokens {r.get('token_savings_percentage', 0):+.1f}% "
+            f"    ⚡ Savings: cumulative API tokens "
+            f"{r.get('token_savings_percentage', 0):+.1f}% "
             f"({r.get('tokens', 0):,} vs {r.get('baseline_tokens', 0):,}) | "
             f"Time {r.get('time_savings_percentage', 0):+.1f}% "
             f"({r.get('duration_seconds', 0):.2f}s vs {r.get('baseline_duration_seconds', 0):.2f}s)"
         )
     return lines
+
+
+def _render_tokens(result: dict[str, Any], label: str, field_prefix: str = "") -> str:
+    """Render cumulative token usage while remaining compatible with old reports."""
+    total_key = f"{field_prefix}tokens"
+    details = [f"total={result.get(total_key, 0):,}"]
+    for field, title in (
+        ("prompt_tokens", "prompt"),
+        ("output_tokens", "output"),
+        ("cached_tokens", "cached"),
+        ("net_tokens", "net"),
+        ("api_calls", "calls"),
+    ):
+        key = f"{field_prefix}{field}"
+        if result.get(key) is not None:
+            details.append(f"{title}={result[key]:,}")
+    return f"{label} Tokens (cumulative): " + ", ".join(details)
 
 
 def _expected_total(report: dict[str, Any]) -> int:
@@ -130,18 +144,22 @@ def render_summary(report: dict[str, Any]) -> list[str]:
     base_passed = sum(1 for r in results if r.get("baseline_passed"))
     compare_baseline = report.get("compare_baseline", False)
 
-    aborted = "total_tasks" not in report or completed < expected
+    run_status = report.get("status")
+    aborted = (
+        run_status in {"preparing", "running", "failed"}
+        or "total_tasks" not in report
+        or completed < expected
+    )
 
     lines = ["\n" + "=" * WIDTH]
     status = f" (aborted/incomplete: {completed}/{expected})" if aborted else ""
-    denom = expected if expected else 1
-    score = passed / denom * 100
-    lines.append(f"📊 CN Evaluation Score:       {passed}/{denom} passed ({score:.1f}%){status}")
+    score = passed / expected * 100 if expected else 100.0
+    lines.append(f"📊 CN Evaluation Score:       {passed}/{expected} passed ({score:.1f}%){status}")
 
     if compare_baseline and completed > 0:
-        base_pct = base_passed / denom * 100
+        base_pct = base_passed / expected * 100 if expected else 100.0
         lines.append(
-            f"📊 Baseline Evaluation Score: {base_passed}/{denom} passed ({base_pct:.1f}%)"
+            f"📊 Baseline Evaluation Score: {base_passed}/{expected} passed ({base_pct:.1f}%)"
         )
 
         # Overall savings over mutually-passed tasks (matches eval/runner.py).
@@ -208,14 +226,37 @@ def render(report: dict[str, Any]) -> str:
     suffix = " (A/B Baseline Comparison)" if compare_baseline else ""
 
     out: list[str] = [_banner(suffix)]
+    if report.get("timestamp"):
+        out.append(f"🕓 Run timestamp: {report['timestamp']}")
+    if report.get("status"):
+        out.append(f"📦 Run status: {report['status']}")
+    if report.get("codebase_navigator_version"):
+        out.append(f"🏷️  codebase-navigator: {report['codebase_navigator_version']}")
     if report.get("judge_model"):
         out.append(f"⚖️  Judge model: {report['judge_model']}")
     if report.get("embedding_model"):
         out.append(f"🧠 Embedding model: {report['embedding_model']}")
+    token_metric = report.get("token_metric") or {}
+    if token_metric.get("tokens"):
+        out.append(f"🧮 Token metric: {token_metric['tokens']}")
     out += render_overhead(report.get("prompt_overhead"))
 
     results = report.get("results", [])
     repo_plan = {rp["repo"]: rp for rp in report.get("repo_plan", [])}
+
+    if repo_plan:
+        out.append("\n📚 Evaluated repository revisions")
+        out.append("-" * 60)
+        for repo, plan in repo_plan.items():
+            commit = plan.get("git_commit", "unknown")
+            status = plan.get("status", "unknown")
+            index_path = (plan.get("index") or {}).get("path")
+            index_text = f", index={index_path}" if index_path else ""
+            error_text = f", error={plan['error']}" if plan.get("error") else ""
+            out.append(
+                f"  {repo} ({plan.get('language', 'Unknown')}) @ {commit} "
+                f"[{status}{index_text}{error_text}]"
+            )
 
     last_repo: str | None = None
     for r in results:
@@ -223,7 +264,7 @@ def render(report: dict[str, Any]) -> str:
         if repo != last_repo:
             plan = repo_plan.get(repo, {})
             lang = plan.get("language", "Unknown")
-            commit = plan.get("git_commit", "unknown")
+            commit = plan.get("git_commit") or r.get("repo_git_commit", "unknown")
             out.append(f"\n📁 Repository: {repo} ({lang}) @ {commit}")
             out.append("-" * 60)
             last_repo = repo
@@ -254,6 +295,19 @@ def load_trace(path: Path) -> dict[str, dict[str, Any]]:
     return entries
 
 
+def resolve_report_path(path: Path) -> Path:
+    """Resolve either a run-package directory or an explicit report file."""
+    return path / "report.json" if path.is_dir() else path
+
+
+def resolve_trace_path(report_path: Path, trace: str | None) -> Path:
+    """Resolve an explicit trace path or the log bundled beside a report."""
+    if trace is None:
+        return report_path.parent / "log.jsonl"
+    path = Path(trace)
+    return path / "log.jsonl" if path.is_dir() else path
+
+
 def render_diff_view(trace_entries: dict[str, dict[str, Any]], mismatch_only: bool) -> str:
     """Render full CN-vs-baseline answers side by side for each traced task."""
     out: list[str] = []
@@ -281,7 +335,7 @@ def render_diff_view(trace_entries: dict[str, dict[str, Any]], mismatch_only: bo
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("report", help="Path to report JSON file")
+    parser.add_argument("report", help="Path to a run-package directory or report JSON file")
     parser.add_argument(
         "--watch",
         "-w",
@@ -292,12 +346,12 @@ def main() -> None:
     parser.add_argument(
         "--trace",
         default=None,
-        help="Path to a trace log (*.jsonl) to render full answers side by side",
+        help="Trace log or run directory (default: log.jsonl beside the report)",
     )
     parser.add_argument(
         "--diff",
         action="store_true",
-        help="Render full CN-vs-baseline answers side by side (requires --trace)",
+        help="Render full CN-vs-baseline answers side by side",
     )
     parser.add_argument(
         "--mismatch-only",
@@ -306,15 +360,15 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    path = Path(args.report)
+    path = resolve_report_path(Path(args.report))
     if not path.is_file():
         print(f"❌ Report not found: {path}", file=sys.stderr)
         sys.exit(1)
 
     if args.diff:
-        trace_path = Path(args.trace) if args.trace else None
-        if trace_path is None:
-            print("❌ --diff requires --trace <trace.jsonl>", file=sys.stderr)
+        trace_path = resolve_trace_path(path, args.trace)
+        if not trace_path.is_file():
+            print(f"❌ Trace log not found: {trace_path}", file=sys.stderr)
             sys.exit(1)
         entries = load_trace(trace_path)
         print(render_diff_view(entries, args.mismatch_only))
