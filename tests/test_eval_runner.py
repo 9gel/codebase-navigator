@@ -18,6 +18,7 @@ from eval.rejection_runner import run_rejection_benchmark
 from eval.runner import (
     DEFAULT_JUDGE_MODEL,
     LiveTaskProgress,
+    _display_width,
     _run_task,
     ensure_repo_cloned,
     hash_index_tree,
@@ -70,15 +71,20 @@ def test_existing_non_git_repo_is_not_replaced(tmp_path: Path):
     run.assert_not_called()
 
 
-def test_live_progress_renders_one_in_place_line_per_worker():
+def test_live_progress_renders_bounded_in_place_line_per_worker():
     stream = io.StringIO()
     progress = LiveTaskProgress(stream=stream, max_lines=4)
     for number in range(4):
-        progress.update(str(number), f"task-{number}·CN", f"Worker phase {number}...")
-    progress.start()
-    time.sleep(0.12)
-    progress.write("one task completed")
-    progress.stop()
+        progress.update(
+            str(number),
+            f"task-{number}·CN",
+            f"Worker phase {number} with action output that would otherwise wrap...",
+        )
+    with patch("eval.runner.shutil.get_terminal_size", return_value=SimpleNamespace(columns=120)):
+        progress.start()
+        time.sleep(0.12)
+        progress.write("one task completed")
+        progress.stop()
 
     output = stream.getvalue()
     assert "\r\033[2K" in output
@@ -87,6 +93,10 @@ def test_live_progress_renders_one_in_place_line_per_worker():
         assert f"task-{number}·CN" in output
     assert output.rfind("task-0·CN") > output.find("one task completed")
     assert "\033[M" in output
+    rendered_rows = [line[line.index("(") :] for line in output.splitlines() if "·CN" in line]
+    assert rendered_rows
+    assert all(row.startswith("(0.") for row in rendered_rows)
+    assert all(_display_width(row) <= 80 for row in rendered_rows)
 
 
 def test_task_progress_phases_are_logged_before_completion(tmp_path: Path):

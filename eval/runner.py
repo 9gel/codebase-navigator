@@ -15,6 +15,7 @@ import sys
 import tempfile
 import threading
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from pathlib import Path
@@ -57,6 +58,7 @@ class LiveTaskProgress:
     """Render one independently updating TTY row per active worker."""
 
     FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    MAX_WIDTH = 80
 
     def __init__(self, stream=sys.stderr, max_lines: int = 4):
         self.stream = stream
@@ -132,17 +134,48 @@ class LiveTaskProgress:
     def _write_rows_locked(self, tick: int) -> None:
         """Write all progress rows from the region's top-left cursor position."""
         states = list(self._states.values())[: self.max_lines]
-        width = shutil.get_terminal_size((100, 20)).columns
+        width = min(self.MAX_WIDTH, shutil.get_terminal_size((self.MAX_WIDTH, 20)).columns)
         for row in range(self.max_lines):
             text = ""
             if row < len(states):
                 label, message, started_at = states[row]
                 frame = self.FRAMES[(tick + row) % len(self.FRAMES)]
                 elapsed = time.monotonic() - started_at
-                text = f"{frame} [{label}] {message} ({elapsed:.1f}s)"
-                if len(text) > width:
-                    text = text[: max(1, width - 3)].rstrip() + "..."
+                text = f"({elapsed:.1f}s) {frame} [{label}] {message}"
+                text = _truncate_to_display_width(text, width)
             self.stream.write(f"\r\033[2K{text}\n")
+
+
+def _display_width(text: str) -> int:
+    """Return the number of terminal columns occupied by plain text."""
+    return sum(
+        0
+        if unicodedata.combining(char) or unicodedata.category(char) in {"Cf", "Mn", "Me"}
+        else 2
+        if unicodedata.east_asian_width(char) in {"F", "W"}
+        else 1
+        for char in text
+    )
+
+
+def _truncate_to_display_width(text: str, width: int) -> str:
+    """Truncate plain terminal text to ``width`` columns, including an ellipsis."""
+    if width <= 0:
+        return ""
+    if _display_width(text) <= width:
+        return text
+
+    suffix = "..." if width >= 3 else "." * width
+    available = width - len(suffix)
+    result: list[str] = []
+    used = 0
+    for char in text:
+        char_width = _display_width(char)
+        if used + char_width > available:
+            break
+        result.append(char)
+        used += char_width
+    return "".join(result).rstrip() + suffix
 
 
 class EvaluationCancelled(Exception):
