@@ -30,7 +30,7 @@ ENV/
 .pytest_cache/
 .coverage
 htmlcov/
-/exercises/
+eval/repos
 eval/rejection_report.json
 eval/report.json
 eval/reports.json
