@@ -178,6 +178,47 @@ DOC_EXTENSIONS = {
     ".org",
 }
 
+# Minified and bundled JavaScript is compiled output that happens to keep the
+# source extension -- a quirk unique to JS, where .js is both what you write and
+# what a bundler emits. Treated as a binary artifact: never the answer to a
+# question about the codebase, and actively harmful in the index.
+#
+# Two vendored bundles in vikunja produced 60% of its entire 43,790-tag symbol
+# index (scalar.standalone.js 18,217 tags, redoc.standalone.js 8,043) because
+# ctags reads minified code as thousands of one-character symbols. Every English
+# word then resolves to one of them, so "authentication" and "handled" anchored
+# the agent on vendored bundles. The same files produced the 486,303-character
+# grep line that cost 179k tokens in a single tool result.
+MINIFIED_NAME_MARKERS = (".min.", ".bundle.", ".standalone.", "-min.", ".pack.")
+
+# Real source lines stay well under this; the two bundles above run to 319,544
+# and 486,303 characters on a single line.
+MINIFIED_MAX_LINE_CHARS = 800
+
+# Only sample the head: a bundle declares itself in its first lines.
+MINIFIED_SAMPLE_BYTES = 65_536
+
+
+def is_minified_file(path: Path) -> bool:
+    """True for compiled/bundled sources that keep a source extension."""
+    name = path.name.lower()
+    if any(marker in name for marker in MINIFIED_NAME_MARKERS):
+        return True
+    if path.suffix.lower() not in {".js", ".mjs", ".cjs", ".ts", ".css"}:
+        return False
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            head = fh.read(MINIFIED_SAMPLE_BYTES)
+    except OSError:
+        return False
+    if not head:
+        return False
+    # A single absurdly long line is the reliable signal. Check the longest line
+    # in the sample rather than the average, since bundles often carry a short
+    # banner comment before the payload.
+    return max((len(line) for line in head.splitlines()), default=0) > MINIFIED_MAX_LINE_CHARS
+
+
 IGNORE_DIR_NAMES = {
     ".git",
     ".hg",

@@ -644,23 +644,6 @@ AGENT_TOOLS_SPEC = [
     {
         "type": "function",
         "function": {
-            "name": "find_references",
-            "description": "Definition plus all usage sites of a symbol.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "symbol": {
-                        "type": "string",
-                        "description": "Symbol name.",
-                    },
-                },
-                "required": ["symbol"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "grep_search",
             "description": "Literal/regex search via ripgrep. Use for exact strings.",
             "parameters": {

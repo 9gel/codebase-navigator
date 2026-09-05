@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from .config import CODE_EXTENSIONS, DOC_EXTENSIONS, IGNORE_DIR_NAMES
+from .config import CODE_EXTENSIONS, DOC_EXTENSIONS, IGNORE_DIR_NAMES, is_minified_file
 
 
 def get_available_files(folder: Path) -> tuple[list[Path], list[Path]]:
@@ -29,7 +29,7 @@ def get_available_files(folder: Path) -> tuple[list[Path], list[Path]]:
             fpath = folder / line.strip()
             if fpath.is_file():
                 ext = fpath.suffix.lower()
-                if ext in CODE_EXTENSIONS:
+                if ext in CODE_EXTENSIONS and not is_minified_file(fpath):
                     code_files.append(fpath)
                 elif ext in DOC_EXTENSIONS:
                     doc_files.append(fpath)
@@ -45,7 +45,7 @@ def get_available_files(folder: Path) -> tuple[list[Path], list[Path]]:
                 continue
             fpath = Path(root) / file
             ext = fpath.suffix.lower()
-            if ext in CODE_EXTENSIONS:
+            if ext in CODE_EXTENSIONS and not is_minified_file(fpath):
                 code_files.append(fpath)
             elif ext in DOC_EXTENSIONS:
                 doc_files.append(fpath)

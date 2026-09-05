@@ -958,3 +958,58 @@ def test_lookup_route_omits_the_repository_tree(tmp_path: Path):
     assert "Repository Structure" in first_user_message(
         "how does the request dispatch flow work end to end?"
     )
+
+
+# --- 22. minified bundles are build artifacts, not source -------------------
+
+
+def test_minified_javascript_is_detected(tmp_path: Path):
+    """`.js` is both what you write and what a bundler emits — a quirk unique to
+    JavaScript, so extension alone cannot separate source from build output.
+
+    Two vendored bundles in vikunja produced 60% of its entire 43,790-tag symbol
+    index (scalar.standalone.js 18,217 tags, redoc.standalone.js 8,043), because
+    ctags reads minified code as thousands of one-character symbols.
+    """
+    from codebase_navigator.config import is_minified_file
+
+    bundle = tmp_path / "vendor.standalone.js"
+    bundle.write_text("!function(e,t){" + "a=1;" * 60_000 + "}();\n")
+    assert is_minified_file(bundle)
+
+    minified = tmp_path / "app.min.js"
+    minified.write_text("var a=1;\n")
+    assert is_minified_file(minified), "name marker alone is sufficient"
+
+    source = tmp_path / "router.js"
+    source.write_text("\n".join(f"function handler{i}(req, res) {{ next(); }}" for i in range(200)))
+    assert not is_minified_file(source)
+
+    # Non-JS languages do not have this problem and must not be sampled for it.
+    go = tmp_path / "generated.go"
+    go.write_text("package main\n" + "var x = 1 // " + "y" * 2000 + "\n")
+    assert not is_minified_file(go)
+
+
+def test_minified_files_are_excluded_from_discovery(tmp_path: Path):
+    """They poisoned both retrieval paths: `authentication` and `handled` each
+    resolved to a vendored bundle, anchoring the agent on build output."""
+    from codebase_navigator.tags import get_available_files
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.js").write_text("function start() { return 1; }\n")
+    (tmp_path / "src" / "vendor.standalone.js").write_text(
+        "!function(){" + "a=1;" * 60_000 + "}()\n"
+    )
+
+    code_files, _ = get_available_files(tmp_path)
+    names = {p.name for p in code_files}
+    assert "app.js" in names
+    assert "vendor.standalone.js" not in names
+
+
+def test_find_references_is_not_in_the_default_spec():
+    """Called once across 32 tasks while costing 64 tokens on all 199 turns."""
+    names = [t["function"]["name"] for t in AGENT_TOOLS_SPEC]
+    assert "find_references" not in names
+    assert "grep_search" in names  # covers the need
