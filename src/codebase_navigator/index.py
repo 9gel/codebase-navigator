@@ -79,6 +79,36 @@ SPLIT_OVERSIZE_CHUNKS = os.environ.get("CN_SPLIT_OVERSIZE_CHUNKS", "").lower() i
 MAX_CHUNKS_PER_FILE = 1
 
 
+# Tests, examples and fixtures exercise the code being asked about, so they match
+# it semantically while never being the answer to "where is X implemented". They
+# occupied 44% of every top-10 across the benchmark (141 of 320 slots), and on
+# express-view-rendering four of the top five were test files while the actual
+# implementation sat at rank 10. Demoted below implementation, never dropped, and
+# not demoted when the query is asking about tests.
+SUPPORT_PATH_RE = re.compile(
+    r"(^|/)(tests?|testing|spec|specs|examples?|samples?|benchmarks?|fixtures?)(/|$)"
+    r"|(^|/)(test_|conftest)"
+    r"|(_test|\.test|\.spec)\.",
+    re.IGNORECASE,
+)
+
+TEST_SEEKING_RE = re.compile(
+    r"\b(test|tests|testing|spec|specs|fixture|fixtures|example|examples|sample|samples|"
+    r"benchmark|benchmarks|mock|mocks)\b",
+    re.IGNORECASE,
+)
+
+
+def is_support_path(path: str) -> bool:
+    """True for test, example, fixture and benchmark files."""
+    return bool(SUPPORT_PATH_RE.search(path or ""))
+
+
+def is_test_seeking(query: str) -> bool:
+    """True when the query is actually asking about tests or examples."""
+    return bool(TEST_SEEKING_RE.search(query or ""))
+
+
 def is_doc_seeking(query: str) -> bool:
     """True when the query asks about documentation rather than implementation."""
     return bool(DOC_SEEKING_RE.search(query or ""))
@@ -659,6 +689,13 @@ class VectorIndex:
                 seen[r["path"]] = n + 1
                 diversified.append(r)
             scored_results = diversified
+
+        if code_first and not is_test_seeking(query):
+            # Implementation first, support files after. Ordering only -- a query
+            # whose answer really is in a test still finds it in the tail.
+            impl = [r for r in scored_results if not is_support_path(r.get("path", ""))]
+            support = [r for r in scored_results if is_support_path(r.get("path", ""))]
+            scored_results = impl + support
 
         if code_first and not norm_type and not is_doc_seeking(query):
             # Doc-heavy repos drown code in prose: FastAPI indexes 15,839 markdown

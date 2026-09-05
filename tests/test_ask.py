@@ -488,7 +488,10 @@ def test_ask_lookup_question_skips_seed_search(tmp_path: Path):
         assert ans == "Done"
         assert mock_search.call_count == 0, "lookup questions must skip the seed entirely"
         user_msg = session.messages[1]["content"]
-        assert "Repository Structure:" in user_msg
+        # The tree is conceptual-only: every benchmark lookup task went straight to
+        # read_code on the file and line the .tags symbols supplied, so ~166 tokens
+        # of directory listing per turn bought nothing.
+        assert "Repository Structure:" not in user_msg
         assert "no pre-flight retrieval was run" in user_msg
 
 

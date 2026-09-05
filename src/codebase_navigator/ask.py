@@ -1137,8 +1137,17 @@ class AgentSession:
             emit(f"🤖 Question routed as '{question_kind}' — skipping pre-flight retrieval.")
 
         # Compact repository tree
-        repo_tree = build_compact_tree(self.folder, max_depth=2, max_entries=50)
-        tree_section = f"Repository Structure:\n```\n{repo_tree}\n```\n\n" if repo_tree else ""
+        # The tree buys spatial orientation, which only conceptual questions need.
+        # Measured across the benchmark's seven lookup tasks, every one went
+        # straight to read_code on the exact file and line supplied by the .tags
+        # symbol block -- not one of them grepped, and none used the tree. At ~166
+        # tokens re-sent on every turn it was pure overhead on exactly the short
+        # tasks where cn's fixed cost is hardest to amortise.
+        if should_seed:
+            repo_tree = build_compact_tree(self.folder, max_depth=2, max_entries=50)
+            tree_section = f"Repository Structure:\n```\n{repo_tree}\n```\n\n" if repo_tree else ""
+        else:
+            tree_section = ""
 
         # Exact symbol tag discovery
         tag_file = Path(self.custom_index_dir) / ".tags" if self.custom_index_dir else None

@@ -849,3 +849,112 @@ def test_conceptual_verbs_still_win_over_answer_shape():
         "conceptual"
     )
     assert route_question("explain what function dispatches requests") == "conceptual"
+
+
+# --- 20. tests and examples must not outrank implementation -----------------
+
+
+def test_support_paths_are_recognised():
+    from codebase_navigator.index import is_support_path
+
+    for p in (
+        "tests/test_openapi.py",
+        "test/app.router.js",
+        "examples/ejs/index.js",
+        "src/conftest.py",
+        "pkg/foo_test.go",
+        "lib/router.spec.ts",
+        "benchmarks/run.py",
+    ):
+        assert is_support_path(p), p
+    for p in ("lib/response.js", "src/flask/sessions.py", "crates/uv-resolver/src/lib.rs"):
+        assert not is_support_path(p), p
+
+
+def test_search_demotes_tests_below_implementation(tmp_path: Path):
+    """Tests exercise the code being asked about, so they match it semantically
+    while never being the answer.
+
+    They occupied 44% of every top-10 across the benchmark (141 of 320 slots).
+    On express-view-rendering four of the top five were test files and the real
+    implementation sat at rank 10.
+    """
+    idx = VectorIndex(tmp_path, custom_index_dir=str(tmp_path / ".idx"))
+    rows = []
+    for i in range(4):
+        rows.append(
+            {
+                "id": f"t{i}",
+                "path": f"test/res.render{i}.js",
+                "abs_path": str(tmp_path / f"test/res.render{i}.js"),
+                "doc_type": "code_doc",
+                "title": f"res.render{i} test",
+                "start_line": 1,
+                "end_line": 9,
+                "content": "describe('res.render', function(){ it('renders a view'); })",
+            }
+        )
+    rows.append(
+        {
+            "id": "impl",
+            "path": "lib/response.js",
+            "abs_path": str(tmp_path / "lib/response.js"),
+            "doc_type": "code_doc",
+            "title": "response.js > render (function)",
+            "start_line": 1,
+            "end_line": 9,
+            "content": "res.render = function render(view, opts, done) { ... }",
+        }
+    )
+    vecs = idx._embed([r["content"] for r in rows])
+    for r, v in zip(rows, vecs):
+        r["vector"] = v.tolist() if hasattr(v, "tolist") else list(v)
+    idx.table.add(rows)
+    idx._ensure_fts_index()
+
+    res = idx.search("where is res render implemented", limit=5)
+    assert res[0]["path"] == "lib/response.js", [r["path"] for r in res]
+    # demoted, never dropped
+    assert any("test/" in r["path"] for r in res)
+
+
+def test_queries_about_tests_are_not_demoted():
+    from codebase_navigator.index import is_test_seeking
+
+    assert is_test_seeking("where are the tests for the router")
+    assert is_test_seeking("show me an example of custom middleware")
+    assert not is_test_seeking("where is res render implemented")
+
+
+# --- 21. repository tree is conceptual-only ---------------------------------
+
+
+def test_lookup_route_omits_the_repository_tree(tmp_path: Path):
+    """All seven benchmark lookup tasks went straight to read_code on the exact
+    file and line from the .tags symbol block; none grepped, none used the tree.
+
+    At ~166 tokens re-sent every turn it was pure overhead on precisely the short
+    tasks where cn's fixed cost is hardest to amortise.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from codebase_navigator.ask import AgentSession, LLMConfig
+
+    (tmp_path / "main.py").write_text("x = 1\n")
+    chat = MagicMock(return_value={"choices": [{"message": {"role": "assistant", "content": "d"}}]})
+
+    def first_user_message(question: str) -> str:
+        session = AgentSession(tmp_path, LLMConfig(api_key="k"))
+        with (
+            patch("codebase_navigator.ask.call_chat_completions", chat),
+            patch("codebase_navigator.ask.execute_search", MagicMock(return_value=[])),
+        ):
+            session.ask(question, verbose=False)
+        return session.messages[1]["content"]
+
+    assert "Repository Structure" not in first_user_message(
+        "where is SecureCookieSessionInterface defined?"
+    )
+    assert "Repository Structure" in first_user_message(
+        "how does the request dispatch flow work end to end?"
+    )

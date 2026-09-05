@@ -258,6 +258,7 @@ For conceptual questions, `VectorIndex.search()` executes a hybrid search with s
 - **Unclamped Scoring**: Eliminates artificial score ceilings (such as an earlier `min(0.99, ...)` rule), ensuring the model receives clear, differentiated confidence signals.
 - **Per-File Diversity Cap**: Caps candidate chunks to 1 per file. This raised distinct files in top-10 hits from **4.8 to 9.7**.
 - **Code-First Demotion**: Markdown chunks are automatically ranked below code chunks unless the query is explicitly searching for documentation.
+- **Support-File Demotion**: Tests, examples, fixtures and benchmarks rank below implementation unless the query is asking about them. They exercise the code being asked about, so they match it semantically while never being the answer — measured at **44% of every top-10** (141 of 320 slots across the benchmark), and on `express-view-rendering` four of the top five hits were test files while the implementation sat at rank 10.
 
 **Retrieval Progression on 25 Benchmark Tasks:**
 
@@ -267,6 +268,13 @@ For conceptual questions, `VectorIndex.search()` executes a hybrid search with s
 | + Code-first ranking | 17/25 | 19/25 | 22/25 | 0.736 |
 | + Reciprocal Rank Fusion | 18/25 | 20/25 | 21/25 | 0.757 |
 | + Per-file diversity cap | 18/25 | 20/25 | **23/25** | **0.784** |
+
+Re-measured on the current 32-task suite after the answer keys were corrected, demoting support files below implementation moves recall@3 from 25/32 to **30/32** and MRR from 0.720 to **0.760**:
+
+| Configuration | Recall@1 | Recall@3 | Recall@5 | Recall@10 | MRR |
+|---|---|---|---|---|---|
+| Before support-file demotion | 20/32 | 25/32 | 28/32 | 30/32 | 0.720 |
+| After support-file demotion | **21/32** | **30/32** | **30/32** | 30/32 | **0.760** |
 
 ---
 
