@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import os
 import re
 import shutil
@@ -47,6 +48,90 @@ def check_ripgrep_installed(verbose: bool = True, output_stream=sys.stderr) -> b
             file=output_stream,
         )
     return False
+
+
+# Manifest files that declare third-party dependencies, per ecosystem.
+DEPENDENCY_MANIFESTS = (
+    "package.json",
+    "pyproject.toml",
+    "requirements.txt",
+    "Cargo.toml",
+    "go.mod",
+    "Gemfile",
+    "composer.json",
+)
+
+
+def declared_dependencies(folder: Path) -> dict[str, str]:
+    """Map dependency name -> the manifest that declares it.
+
+    Used to answer "why can I not find this symbol": a package listed here whose
+    source is not vendored is external, and no amount of searching will surface
+    it. Express 5 moved routing into the `router` package, so an agent asked
+    where the router matches layers found nothing in lib/ and spent 11 of its 24
+    turns running `ls` and `find` over a repository that never contained it.
+    """
+    found: dict[str, str] = {}
+    for name in DEPENDENCY_MANIFESTS:
+        path = folder / name
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+
+        if name.endswith(".json"):
+            try:
+                data = json.loads(text)
+            except ValueError:
+                continue
+            for section in ("dependencies", "devDependencies", "peerDependencies", "require"):
+                block = data.get(section)
+                if isinstance(block, dict):
+                    for dep in block:
+                        found.setdefault(str(dep), name)
+        elif name == "go.mod":
+            for line in text.splitlines():
+                m = re.match(r"\s*(?:require\s+)?([\w.\-]+/[\w.\-/]+)\s+v", line)
+                if m:
+                    found.setdefault(m.group(1), name)
+        else:
+            for line in text.splitlines():
+                stripped = line.strip().strip("\"',")
+                if not stripped or stripped.startswith(("#", "[")):
+                    continue
+                m = re.match(r"([A-Za-z0-9_.\-]+)\s*[=<>~!\s]", stripped)
+                if m and len(m.group(1)) > 1:
+                    found.setdefault(m.group(1), name)
+    return found
+
+
+def external_dependency_hint(folder: Path, pattern: str) -> str:
+    """Note naming any declared dependency the search pattern refers to."""
+    # Compare on components as well as whole tokens: a search for
+    # "Router.prototype.handle" must still match the `router` dependency.
+    words: set[str] = set()
+    for token in re.findall(r"[A-Za-z0-9_.\-]{3,}", pattern):
+        low = token.lower()
+        words.add(low)
+        words.update(part for part in re.split(r"[._\-]+", low) if len(part) > 2)
+    if not words:
+        return ""
+    hits = []
+    for dep, manifest in declared_dependencies(folder).items():
+        low = dep.lower()
+        base = low.split("/")[-1]
+        if low in words or base in words:
+            hits.append((dep, manifest))
+    if not hits:
+        return ""
+    named = ", ".join(f"`{d}` (declared in {m})" for d, m in sorted(hits)[:3])
+    return (
+        f"\nNote: {named}. That dependency's source is not vendored here, so its "
+        f"implementation cannot be found in this repository — describe how this "
+        f"repository uses it instead of searching further."
+    )
 
 
 def read_code(

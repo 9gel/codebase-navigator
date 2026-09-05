@@ -1120,3 +1120,58 @@ def test_first_turn_states_the_repository_root(tmp_path: Path):
     ):
         session.ask("how does the thing work end to end?", verbose=False)
     assert "Repository root:" in session.messages[1]["content"]
+
+
+# --- 25. an absent symbol may live in a dependency --------------------------
+
+
+def test_absent_symbol_names_the_declared_dependency(tmp_path: Path):
+    """Express 5 moved routing into the external `router` package.
+
+    Asked where the router matches layers, the agent found nothing in lib/ and
+    spent 11 of its 24 turns running ls and find over a repository that never
+    contained it (-113.5% against the baseline).
+    """
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib" / "application.js").write_text("var Router = require('router');\n")
+    (tmp_path / "package.json").write_text(
+        json.dumps({"name": "demo", "dependencies": {"router": "^2.2.0", "debug": "^4.4.0"}})
+    )
+
+    out = execute_tool_call(tmp_path, "grep_search", {"pattern": "Router.prototype.handle"})
+    assert "No pattern matches found" in out
+    assert "router" in out and "package.json" in out
+    assert "not vendored" in out
+
+
+def test_no_dependency_hint_when_nothing_matches(tmp_path: Path):
+    """The note must not fire for an ordinary typo or a genuinely local symbol."""
+    (tmp_path / "package.json").write_text(
+        json.dumps({"name": "demo", "dependencies": {"router": "^2.2.0"}})
+    )
+    (tmp_path / "a.js").write_text("var x = 1;\n")
+    out = execute_tool_call(tmp_path, "grep_search", {"pattern": "ZZnotarealthingZZ"})
+    assert "No pattern matches found" in out
+    assert "not vendored" not in out
+
+
+def test_declared_dependencies_reads_each_ecosystem(tmp_path: Path):
+    from codebase_navigator.tools import declared_dependencies
+
+    (tmp_path / "package.json").write_text(json.dumps({"dependencies": {"router": "^2.0.0"}}))
+    (tmp_path / "go.mod").write_text("module demo\n\nrequire github.com/labstack/echo/v4 v4.11.0\n")
+    (tmp_path / "requirements.txt").write_text("httpx>=0.27\n# comment\n")
+
+    deps = declared_dependencies(tmp_path)
+    assert deps.get("router") == "package.json"
+    assert deps.get("github.com/labstack/echo/v4") == "go.mod"
+    assert deps.get("httpx") == "requirements.txt"
+
+
+def test_dependency_hint_matches_on_name_components(tmp_path: Path):
+    """`Router.prototype.handle` is one token; the match is on its components."""
+    from codebase_navigator.tools import external_dependency_hint
+
+    (tmp_path / "package.json").write_text(json.dumps({"dependencies": {"router": "^2.0.0"}}))
+    assert "router" in external_dependency_hint(tmp_path, "Router.prototype.handle")
+    assert external_dependency_hint(tmp_path, "unrelated_symbol") == ""

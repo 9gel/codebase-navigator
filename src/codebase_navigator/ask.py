@@ -22,6 +22,7 @@ from .sandbox_bash import bash_tool_spec, run_sandboxed_bash
 from .tags import TagsManager
 from .tools import (
     check_ripgrep_installed,
+    external_dependency_hint,
     find_references,
     get_call_tree,
     grep_search,
@@ -1021,7 +1022,12 @@ def execute_tool_call(
                         "Files containing it: " + ", ".join(where),
                     ]
                     return "\n".join(out)
-            return f"No pattern matches found for '{pattern}'."
+            # An absent symbol is often absent because it lives in a dependency
+            # rather than in this repository. Saying so ends the search; without
+            # it, express-route-matching spent 11 of 24 turns running ls/find for
+            # Express 5's router, which is the external `router` package.
+            hint = external_dependency_hint(folder, pattern)
+            return f"No pattern matches found for '{pattern}'.{hint}"
         out = []
         for m in matches:
             out.append(
