@@ -764,3 +764,88 @@ def test_unknown_model_raises_instead_of_guessing():
 
     with pytest.raises(ValueError, match="Unknown embedding dimension"):
         resolve_vector_dim("made-up/not-a-real-model")
+
+
+# --- 17. read_code is ranges-only -------------------------------------------
+
+
+def test_read_code_spec_advertises_only_ranges():
+    """48% of reads were single-range and 46% re-opened the file just read.
+
+    express-app-listen made three separate calls to the same file for adjacent
+    spans, matching the baseline's turn count while costing 50% more tokens.
+    Removing the scalar form removes the choice.
+    """
+    spec = next(t for t in AGENT_TOOLS_SPEC if t["function"]["name"] == "read_code")
+    props = spec["function"]["parameters"]["properties"]
+    assert set(props) == {"ranges"}
+    assert spec["function"]["parameters"]["required"] == ["ranges"]
+
+
+def test_scalar_read_code_still_served_with_a_nudge(tmp_path: Path):
+    """A model may still emit the old shape; serve it rather than burn a turn."""
+    (tmp_path / "a.py").write_text("alpha\nbeta\ngamma\n")
+    out = execute_tool_call(tmp_path, "read_code", {"path": "a.py", "start_line": 2, "end_line": 2})
+    assert "beta" in out
+    assert "ranges" in out  # the nudge toward batching
+
+
+def test_read_code_without_ranges_or_path_explains_itself(tmp_path: Path):
+    out = execute_tool_call(tmp_path, "read_code", {})
+    assert "ranges" in out and "Error" in out
+
+
+# --- 18. weak symbol candidates must be specific ----------------------------
+
+
+def test_weak_candidates_need_to_be_specific(tmp_path: Path):
+    """A real lowercase symbol resolves to one file; an English word scatters.
+
+    "what class handles client side session cookies and signing in flask by
+    default?" previously returned five symbols costing 286 tokens per turn --
+    `client` from three conftest.py fixtures, `session` from __init__.py and
+    ctx.py -- none pointing at sessions.py where the answer lives.
+    """
+    tags = (
+        "!_TAG_FILE_FORMAT\t2\t/extended format/\n"
+        # scattered English word: three different files define `client`
+        'client\ttests/conftest.py\t/^def client():$/;"\tf\tline:10\n'
+        'client\texamples/a/conftest.py\t/^def client():$/;"\tf\tline:11\n'
+        'client\texamples/b/conftest.py\t/^def client():$/;"\tf\tline:12\n'
+        # specific lowercase symbol: one file
+        'flaskgroup\tsrc/cli.py\t/^class flaskgroup:$/;"\tc\tline:99\n'
+    )
+    (tmp_path / ".tags").write_text(tags, encoding="utf-8")
+
+    from codebase_navigator.ask import find_preflight_symbols
+
+    scattered = find_preflight_symbols(tmp_path, "how does the client work here")
+    assert scattered == [], "an English word matching many files must not anchor the agent"
+
+    specific = find_preflight_symbols(tmp_path, "where is flaskgroup")
+    assert [m["symbol"] for m in specific] == ["flaskgroup"]
+
+
+# --- 19. router word-count cap removed --------------------------------------
+
+
+def test_explicit_answer_shape_routes_to_lookup_regardless_of_length():
+    """A <=8 word cap sent a 13-word "what class ..." question to the full seed.
+
+    That cost 949 tokens re-sent on every turn of a 4-turn task whose answer was
+    a single named class.
+    """
+    long_lookup = "what class handles client side session cookies and signing in flask by default?"
+    assert len(long_lookup.split()) > 8
+    assert route_question(long_lookup) == "lookup"
+    assert (
+        route_question("which file contains the retry helper for the transport layer") == "lookup"
+    )
+
+
+def test_conceptual_verbs_still_win_over_answer_shape():
+    """Length is no longer a signal, so the conceptual check must carry the load."""
+    assert route_question("what class handles sessions and how does its signing flow work") == (
+        "conceptual"
+    )
+    assert route_question("explain what function dispatches requests") == "conceptual"

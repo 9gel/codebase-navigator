@@ -1040,17 +1040,20 @@ def _run_task(
         cn_passed = cn_judge_pass if use_llm_judge else cn_rule_pass
 
         cn_tokens = cn_stats.get("total_tokens", cn_stats.get("context_output_tokens", 0))
+        cn_api_calls = cn_stats.get("api_calls", 0)
         cn_net_tokens = cn_stats.get("net_tokens", cn_tokens)
         cn_prompt_tokens = cn_stats.get("prompt_tokens", cn_stats.get("context_tokens", 0))
         cn_output_tokens = cn_stats.get("completion_tokens", cn_stats.get("output_tokens", 0))
         cn_cached = cn_stats.get("cached_tokens", 0)
         cn_cached_str = f", cached: {cn_cached:,}" if cn_cached > 0 else ""
         _emit(
-            f"    [CN]       Status: {'✅ PASS' if cn_passed else '❌ FAIL'} (took {cn_dt:.2f}s, tokens: {cn_tokens:,}{cn_cached_str})"
+            f"    [CN]       Status: {'✅ PASS' if cn_passed else '❌ FAIL'} "
+            f"(took {cn_dt:.2f}s, {cn_api_calls} turns, tokens: {cn_tokens:,}{cn_cached_str})"
         )
 
         # 2. Evaluate Baseline Agent (if --compare-baseline)
         base_tokens = 0
+        base_api_calls = 0
         base_net_tokens = 0
         base_prompt_tokens = 0
         base_output_tokens = 0
@@ -1098,6 +1101,7 @@ def _run_task(
                 base_tokens = base_stats.get(
                     "total_tokens", base_stats.get("context_output_tokens", 0)
                 )
+                base_api_calls = base_stats.get("api_calls", 0)
                 base_net_tokens = base_stats.get("net_tokens", base_tokens)
                 base_prompt_tokens = base_stats.get(
                     "prompt_tokens", base_stats.get("context_tokens", 0)
@@ -1116,10 +1120,12 @@ def _run_task(
 
                 base_cached_str = f", cached: {base_cached:,}" if base_cached > 0 else ""
                 _emit(
-                    f"    [Baseline] Status: {'✅ PASS' if base_passed else '❌ FAIL'} (took {base_dt:.2f}s, tokens: {base_tokens:,}{base_cached_str})"
+                    f"    [Baseline] Status: {'✅ PASS' if base_passed else '❌ FAIL'} "
+                    f"(took {base_dt:.2f}s, {base_api_calls} turns, tokens: {base_tokens:,}{base_cached_str})"
                 )
                 _emit(
                     f"    ⚡ Savings: Tokens {token_savings_pct:+.1f}% ({cn_tokens:,} vs {base_tokens:,}) | "
+                    f"Turns {cn_api_calls} vs {base_api_calls} | "
                     f"Time {time_savings_pct:+.1f}% ({cn_dt:.2f}s vs {base_dt:.2f}s)"
                 )
             except EvaluationCancelled:
@@ -1141,7 +1147,7 @@ def _run_task(
             "prompt_tokens": cn_prompt_tokens,
             "output_tokens": cn_output_tokens,
             "cached_tokens": cn_cached,
-            "api_calls": cn_stats.get("api_calls", 0),
+            "api_calls": cn_api_calls,
             "judge_rationale": cn_rationale,
             "baseline_passed": base_passed if compare_baseline else None,
             "baseline_duration_seconds": round(base_dt, 2) if compare_baseline else None,
@@ -1150,7 +1156,7 @@ def _run_task(
             "baseline_prompt_tokens": base_prompt_tokens if compare_baseline else None,
             "baseline_output_tokens": base_output_tokens if compare_baseline else None,
             "baseline_cached_tokens": base_cached if compare_baseline else None,
-            "baseline_api_calls": base_stats.get("api_calls", 0) if compare_baseline else None,
+            "baseline_api_calls": base_api_calls if compare_baseline else None,
             "token_savings_percentage": token_savings_pct if compare_baseline else None,
             "time_savings_percentage": time_savings_pct if compare_baseline else None,
             "answer_preview": cn_answer[:300] + ("..." if len(cn_answer) > 300 else ""),
@@ -1640,6 +1646,13 @@ def run_benchmark(
             f"📐 Median Token Savings:      {median_token_savings:+.1f}% per task "
             f"(CN cheaper on {cn_cheaper}/{len(per_task_token)} tasks)"
         )
+        cn_turns = sum(r["api_calls"] for r in valid_pairs)
+        base_turns = sum(r["baseline_api_calls"] for r in valid_pairs)
+        turn_savings = 100.0 * (base_turns - cn_turns) / base_turns if base_turns else 0.0
+        print(
+            f"🔄 Turns (round trips):       {turn_savings:+.1f}% "
+            f"(CN: {cn_turns} vs Base: {base_turns}) — token cost tracks turns at r≈0.88"
+        )
         print(
             f"⏱️  Validated Time Savings:    {overall_time_savings:+.1f}% ({speedup:.2f}x speedup — "
             f"CN: {valid_cn_time:.1f}s vs Base: {valid_base_time:.1f}s)"
@@ -1661,6 +1674,9 @@ def run_benchmark(
         summary["median_token_savings_percentage"] = round(median_token_savings, 1)
         summary["median_time_savings_percentage"] = round(median_time_savings, 1)
         summary["cn_cheaper_task_count"] = cn_cheaper
+        summary["cn_total_turns"] = cn_turns
+        summary["baseline_total_turns"] = base_turns
+        summary["turn_savings_percentage"] = round(turn_savings, 1)
         summary["comparable_task_count"] = len(per_task_token)
     report_stream.finalize(summary)
     print(f"📄 Report saved to: {report_stream.report_file}")

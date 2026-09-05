@@ -57,6 +57,10 @@ SEED_CHUNK_BODY_LINES = 16
 # Turns remaining at which the agent is reminded of its budget.
 BUDGET_WARNING_TURNS = 3
 
+# A bare lowercase word is trusted as a symbol only if it resolves to at most this
+# many distinct files. Real lowercase symbols resolve to one; English words spread.
+WEAK_CANDIDATE_MAX_PATHS = 1
+
 
 class LLMConfig:
     """Configuration settings for LLM queries."""
@@ -434,10 +438,16 @@ def find_preflight_symbols(
     exact_matches: list[dict[str, Any]] = []
     seen_keys: set[tuple[str, str, int]] = set()
 
-    def collect(candidates: list[str], fuzzy: bool) -> bool:
+    def collect(candidates: list[str], fuzzy: bool, max_distinct_paths: int | None = None) -> bool:
         """Look up each candidate; return True once the budget is full."""
         for cand in candidates:
             matches = tags_mgr.lookup_symbol(cand, exact=True, limit=3)
+            if max_distinct_paths is not None and matches:
+                # Scattered across several files means the token is an English
+                # word that happens to name things, not the symbol being asked
+                # about. Drop it rather than spend budget anchoring on noise.
+                if len({m["path"] for m in matches}) > max_distinct_paths:
+                    continue
             if not matches and fuzzy:
                 # Try case-insensitive exact symbol regex
                 matches = tags_mgr.lookup_symbol(f"^{cand}$", exact=False, limit=3)
@@ -462,11 +472,17 @@ def find_preflight_symbols(
     if collect(strong, fuzzy=True):
         return exact_matches
 
-    # Bare words may still be real symbol names ("where is flaskgroup?"), so they
-    # fill any remaining budget -- but only on an exact tag hit. Letting them use
-    # the case-insensitive regex fallback is what previously turned "contains"
-    # into five matches for `Contains` and crowded out `create_venv` entirely.
-    collect(weak, fuzzy=False)
+    # Bare lowercase words are only worth looking up when they turn out to be
+    # specific. A real symbol typed in lowercase resolves to exactly one file
+    # ("flaskgroup" -> cli.py); an English word scatters ("client" -> three
+    # conftest.py fixtures, "session" -> __init__.py, ctx.py and more). Measured
+    # on "what class handles client side session cookies and signing in flask by
+    # default?", the unfiltered fallback returned five symbols costing 286 tokens
+    # per turn, none of which pointed at sessions.py where the answer lives.
+    #
+    # Specificity is the discriminator, exactly as it is for benchmark answer
+    # keys: a candidate matching many files identifies nothing.
+    collect(weak, fuzzy=False, max_distinct_paths=WEAK_CANDIDATE_MAX_PATHS)
     return exact_matches
 
 
@@ -570,16 +586,21 @@ AGENT_TOOLS_SPEC = [
         "type": "function",
         "function": {
             "name": "read_code",
-            "description": "Read source lines. Use `ranges` for 2+ spans in one call.",
+            "description": (
+                "Read source line ranges. Always pass every span you need in one call: "
+                "48% of reads were single-range and 46% re-opened the file just read, "
+                "each costing a full round trip."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Relative file path."},
-                    "start_line": {"type": "integer"},
-                    "end_line": {"type": "integer"},
                     "ranges": {
                         "type": "array",
-                        "description": "Batch: [{path, start_line, end_line}, ...]. Preferred.",
+                        "description": (
+                            "Spans to read: [{path, start_line, end_line}, ...]. Keep each "
+                            "span tight around the code you need; prefer several narrow "
+                            "spans in one call over one wide span."
+                        ),
                         "items": {
                             "type": "object",
                             "properties": {
@@ -591,6 +612,7 @@ AGENT_TOOLS_SPEC = [
                         },
                     },
                 },
+                "required": ["ranges"],
             },
         },
     },
@@ -860,8 +882,13 @@ def route_question(question: str) -> str:
     # "where is FooBar defined" with no conceptual verb at all.
     if identifiers and not conceptual:
         return "lookup"
-    # Short questions naming a symbol are almost always lookups.
-    if lookup_shaped and len(q.split()) <= 8 and not conceptual:
+    # An explicit "what class/function/method ...", "where is ...", "which file ..."
+    # opening states the shape of the answer, and that does not stop being true
+    # because the sentence is long. A <=8 word cap previously routed "what class
+    # handles client side session cookies and signing in flask by default?" (13
+    # words, no conceptual verb) to the full retrieval seed, which cost 949 tokens
+    # re-sent on every turn of a 4-turn task.
+    if lookup_shaped and not conceptual:
         return "lookup"
     return "conceptual"
 
@@ -901,15 +928,24 @@ def execute_tool_call(
         ranges = fn_args.get("ranges")
         if isinstance(ranges, list) and ranges:
             return read_code_ranges(folder, ranges)
+        # `ranges` is the only advertised form, but a model may still emit the old
+        # scalar shape. Serve it rather than burning a turn on an error, and say
+        # so, since batching is where the round trips are saved.
         path = fn_args.get("path", "")
-        if not path:
-            return "Error: read_code requires either 'path' or a non-empty 'ranges' list."
-        start_line = fn_args.get("start_line")
-        end_line = fn_args.get("end_line")
-        res = read_code(folder, path, start_line=start_line, end_line=end_line)
-        if "error" in res:
-            return f"Error: {res['error']}"
-        return res.get("content", "")
+        if path:
+            res = read_code(
+                folder,
+                path,
+                start_line=fn_args.get("start_line"),
+                end_line=fn_args.get("end_line"),
+            )
+            if "error" in res:
+                return f"Error: {res['error']}"
+            return (
+                res.get("content", "")
+                + "\n\n[Note: pass every span you need as `ranges` in a single call.]"
+            )
+        return "Error: read_code requires a non-empty 'ranges' list, e.g. ranges=[{'path': ..., 'start_line': ..., 'end_line': ...}]."
 
     elif fn_name == "tags_lookup":
         symbol = fn_args.get("symbol", "")

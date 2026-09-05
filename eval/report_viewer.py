@@ -91,20 +91,25 @@ def render_result(r: dict[str, Any], compare_baseline: bool) -> list[str]:
         return lines
 
     cn_status = "✅ PASS" if r.get("passed") else "❌ FAIL"
-    lines.append(f"    [CN]       Status: {cn_status} (took {r.get('duration_seconds', 0):.2f}s)")
+    lines.append(
+        f"    [CN]       Status: {cn_status} (took {r.get('duration_seconds', 0):.2f}s, "
+        f"{r.get('api_calls', 0)} turns)"
+    )
     lines.append(_render_tokens(r, "    [CN]      "))
 
     if compare_baseline and r.get("baseline_passed") is not None:
         base_status = "✅ PASS" if r.get("baseline_passed") else "❌ FAIL"
         lines.append(
             f"    [Baseline] Status: {base_status} "
-            f"(took {r.get('baseline_duration_seconds', 0):.2f}s)"
+            f"(took {r.get('baseline_duration_seconds', 0):.2f}s, "
+            f"{r.get('baseline_api_calls', 0)} turns)"
         )
         lines.append(_render_tokens(r, "    [Baseline]", field_prefix="baseline_"))
         lines.append(
             f"    ⚡ Savings: cumulative API tokens "
             f"{r.get('token_savings_percentage', 0):+.1f}% "
             f"({r.get('tokens', 0):,} vs {r.get('baseline_tokens', 0):,}) | "
+            f"Turns {r.get('api_calls', 0)} vs {r.get('baseline_api_calls', 0)} | "
             f"Time {r.get('time_savings_percentage', 0):+.1f}% "
             f"({r.get('duration_seconds', 0):.2f}s vs {r.get('baseline_duration_seconds', 0):.2f}s)"
         )
@@ -243,6 +248,13 @@ def render_summary(report: dict[str, Any]) -> list[str]:
         lines.append(
             f"📐 Median Token Savings:      {prefix}{median_token:+.1f}% per task "
             f"(CN cheaper on {cn_cheaper}/{len(per_task_token)} tasks)"
+        )
+        cn_turns = sum(r.get("api_calls", 0) for r in valid_pairs)
+        base_turns = sum(r.get("baseline_api_calls", 0) for r in valid_pairs)
+        turn_savings = 100.0 * (base_turns - cn_turns) / base_turns if base_turns else 0.0
+        lines.append(
+            f"🔄 Turns (round trips):       {prefix}{turn_savings:+.1f}% "
+            f"(CN: {cn_turns} vs Base: {base_turns})"
         )
         lines.append(
             f"⏱️  Validated Time Savings:    {prefix}{time_savings:+.1f}% ({speedup:.2f}x speedup — "
