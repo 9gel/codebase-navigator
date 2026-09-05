@@ -13,7 +13,7 @@ When developers or AI coding agents explore an unfamiliar codebase, they run int
 - **Deterministic Symbol Navigation**: Git-aware `universal-ctags` for instant 1-step definition lookups.
 - **Live Incremental Watcher**: A background daemon (`cn watch`) that keeps indexes fresh and models pre-warmed in memory.
 - **Session Continuity & KV Caching**: In-memory session tracking that lets subsequent CLI invocations reuse prompt history and benefit from provider-side KV prompt caching.
-- **Purpose-Built Agent Harness (`cn ask`)**: An autonomous agent equipped with navigation tools (`search`, `tags_lookup`, `read_code`, `grep_search`, `find_references`) and a fast heuristic router that skips semantic retrieval when looking up raw symbols.
+- **Purpose-Built Agent Harness (`cn ask`)**: An autonomous agent equipped with navigation tools (`search`, `tags_lookup`, `read_code`, `grep_search`) and a fast heuristic router that skips semantic retrieval when looking up raw symbols.
 
 ```
     ┌────────────────────────────────────────────────────────┐
@@ -110,8 +110,11 @@ Rather than giving the LLM generic bash or grep access, `codebase-navigator` pro
 | `search` | Hybrid LanceDB search (RRF over vector + BM25) | Semantic retrieval for concepts, modules, and docstrings. |
 | `tags_lookup` | Regex match on `.tags` | Instant 1-step symbol definition lookup without guessing files. |
 | `read_code` | Line-bounded file reader | Reads specific spans of code. Supports a `ranges` array so multiple spans or files can be read in a single turn. |
-| `grep_search` | Subprocess `rg --json` with pure Python fallback | Fast exact string and pattern matching. Includes output truncation to protect context windows. |
-| `find_references` | Hybrid ctags + ripgrep | Returns a symbol's definition and all caller/usage sites repo-wide in a single turn. |
+| `grep_search` | Subprocess `rg --json` with pure Python fallback | Fast exact string and pattern matching. Output is byte-capped per match, and an empty scoped search reports whether the pattern exists outside the glob. |
+
+`find_references` remains implemented but, like `call_tree`, is no longer advertised in the default tool spec: it was called once across 32 benchmark tasks while costing 64 tokens on each of 199 turns — roughly 12,700 tokens for a single invocation. `grep_search` covers the need.
+
+**A grep miss must say whose fault it is.** A glob like `src/flask/*.py` does not recurse, so searching it for `register_blueprint` returned "No pattern matches found" while 25 matches sat in `src/flask/sansio/`. On `flask-cli-click` the agent read that as *not here*, tried four more globs, then fell back to raw `bash grep` six times — twelve of its sixteen turns spent recovering from a message that was true and useless. An empty scoped search now retries unscoped and reports the count, the files, and the recursion caveat. The general lesson: a tool result the agent cannot act on correctly costs turns, and turns are the whole budget.
 
 **Tool Refinements**:
 - **Why `call_tree` was removed from the active spec**: It was called zero times across 25 benchmark tasks, yet its schema consumed tokens on every turn. `find_references` solved the same need in fewer steps.
