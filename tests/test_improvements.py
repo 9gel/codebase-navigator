@@ -1013,3 +1013,38 @@ def test_find_references_is_not_in_the_default_spec():
     names = [t["function"]["name"] for t in AGENT_TOOLS_SPEC]
     assert "find_references" not in names
     assert "grep_search" in names  # covers the need
+
+
+# --- 23. a glob miss must not read as "not here" ----------------------------
+
+
+def test_grep_reports_matches_outside_the_glob(tmp_path: Path):
+    """`src/flask/*.py` does not recurse, so a search for register_blueprint
+    reported zero matches while 25 sat in src/flask/sansio/.
+
+    The agent read that as "not here", tried four more globs, then fell back to
+    raw bash grep six times -- twelve turns on a true but misleading message.
+    """
+    (tmp_path / "src" / "pkg" / "sub").mkdir(parents=True)
+    (tmp_path / "src" / "pkg" / "top.py").write_text("def unrelated(): pass\n")
+    (tmp_path / "src" / "pkg" / "sub" / "deep.py").write_text("def register_blueprint(): pass\n")
+
+    out = execute_tool_call(
+        tmp_path, "grep_search", {"pattern": "register_blueprint", "path_glob": "src/pkg/*.py"}
+    )
+    assert "exist elsewhere in the repository" in out
+    assert "does not recurse" in out
+    assert "deep.py" in out
+
+
+def test_grep_still_reports_a_genuinely_absent_pattern(tmp_path: Path):
+    (tmp_path / "a.py").write_text("x = 1\n")
+    out = execute_tool_call(tmp_path, "grep_search", {"pattern": "ZZabsentZZ", "path_glob": "*.py"})
+    assert "No pattern matches found" in out
+    assert "elsewhere" not in out
+
+
+def test_grep_without_a_glob_is_unchanged(tmp_path: Path):
+    (tmp_path / "a.py").write_text("x = 1\n")
+    out = execute_tool_call(tmp_path, "grep_search", {"pattern": "ZZabsentZZ"})
+    assert "No pattern matches found" in out

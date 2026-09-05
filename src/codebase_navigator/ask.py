@@ -1002,6 +1002,23 @@ def execute_tool_call(
             folder, pattern, path_glob=path_glob, case_sensitive=case_sensitive, limit=limit
         )
         if not matches:
+            # "No matches" is ambiguous when a glob was supplied: the pattern may
+            # be absent, or the glob may simply not reach it. `src/flask/*.py`
+            # does not recurse, so a search for register_blueprint reported zero
+            # while 25 matches sat in src/flask/sansio/. The agent read that as
+            # "not here", tried four more globs, then fell back to raw bash grep
+            # six times -- twelve turns spent on a true but misleading message.
+            if path_glob:
+                unscoped = grep_search(folder, pattern, case_sensitive=case_sensitive, limit=limit)
+                if unscoped:
+                    where = sorted({m["path"] for m in unscoped})[:5]
+                    out = [
+                        f"No matches for '{pattern}' under path_glob='{path_glob}', "
+                        f"but {len(unscoped)} match(es) exist elsewhere in the repository. "
+                        f"Note that a glob like 'a/b/*.py' does not recurse; use 'a/b/**/*.py'.",
+                        "Files containing it: " + ", ".join(where),
+                    ]
+                    return "\n".join(out)
             return f"No pattern matches found for '{pattern}'."
         out = []
         for m in matches:
