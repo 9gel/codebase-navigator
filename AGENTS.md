@@ -12,6 +12,11 @@ This document provides mandatory project instructions, standards, and operationa
 
 When making changes:
 1. **Single Source of Truth**: Increment `__version__` in [`src/codebase_navigator/__init__.py`](file:///home/nigel/code/codebase-navigator/src/codebase_navigator/__init__.py).
+2. **Bump the patch segment by default.** It is an integer, not a digit: `0.8.9` → `0.8.10` → `0.8.11` is correct and expected. There is no reason to roll the minor over just because the patch reached 9.
+3. **Reserve the minor for changes worth announcing** — a new default, a changed tool contract, anything requiring a re-index or invalidating existing indexes. Ordinary fixes, refactors, test additions and documentation are patch bumps however many there are in a row.
+
+> [!NOTE]
+> This project moves in many small measured steps, so patch numbers climb quickly. That is the intended shape: a long patch series within one minor tells the reader those changes were incremental and compatible, which is information a rolled-over minor would destroy.
 
 ---
 
