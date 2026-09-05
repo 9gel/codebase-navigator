@@ -1240,6 +1240,33 @@ def _run_task(
 # from bad. Validate at load time rather than discovering it in the numbers.
 MAX_ANSWER_KEY_MATCHES = 5
 
+# Identifier-shaped tokens in the prose answer key: CamelCase or snake_case.
+ANSWER_KEY_IDENT_RE = re.compile(r"\b([A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+|[a-z]+(?:_[a-z0-9]+)+)\b")
+ANSWER_KEY_IDENT_ALLOW = {
+    "javascript",
+    "typescript",
+    "starlette",
+    "pydantic",
+    "itsdangerous",
+    "goroutine",
+}
+
+
+def _repo_contains(repo_dir: Path, needle: str) -> bool:
+    """True if the literal string occurs anywhere in the repository."""
+    try:
+        res = subprocess.run(
+            ["rg", "-l", "--fixed-strings", "-m", "1", needle, "."],
+            cwd=repo_dir,
+            capture_output=True,
+            text=True,
+            timeout=20.0,
+            check=False,
+        )
+        return bool(res.stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        return True  # cannot check; do not cry wolf
+
 
 def validate_answer_keys(benchmarks: list[dict[str, Any]]) -> list[str]:
     """Return a warning per task whose required_files is missing or too broad."""
@@ -1255,6 +1282,22 @@ def validate_answer_keys(benchmarks: list[dict[str, Any]]) -> list[str]:
             continue
         paths = [str(p.relative_to(repo_dir)) for p in code_files + doc_files]
         for task in group.get("tasks", []):
+            # The prose key is what the LLM judge scores against, and it was
+            # LLM-authored too. httpx-streaming-response named "Response.stream()",
+            # a method that does not exist -- httpx has Client.stream() and
+            # Response.read()/iter_*() -- and failed a correct answer for
+            # contradicting it. Flag identifiers in the key that appear nowhere in
+            # the repository.
+            key_text = task.get("expected_answer_key") or ""
+            for ident in sorted(set(ANSWER_KEY_IDENT_RE.findall(key_text))):
+                if len(ident) < 6 or ident.lower() in ANSWER_KEY_IDENT_ALLOW:
+                    continue
+                if not any(ident in p for p in paths) and not _repo_contains(repo_dir, ident):
+                    warnings.append(
+                        f"{task['id']}: expected_answer_key names {ident!r}, "
+                        f"which does not appear anywhere in {group['repo']}"
+                    )
+
             required = task.get("required_files") or []
             if not required:
                 warnings.append(f"{task['id']}: no required_files")

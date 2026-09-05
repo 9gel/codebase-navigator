@@ -614,3 +614,47 @@ def test_validate_answer_keys_rejects_missing_and_empty(tmp_path, monkeypatch):
 
     empty = [{"repo": "demo", "tasks": [{"id": "t2", "required_files": []}]}]
     assert "no required_files" in runner.validate_answer_keys(empty)[0]
+
+
+def test_validate_answer_keys_flags_hallucinated_symbols(tmp_path, monkeypatch):
+    """The prose key is what the LLM judge scores against, and it was LLM-written.
+
+    httpx-streaming-response named "Response.stream()" -- a method httpx does not
+    have; it has Client.stream() and Response.read()/iter_*() -- and failed a
+    correct answer for contradicting it.
+    """
+    from eval import runner
+
+    repo = tmp_path / "demo"
+    repo.mkdir(parents=True)
+    (repo / "models.py").write_text("class Response:\n    def read(self): ...\n")
+    monkeypatch.setattr(runner, "REPOS_DIR", tmp_path)
+
+    phantom = [
+        {
+            "repo": "demo",
+            "tasks": [
+                {
+                    "id": "t-phantom",
+                    "required_files": ["models.py"],
+                    "expected_answer_key": "Closed in Response.stream() via StreamingHandler.",
+                }
+            ],
+        }
+    ]
+    warnings = runner.validate_answer_keys(phantom)
+    assert any("StreamingHandler" in w for w in warnings), warnings
+
+    real = [
+        {
+            "repo": "demo",
+            "tasks": [
+                {
+                    "id": "t-real",
+                    "required_files": ["models.py"],
+                    "expected_answer_key": "Response.read() in models.py.",
+                }
+            ],
+        }
+    ]
+    assert runner.validate_answer_keys(real) == []

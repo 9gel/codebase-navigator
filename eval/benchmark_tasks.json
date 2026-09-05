@@ -32,7 +32,7 @@
       {
         "id": "flask-session-interface",
         "question": "what class handles client side session cookies and signing in flask by default?",
-        "expected_answer_key": "SecureCookieSessionFactory or SecureCookieSessionInterface in src/flask/sessions.py using itsdangerous for cookie serialization and signing.",
+        "expected_answer_key": "SecureCookieSessionInterface in src/flask/sessions.py, using itsdangerous (URLSafeTimedSerializer) for cookie serialization and signing.",
         "required_keywords": [
           "SecureCookieSessionInterface",
           "sessions.py"
@@ -227,7 +227,7 @@
       {
         "id": "httpx-streaming-response",
         "question": "how does response stream iterating work and where is stream context manager closed?",
-        "expected_answer_key": "In httpx/_models.py in Response.stream() and Response.read() using ByteStream or SyncByteStream.",
+        "expected_answer_key": "In httpx/_models.py: Response.iter_bytes()/iter_text()/iter_lines()/iter_raw() drive iteration and call Response.close() once the body is exhausted; Response.read() joins iter_bytes(). close() calls SyncByteStream.close() on the bound stream. The context manager is Client.stream() in httpx/_client.py, which wraps the transport stream in BoundSyncStream; Response itself has no __enter__/__exit__.",
         "required_keywords": [
           "Response",
           "_models.py"
@@ -258,7 +258,7 @@
       {
         "id": "express-route-matching",
         "question": "where does express router process middleware and match route layers?",
-        "expected_answer_key": "In Express 5.x, routing logic was extracted into the external 'router' npm package dependency (required in lib/express.js and lib/application.js), with app.lazyrouter() or app.handle() delegating request dispatching to it.",
+        "expected_answer_key": "In Express 5.x routing was extracted into the external 'router' npm package (required in lib/express.js and lib/application.js); app.handle() in lib/application.js delegates request dispatching to this.router.",
         "required_keywords": [
           "router",
           "application.js"
