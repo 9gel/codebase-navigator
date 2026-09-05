@@ -114,6 +114,8 @@ Rather than giving the LLM generic bash or grep access, `codebase-navigator` pro
 
 `find_references` remains implemented but, like `call_tree`, is no longer advertised in the default tool spec: it was called once across 32 benchmark tasks while costing 64 tokens on each of 199 turns — roughly 12,700 tokens for a single invocation. `grep_search` covers the need.
 
+**Tool payloads carry repository-relative paths.** An absolute `file://` URI on every hit was **50% of a grep result** (562 of 1,120 tokens on one fastapi search) and **26% of the seed** — and both are re-sent on every subsequent turn. The URIs exist so the final answer can carry clickable links, so the repository root is now stated once in the first message and tool results show `path:line` only. Measured on `fastapi-dependency-overrides`: grep 1,120 → 538 tokens, seed 1,048 → 760.
+
 **Measured and rejected: snapping reads to definition boundaries.** A range-based read of a function body is inherently sequential — the agent cannot know it needs lines 570-595 until it has read 500-570 — and on `express-view-rendering` it read `lib/application.js` at 500-570, then 570-595, then 615-645, with the first two both inside `app.render` (522-597). Widening each request to its enclosing definition (via ctags line numbers in `.tags`, so language-aware with no parser and no extra tool) does fix that case exactly: 500-570 returns 494-597 and the follow-up disappears.
 
 Replayed across every read in a full run it loses. The saving needs a *later* read of the same file to land inside the widened range, which happened 4 times in 126 reads, while the cost is paid on all of them:

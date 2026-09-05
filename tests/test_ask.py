@@ -145,7 +145,10 @@ def test_format_chunks_for_llm_populated():
     ]
     formatted = format_chunks_for_llm(results)
     assert "[1] File: src/ipc.py:10-25" in formatted
-    assert "file:///repo/src/ipc.py#L10-L25" in formatted
+    # Tool payloads carry repository-relative paths only: an absolute file:// URI
+    # on every hit was half of a grep result and a quarter of the seed, both
+    # re-sent on every later turn. The repository root is stated once instead.
+    assert "file://" not in formatted
     # Relevance is expressed relative to the top hit, not as an absolute score:
     # RRF values are unbounded and were previously all clamped to 99%.
     assert "Relevance: 100%" in formatted
@@ -180,7 +183,7 @@ def test_format_chunks_for_llm_tiered():
     assert "[1] File: src/app.py:1-20" in formatted
     assert "def create_app(): return None" in formatted
     assert "Additional Candidate Locations" in formatted
-    assert "[2] [src/sessions.py:50-70]" in formatted
+    assert "[2] src/sessions.py:50-70" in formatted
     assert "SecureSession" in formatted
 
 

@@ -97,7 +97,7 @@ def read_code(
     formatted_code = "\n".join(numbered)
 
     rel_p = str(fpath.relative_to(folder.resolve()))
-    abs_uri = f"file://{fpath}#L{s}-L{e}"
+    abs_uri = f"file://{fpath}#L{s}-L{e}"  # returned for callers, not inlined below
 
     return {
         "path": rel_p,
@@ -106,7 +106,7 @@ def read_code(
         "end_line": e,
         "total_lines": total_lines,
         "uri": abs_uri,
-        "content": f"File: {rel_p}:{s}-{e} ({abs_uri})\n```\n{formatted_code}\n```",
+        "content": f"File: {rel_p}:{s}-{e}\n```\n{formatted_code}\n```",
     }
 
 

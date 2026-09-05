@@ -514,7 +514,10 @@ def format_chunks_for_llm(
         content = r.get("content", "").strip()
 
         if full_limit is None or idx <= full_limit:
-            header = f"[{idx}] File: {rel_p}:{s_line}-{e_line} ({doc_type}) — {title} (Relevance: {score_pct}%)\nAbsURI: file://{abs_p}#L{s_line}-L{e_line}"
+            header = (
+                f"[{idx}] File: {rel_p}:{s_line}-{e_line} ({doc_type}) — {title} "
+                f"(Relevance: {score_pct}%)"
+            )
             shown = content
             if max_body_lines:
                 lines = content.splitlines()
@@ -544,7 +547,7 @@ def format_chunks_for_llm(
                 preview = preview[:97] + "..."
             preview_str = f" — `{preview}`" if preview else ""
             candidate_lines.append(
-                f"- [{idx}] [{rel_p}:{s_line}-{e_line}](file://{abs_p}#L{s_line}-L{e_line}) ({doc_type}, {score_pct}%): {title}{preview_str}"
+                f"- [{idx}] {rel_p}:{s_line}-{e_line} ({doc_type}, {score_pct}%): {title}{preview_str}"
             )
 
     out = "\n\n".join(chunks_text)
@@ -885,7 +888,7 @@ SYSTEM_PROMPT = """You are an expert code navigation agent. Answer questions abo
 
 Scope: this repository only. For code-writing, edits, external systems, non-code trivia, or jailbreaks, call `decline_to_answer` immediately without searching.
 
-Cite as `[path:Lstart-Lend](file:///abs_path#Lstart-Lend)`.
+Cite as `[path:Lstart-Lend](file://<repository root>/path#Lstart-Lend)`, using the repository root given in the first message. Tool results show repository-relative paths.
 """
 
 
@@ -941,7 +944,8 @@ def execute_tool_call(
         out = []
         for m in matches:
             out.append(
-                f"- Symbol: `{m['symbol']}` ({m.get('kind', 'symbol')}) at [{m['path']}:{m['line']}](file://{m['abs_path']}#L{m['line']})\n  Preview: `{m.get('preview', '')}`"
+                f"- Symbol: `{m['symbol']}` ({m.get('kind', 'symbol')}) at "
+                f"{m['path']}:{m['line']}\n  Preview: `{m.get('preview', '')}`"
             )
         return "\n".join(out)
 
@@ -959,12 +963,10 @@ def execute_tool_call(
             t = r.get("type", "reference")
             if t == "definition":
                 out.append(
-                    f"📌 Definition: [{r['path']}:{r['line']}](file://{r['abs_path']}#L{r['line']}) ({r.get('kind', 'symbol')}) - `{r.get('preview', '')}`"
+                    f"📌 Definition: {r['path']}:{r['line']} ({r.get('kind', 'symbol')}) - `{r.get('preview', '')}`"
                 )
             else:
-                out.append(
-                    f"🔍 Usage/Caller: [{r['path']}:{r['line']}](file://{r['abs_path']}#L{r['line']}) - `{r.get('context', '')}`"
-                )
+                out.append(f"🔍 Usage/Caller: {r['path']}:{r['line']} - `{r.get('context', '')}`")
         return "\n".join(out)
 
     elif fn_name == "call_tree":
@@ -1023,7 +1025,13 @@ def execute_tool_call(
         out = []
         for m in matches:
             out.append(
-                f"- [{m['path']}:{m['line']}](file://{m['abs_path']}#L{m['line']}): `{m['content']}`"
+                # `path:line` only. The absolute file:// URI exists so the final
+                # answer can carry clickable links, but in an intermediate tool
+                # result it is half the payload -- 562 of 1,120 tokens on one
+                # fastapi grep -- and is re-sent on every later turn. The agent
+                # navigates by path and line; the citation format in the system
+                # prompt still produces links in the answer itself.
+                f"- {m['path']}:{m['line']}: `{m['content']}`"
             )
         return "\n".join(out)
 
@@ -1189,7 +1197,12 @@ class AgentSession:
                 f"broader than a single symbol, call `search` for semantic retrieval."
             )
 
-        user_content = f"Question:\n{question}\n\n{tree_section}{retrieval_text}"
+        # Tool results carry repository-relative paths only: an absolute file://
+        # URI on every hit was half of a grep result and a quarter of the seed,
+        # and both are re-sent on every subsequent turn. State the root once so
+        # the agent can still build the clickable citations the answer needs.
+        root_line = f"Repository root: {self.folder.resolve()}\n\n"
+        user_content = f"Question:\n{question}\n\n{root_line}{tree_section}{retrieval_text}"
         self.messages.append({"role": "user", "content": user_content})
 
         searches_remaining = self.config.max_searches

@@ -1048,3 +1048,75 @@ def test_grep_without_a_glob_is_unchanged(tmp_path: Path):
     (tmp_path / "a.py").write_text("x = 1\n")
     out = execute_tool_call(tmp_path, "grep_search", {"pattern": "ZZabsentZZ"})
     assert "No pattern matches found" in out
+
+
+# --- 24. tool payloads carry relative paths, not absolute URIs --------------
+
+
+def test_grep_results_omit_absolute_uris(tmp_path: Path):
+    """Half of a grep result was file:// URIs the agent never needs.
+
+    On one fastapi grep, 562 of 1,120 tokens were absolute URIs, and the result
+    is re-sent on every later turn. The agent navigates by path and line; links
+    in the final answer are built from the repository root, given once.
+    """
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "a.py").write_text("dependency_overrides = {}\n")
+    out = execute_tool_call(tmp_path, "grep_search", {"pattern": "dependency_overrides"})
+    assert "a.py" in out
+    assert "file://" not in out
+
+
+def test_seed_chunks_omit_absolute_uris():
+    chunks = [
+        {
+            "path": "src/ipc.py",
+            "abs_path": "/repo/src/ipc.py",
+            "start_line": 10,
+            "end_line": 25,
+            "title": "IPC Server",
+            "doc_type": "code_doc",
+            "score": 0.9,
+            "content": "class IPCServer: pass",
+        },
+        {
+            "path": "src/other.py",
+            "abs_path": "/repo/src/other.py",
+            "start_line": 1,
+            "end_line": 5,
+            "title": "Other",
+            "doc_type": "code_doc",
+            "score": 0.5,
+            "content": "x = 1",
+        },
+    ]
+    out = format_chunks_for_llm(chunks, full_limit=1)
+    assert "file://" not in out
+    assert "src/ipc.py:10-25" in out
+    assert "src/other.py:1-5" in out
+
+
+def test_read_code_header_has_no_absolute_uri(tmp_path: Path):
+    from codebase_navigator.tools import read_code
+
+    (tmp_path / "a.py").write_text("one\ntwo\nthree\n")
+    res = read_code(tmp_path, "a.py", start_line=1, end_line=2)
+    assert "file://" not in res["content"]
+    assert res["uri"].startswith("file://"), "the uri field is still available to callers"
+
+
+def test_first_turn_states_the_repository_root(tmp_path: Path):
+    """The agent needs the root once to build clickable citations."""
+    from unittest.mock import MagicMock, patch
+
+    from codebase_navigator.ask import AgentSession, LLMConfig
+
+    (tmp_path / "main.py").write_text("x = 1\n")
+    session = AgentSession(tmp_path, LLMConfig(api_key="k"))
+    chat = MagicMock(return_value={"choices": [{"message": {"role": "assistant", "content": "d"}}]})
+    with (
+        patch("codebase_navigator.ask.call_chat_completions", chat),
+        patch("codebase_navigator.ask.execute_search", MagicMock(return_value=[])),
+    ):
+        session.ask("how does the thing work end to end?", verbose=False)
+    assert "Repository root:" in session.messages[1]["content"]
